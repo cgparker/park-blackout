@@ -46,3 +46,4 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 - `npm run build` makes a static site in `dist/` (for GitHub Pages in Milestone 6).
 - `npm run build:single` makes one self-contained HTML file in `dist-single/`.
+- `npm run build:artifact` turns that file into a Claude artifact page in `dist-artifact/` (no document wrapper tags; the artifact host adds them).

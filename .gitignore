@@ -4,3 +4,4 @@ dist-single/
 test-results/
 *.log
 .DS_Store
+dist-artifact/

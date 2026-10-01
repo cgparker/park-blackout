@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "build:artifact": "npm run build:single && node scripts/make-artifact.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1"
