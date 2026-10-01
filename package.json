@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "build:artifact": "npm run build:single && node scripts/make-artifact.mjs",
-    "balance": "BALANCE=1 vitest run tests/balance.test.ts --silent=false"
+    "balance": "BALANCE=1 vitest run tests/balance.test.ts --silent=false",
+    "stress": "STRESS=1 vitest run tests/stress.test.ts --silent=false"
   },
   "dependencies": {
     "phaser": "^4.2.1"

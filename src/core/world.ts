@@ -6,7 +6,7 @@ import { distanceField } from './nav';
 import type { PlacementPlan } from './placement';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
-import { updateTraining, updateUnits, type QueueItem, type Unit } from './units';
+import { unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
 import { startFleeing, updateVisitors, type Visitor } from './visitors';
 
 export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'ended';
@@ -253,6 +253,7 @@ export class World {
     });
 
     this.recomputeVisitorFields();
+    unitsAfterBuild(this);
     spawnAnimals(this, exhibit);
     this.events.push({ type: 'built', exhibitId: id });
     return exhibit;

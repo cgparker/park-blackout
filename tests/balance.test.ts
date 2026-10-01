@@ -1,10 +1,11 @@
 // Headless balance check for the build phase. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { EXHIBITS, MAP, type ExhibitKind } from '../src/config';
+import { EXHIBITS, MAP, type ExhibitKind, type UnitKind } from '../src/config';
 import { inFootprint } from '../src/core/exhibit';
 import type { Rect } from '../src/core/grid';
 import { planPlacement, type PlacementPlan } from '../src/core/placement';
+import { spawnUnit } from '../src/core/units';
 import { World } from '../src/core/world';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -87,5 +88,54 @@ describe.skipIf(!process.env.BALANCE)('balance', () => {
       );
     }
     console.log('\nBuild phase 10:00, revenue target $40,000\n' + rows.join('\n'));
+  });
+});
+
+/** A fight on open grass: troops in a block, the dinosaurs released 6 tiles away. */
+function fight(kind: 'raptor' | 'trex', troops: UnitKind[], seed: number) {
+  const T = MAP.tileSize;
+  const w = new World({ seed, startingMoney: 1_000_000, buildPhaseSeconds: 1 });
+  const plan = planPlacement(w.grid, kind, kind === 'raptor' ? 9 : 20, kind === 'raptor' ? 8 : 16, Infinity, 0);
+  w.build(plan);
+  w.start();
+  for (let i = 0; i < 70; i++) w.update(1 / 60);
+  w.visitors = [];
+  troops.forEach((k, i) => spawnUnit(w, k, { x: (30 + (i % 3)) * T, y: (20 + Math.floor(i / 3)) * T }));
+  const dinos = w.dinos.filter((d) => d.kind === kind);
+  dinos.forEach((d, i) => {
+    d.state = 'loose';
+    d.x = (24 + i * 0.5) * T;
+    d.y = 20.5 * T;
+    d.path = [];
+    d.target = null;
+    d.think = 0;
+  });
+  let t = 0;
+  while (t < 120 && dinos.some((d) => d.state !== 'secured') && w.units.length > 0) {
+    w.update(1 / 60);
+    w.events = [];
+    t += 1 / 60;
+  }
+  return { won: dinos.every((d) => d.state === 'secured'), lost: troops.length - w.units.length, seconds: t };
+}
+
+describe.skipIf(!process.env.BALANCE)('combat', () => {
+  it('prints fight outcomes', { timeout: 300_000 }, () => {
+    const cases: [string, 'raptor' | 'trex', UnitKind[]][] = [
+      ['Raptor pack vs 2 Tranq', 'raptor', ['tranq', 'tranq']],
+      ['Raptor pack vs 3 Tranq', 'raptor', ['tranq', 'tranq', 'tranq']],
+      ['Raptor pack vs 4 Tranq', 'raptor', ['tranq', 'tranq', 'tranq', 'tranq']],
+      ['Raptor pack vs 2 Heavy', 'raptor', ['heavy', 'heavy']],
+      ['T. rex vs 2 Heavy + 2 Tranq', 'trex', ['heavy', 'heavy', 'tranq', 'tranq']],
+      ['T. rex vs 4 Tranq', 'trex', ['tranq', 'tranq', 'tranq', 'tranq']],
+      ['T. rex vs 3 Heavy', 'trex', ['heavy', 'heavy', 'heavy']],
+    ];
+    const rows = cases.map(([name, kind, troops]) => {
+      const runs = [1, 2, 3, 4, 5].map((seed) => fight(kind, troops, seed));
+      const wins = runs.filter((r) => r.won).length;
+      const lost = runs.reduce((a, r) => a + r.lost, 0) / runs.length;
+      return `${name.padEnd(30)} won ${wins}/5   troops lost ${lost.toFixed(1)} of ${troops.length}`;
+    });
+    console.log('\nFights on open grass, 5 seeds each\n' + rows.join('\n'));
   });
 });

@@ -15,6 +15,8 @@ export interface Unit extends PathFollower {
   order: UnitOrder;
   /** Dinosaur id for attack orders. */
   targetId: number;
+  /** Where a move order is headed. */
+  dest: Point | null;
   repath: number;
   cooldown: number;
   hurtAt: number;
@@ -78,6 +80,7 @@ export function spawnUnit(w: World, kind: UnitKind, at?: Point): Unit {
     maxHp: cfg.hp,
     order: 'idle',
     targetId: 0,
+    dest: null,
     repath: 0,
     cooldown: 0,
     hurtAt: -Infinity,
@@ -141,7 +144,41 @@ export function orderMove(w: World, ids: Iterable<number>, x: number, y: number)
     const u = free.splice(bi, 1)[0];
     u.order = 'move';
     u.targetId = 0;
+    u.dest = slot;
     planRoute(w, u, slot.x, slot.y);
+  }
+}
+
+/**
+ * A new exhibit just went down. Troops standing on it step off to the nearest open tile,
+ * and anyone walking gets a fresh route so nobody walks through the new pen.
+ */
+export function unitsAfterBuild(w: World): void {
+  const T = w.T;
+  for (const u of w.units) {
+    if (u.dead) continue;
+    const tx = Math.floor(u.x / T);
+    const ty = Math.floor(u.y / T);
+    if (!w.unitWalk(tx, ty)) {
+      const t = nearestOpenTile(w.grid.cols, w.grid.rows, w.unitWalk, tx, ty);
+      if (t) {
+        u.x = (t.x + 0.5) * T;
+        u.y = (t.y + 0.5) * T;
+      }
+    }
+    if (u.order === 'move' && u.dest) {
+      const d = u.dest;
+      if (!w.unitWalk(Math.floor(d.x / T), Math.floor(d.y / T))) {
+        const t = nearestOpenTile(w.grid.cols, w.grid.rows, w.unitWalk, Math.floor(d.x / T), Math.floor(d.y / T));
+        if (t) u.dest = { x: (t.x + 0.5) * T, y: (t.y + 0.5) * T };
+      }
+      planRoute(w, u, u.dest.x, u.dest.y);
+    } else if (u.order === 'attack') {
+      u.repath = 0;
+    } else {
+      u.path = [];
+      u.pathIndex = 0;
+    }
   }
 }
 
@@ -150,6 +187,7 @@ export function orderAttack(w: World, ids: Iterable<number>, dinoId: number): vo
   for (const u of liveUnits(w, ids)) {
     u.order = 'attack';
     u.targetId = dinoId;
+    u.dest = null;
     u.repath = 0;
     u.path = [];
     u.pathIndex = 0;
@@ -176,7 +214,7 @@ export function updateUnits(w: World, dt: number): void {
             planRoute(w, u, d.x, d.y);
             u.repath = SQUAD.repathSeconds;
           }
-          followPath(u, cfg.speed, dt, w.unitWalk, w.T, cfg.radius);
+          if (followPath(u, cfg.speed, dt, w.unitWalk, w.T, cfg.radius) === 'blocked') u.repath = 0;
         } else {
           u.path = [];
           u.pathIndex = 0;
@@ -187,7 +225,13 @@ export function updateUnits(w: World, dt: number): void {
         }
       }
     } else if (u.order === 'move') {
-      if (followPath(u, cfg.speed, dt, w.unitWalk, w.T, cfg.radius)) u.order = 'idle';
+      const result = followPath(u, cfg.speed, dt, w.unitWalk, w.T, cfg.radius);
+      if (result === 'arrived') {
+        u.order = 'idle';
+        u.dest = null;
+      } else if (result === 'blocked' && u.dest) {
+        planRoute(w, u, u.dest.x, u.dest.y);
+      }
     }
 
     if (u.order === 'idle') {

@@ -1,10 +1,10 @@
 # Park Blackout
 
-A single-player RTS prototype for phones. Build a dinosaur park, earn money from exhibits, and train a containment team before a rival company cuts the fence power. The full design is in [SPEC.md](SPEC.md).
+A single-player RTS prototype for phones. Build a dinosaur park, earn money from exhibits, and train a containment team before a rival company cuts the fence power. Then contain the cascade. The full design is in [SPEC.md](SPEC.md).
 
 ## Status
 
-**Milestone 1 of 6 is done:** map, camera, exhibit placement with auto-paths, and money. Visitors, income, and the countdown come in Milestone 2.
+All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
 
 ## Run it
 
@@ -19,31 +19,58 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 | Phone | Desktop | Does |
 |---|---|---|
-| Tap an exhibit in the bottom bar | Click it | Start placing it |
-| Tap the map | Click the map | Move the ghost there |
-| Tap **Build** | Click **Build** | Confirm |
-| Drag | Drag, or WASD / arrow keys | Pan |
+| Tap an exhibit in the bottom bar, then the map | Same, with clicks | Place an exhibit, then tap **Build** |
+| Tap an exhibit on the map | Click it | Visits, revenue, fence, and **Reinforce** |
+| Tap HQ, or **Train** in the bottom bar | Same | Train troops |
+| Tap a troop | Click it | Select it |
+| Hold, then drag | Left-drag | Select a group |
+| Tap the ground with troops selected | Right-click | Move there |
+| Tap a dinosaur with troops selected | Right-click it | Attack it |
+| Drag | Middle-drag, or WASD / arrow keys | Pan |
 | Pinch | Scroll wheel | Zoom |
-| Tap **Cancel** or the same exhibit again | Esc | Stop placing |
+| **Select all**, **Clear** | Same, or Esc to clear | Selection |
+
+## Tuning
+
+- Every number is in `src/config.ts`.
+- `npm run balance` plays five build strategies and six fights headlessly and prints the results. SPEC.md section 13 has the latest numbers.
+- Debug tools: tick **Debug tools** on the briefing screen, or add `?debug=1`. You get game speed (1x, 2x, 4x), **Blackout now**, **+$10,000**, fence HP numbers, the tile grid, and FPS.
+- Short games: tick **Quick test** on the briefing screen for a 3:00 build phase, or add `?blackout=180` for any length in seconds.
+- `?seed=7` makes a game repeatable.
+- Inside a Claude artifact, query strings don't reach the page. Use the briefing checkboxes, or a hash such as `#debug.blackout-180.seed-7`.
 
 ## Checks
 
-- `npm test` runs unit tests for the map, auto-pathing, placement rules, and building.
-- `npm run smoke` runs a browser test at phone and desktop sizes (taps, drags, pinches, building). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
-- Add `?debug=1` to the URL to expose `window.__pb` (scene, state, grid) in the browser console.
+- `npm test` runs 46 unit tests: map, pathing, placement, visitors, training, orders, the blackout cascade, combat, power return, and a full scripted game.
+- `npm run stress` plays 40 randomized games and fails if anyone walks through a rock or pen, a number goes bad, or a game never ends.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (42 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `node scripts/look.mjs` saves screenshots of the main game states to `test-results/look`.
+- `npm run typecheck` checks types.
 
 ## Where things live
 
 | Path | What |
 |---|---|
 | `src/config.ts` | Every tuning number, plus the map layout as a text grid |
-| `src/core/` | Game rules with no Phaser in them (grid, pathing, placement, state). Unit tested |
-| `src/scenes/GameScene.ts` | Drawing, camera, touch input |
-| `src/ui/hud.ts` | The HTML layer: money, build bar, placement panel, toasts |
-| `DECISIONS.md` | Calls made where the spec was silent |
+| `src/core/world.ts` | The game state, phases, and rules that tie the systems together |
+| `src/core/visitors.ts`, `units.ts`, `dinos.ts`, `combat.ts` | The systems. No Phaser in `src/core`, so it all runs in tests |
+| `src/core/nav.ts` | A* paths, distance maps, and line-of-sight |
+| `src/render/worldView.ts` | Draws the world |
+| `src/scenes/GameScene.ts` | Camera, touch and mouse input, wiring to the HUD |
+| `src/ui/hud.ts` | The HTML layer: bars, panels, briefing, end screen, debug |
+
+## Deploy
+
+GitHub Actions (`.github/workflows/build.yml`) tests and builds every push to `main`. To publish to GitHub Pages:
+
+1. Settings > Pages > Build and deployment > Source: **GitHub Actions**.
+2. Settings > Secrets and variables > Actions > Variables: add `PAGES_ENABLED` with the value `true`.
+3. Push, or run the workflow from the Actions tab.
+
+GitHub Pages on a private repo needs GitHub Pro or a team plan, and the site itself is public on the internet even though the repo is private (only GitHub Enterprise Cloud can publish privately).
 
 ## Builds
 
-- `npm run build` makes a static site in `dist/` (for GitHub Pages in Milestone 6).
+- `npm run build` makes a static site in `dist/`.
 - `npm run build:single` makes one self-contained HTML file in `dist-single/`.
 - `npm run build:artifact` turns that file into a Claude artifact page in `dist-artifact/` (no document wrapper tags; the artifact host adds them).

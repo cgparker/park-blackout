@@ -283,12 +283,15 @@ export function stepToward(m: PathFollower, x: number, y: number, step: number):
   return false;
 }
 
+export type FollowResult = 'moving' | 'arrived' | 'blocked';
+
 /**
  * Moves along the waypoints. Before moving, skips ahead past any waypoint whose
  * successor is already in clear sight, which straightens grid paths into natural lines.
- * Returns true when the last waypoint is reached.
+ * Returns 'blocked' instead of stepping into a closed tile (for example after being
+ * jostled off the line it planned); the caller should plan a new route from where it is.
  */
-export function followPath(m: PathFollower, speed: number, dt: number, walk: Walkable, T: number, clearance: number): boolean {
+export function followPath(m: PathFollower, speed: number, dt: number, walk: Walkable, T: number, clearance: number): FollowResult {
   while (m.pathIndex + 1 < m.path.length) {
     const next = m.path[m.pathIndex + 1];
     if (!lineClear(walk, T, m.x, m.y, next.x, next.y, clearance)) break;
@@ -300,17 +303,21 @@ export function followPath(m: PathFollower, speed: number, dt: number, walk: Wal
     const dx = wp.x - m.x;
     const dy = wp.y - m.y;
     const d = Math.hypot(dx, dy);
+    const reach = d <= budget;
+    const nx = reach ? wp.x : m.x + (dx / d) * budget;
+    const ny = reach ? wp.y : m.y + (dy / d) * budget;
+    const tx = Math.floor(nx / T);
+    const ty = Math.floor(ny / T);
+    if ((tx !== Math.floor(m.x / T) || ty !== Math.floor(m.y / T)) && !walk(tx, ty)) return 'blocked';
     if (d > 1e-3) m.facing = Math.atan2(dy, dx);
-    if (d <= budget) {
-      m.x = wp.x;
-      m.y = wp.y;
+    m.x = nx;
+    m.y = ny;
+    if (reach) {
       budget -= d;
       m.pathIndex++;
     } else {
-      m.x += (dx / d) * budget;
-      m.y += (dy / d) * budget;
       budget = 0;
     }
   }
-  return m.pathIndex >= m.path.length;
+  return m.pathIndex >= m.path.length ? 'arrived' : 'moving';
 }

@@ -557,7 +557,7 @@ function navigate(w: World, d: Dino, x: number, y: number, speed: number, dt: nu
     d.pathIndex = 0;
     d.repath = DINO_AI.repathSeconds;
   }
-  followPath(d, speed, dt, w.dinoWalk, w.T, 0);
+  if (followPath(d, speed, dt, w.dinoWalk, w.T, 0) === 'blocked') d.repath = 0;
 }
 
 function biteTroops(w: World, d: Dino): void {

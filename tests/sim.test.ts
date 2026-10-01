@@ -230,6 +230,28 @@ describe('training and orders', () => {
     }
   });
 
+  it('building over troops moves them off, and walkers route around the new pen', () => {
+    const w = new World({ seed: 14, startingMoney: RICH });
+    w.start();
+    const standing = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 16.5 * T });
+    const walker = spawnUnit(w, 'heavy', { x: 12.5 * T, y: 16.5 * T });
+    orderMove(w, [walker.id], 28.5 * T, 17.5 * T);
+    run(w, 0.5);
+    const paddock = place(w, 'trex', 20, 16);
+    const inside = (u: { x: number; y: number }) => {
+      const f = paddock.footprint;
+      const tx = Math.floor(u.x / T);
+      const ty = Math.floor(u.y / T);
+      return tx >= f.x && ty >= f.y && tx < f.x + f.w && ty < f.y + f.h;
+    };
+    expect(inside(standing)).toBe(false);
+    for (let i = 0; i < 20 / STEP; i++) {
+      w.update(STEP);
+      expect(inside(walker)).toBe(false);
+    }
+    expect(walker.order).toBe('idle');
+  });
+
   it('walks around rocks and the pond', () => {
     const w = new World({ seed: 12 });
     w.start();
@@ -460,6 +482,12 @@ describe('full game', () => {
         expect(p.x).toBeLessThanOrEqual((MAP.cols + 1) * T);
         expect(p.y).toBeLessThanOrEqual((MAP.rows + 1) * T);
       }
+      // Nobody stands on rocks, water, or HQ, and troops stay on open ground.
+      for (const p of [...w.units, ...w.dinos]) {
+        const tile = w.grid.get(Math.floor(p.x / T), Math.floor(p.y / T));
+        expect([Tile.Rock, Tile.Water, Tile.HQ]).not.toContain(tile);
+      }
+      for (const u of w.units) expect(w.unitWalk(Math.floor(u.x / T), Math.floor(u.y / T))).toBe(true);
     };
     let built = false;
     let posted = false;
@@ -485,7 +513,7 @@ describe('full game', () => {
           13.5 * T,
         );
       }
-      if (i % 600 === 0) checkFinite();
+      if (i % 60 === 0) checkFinite();
     }
     checkFinite();
     expect(w.phase).toBe('ended');

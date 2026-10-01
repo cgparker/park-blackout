@@ -229,25 +229,41 @@ Each milestone ends with something playable on my phone.
 5. **Combat and scoring:** darts, dinosaur attacks, casualties, securing, win and lose, stars, end screen.
 6. **Tuning tools:** debug options, URL overrides, deploy to GitHub Pages.
 
-## 13. Expected balance (first pass)
+## 13. Balance (measured)
 
-A rough simulation of these numbers, assuming the player stops building exhibits around 7:00 and saves the rest for troops. These are starting points, not truth.
+`npm run balance` plays these headlessly with the real rules: 3 seeds per build strategy, 5 per fight. Each exhibit goes in the open spot closest to the gate that keeps the stated gap, and building stops at 7:00. These are starting points for playtests, not truth. (The first draft of this table came from a rougher estimate; the numbers below replace it.)
 
-| Strategy | Act 1 revenue | 2 stars? | Left for troops |
+Build phase (10:00, ★★ target $40,000):
+
+| Strategy | Revenue | ★★? | Left for troops |
 |---|---|---|---|
-| Dense: 2 raptor pens, T. rex, 2 pastures | ~$43,000 | Yes | ~$27,000 |
-| Dense: 3 raptor pens, 3 pastures | ~$49,000 | Yes | ~$36,000 |
-| Medium spacing, same builds | ~$39,000 to $42,000 | Borderline | ~$25,000 to $28,000 |
-| Spread far apart | ~$21,000 to $33,000 | No | ~$18,000 to $20,000 |
-| Herbivores only | $28,000 or less | No | ~$8,000 to $14,000 |
+| Dense: 2 raptor pens, T. rex, 2 pastures | ~$54,000 | Yes | ~$38,000 |
+| Dense: 3 raptor pens, 3 pastures | ~$47,000 | Yes | ~$34,000 |
+| Medium spacing (3 tiles apart), same as the first row | ~$48,000 | Yes | ~$32,000 |
+| Spread out (7 tiles apart), same as the first row | ~$43,000 | Yes, barely | ~$30,000 |
+| Herbivores only | ~$29,000 | No | ~$12,000 |
 
-Rough combat math: a raptor pack takes 3 to 4 Tranq Squads (expect to lose one). A T. rex takes about 2 Heavy Teams plus 2 Tranq Squads (expect losses).
+Fights on open grass (troops in a block, dinosaurs released 6 tiles away):
+
+| Fight | Result |
+|---|---|
+| Raptor pack vs 2 Tranq Squads | Raptors win |
+| Raptor pack vs 3 Tranq Squads | Troops win, lose about 1 |
+| Raptor pack vs 2 Heavy Teams | Troops win, no losses |
+| T. rex vs 4 Tranq Squads | T. rex wins |
+| T. rex vs 2 Heavy Teams + 2 Tranq Squads | Troops win, no losses |
+| T. rex vs 3 Heavy Teams | Troops win, no losses |
+
+Blackout with a full dense park and no troops (5 seeds): about 78 visitors are in the park when the power goes out, the first fence breaks at about 14 s, and every visitor reaches the gate first. Zero casualties in all five.
 
 What to watch in playtests:
 
-- The dense 3-raptor build has the most slack and is the first suspect for "too easy." If so, raise raptor damage or lower the raptor pen's price.
-- Building extra cheap pastures can lower revenue, because visitors spend their time budget on $10 exhibits. That's intended, but the end screen should make it visible.
-- If spreading out still feels like the easy answer, shorten the visitor time budget.
+- Visitors outrun the breakouts. Fleeing at 100 px/s, everyone is out before the T. rex breaks its fence, so casualties are rare, the 10-casualty loss almost never happens, and the third star comes free. If playtests agree, the levers are: visitors don't notice the blackout until a fence breaks or a dinosaur gets close, shorter breakout delays, or a slower flee speed.
+- Spacing costs less than the first estimate: even the spread-out park clears $40,000. If playtests agree, shorten the visitor time budget (`VISITORS.timeBudgetSeconds`) or raise the revenue target.
+- The dense T. rex build earns the most. It should also be the scariest blackout; if it isn't, the T. rex is too weak.
+- The T. rex goes down to 2 Heavy + 2 Tranq with no losses, easier than intended. It turns on whoever darted it last, which spreads its bites around. If it feels weak, make it stick with one target or raise its sedation.
+- Heavy Teams handle raptors with no losses. Tranq Squads are the cheap option that costs a unit.
+- Building extra cheap pastures can lower revenue, because visitors spend their time budget on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
 
 ## 14. Later, not now
 
