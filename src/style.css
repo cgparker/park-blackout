@@ -1,0 +1,334 @@
+:root {
+  --bg: #14251a;
+  --panel: rgba(9, 16, 12, 0.88);
+  --panel-raised: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.13);
+  --text: #f1f5f2;
+  --muted: #a3b3a8;
+  --accent: #3fe0ff;
+  --good: #37d67a;
+  --good-text: #06210f;
+  --bad: #ff7a7a;
+  --money: #ffd166;
+  --top-h: 44px;
+  --bottom-h: 64px;
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* The game has one look; dark mode uses the same palette. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #14251a;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #14251a;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+#game {
+  position: absolute;
+  inset: 0;
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#hud button {
+  font: inherit;
+  color: inherit;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Top bar */
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  height: calc(var(--top-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  pointer-events: auto;
+}
+
+.money {
+  min-width: 96px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--money);
+  font-variant-numeric: tabular-nums;
+}
+
+.center {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.center.hinting {
+  color: var(--accent);
+}
+
+.phase {
+  min-width: 96px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Build bar */
+.bottombar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  height: calc(var(--bottom-h) + env(safe-area-inset-bottom));
+  padding: 8px calc(12px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  display: flex;
+  gap: 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  pointer-events: auto;
+}
+
+.build-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  text-align: left;
+}
+
+.build-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: rgba(63, 224, 255, 0.16);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.build-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.swatch {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0 0 2px rgba(63, 224, 255, 0.8);
+}
+
+.swatch svg {
+  width: 26px;
+  height: 26px;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Placement panel */
+.place-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 224px;
+  box-sizing: border-box;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.place-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.place-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.place-line .value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.place-reason {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bad);
+}
+
+.place-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.place-actions button {
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.place-actions .confirm {
+  flex: 1;
+  background: var(--good);
+  color: var(--good-text);
+  border-color: transparent;
+}
+
+.place-actions .confirm:disabled {
+  background: var(--panel-raised);
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.place-actions .cancel {
+  padding: 0 12px;
+  background: var(--panel-raised);
+}
+
+/* Toast */
+.toast {
+  position: absolute;
+  top: calc(var(--top-h) + env(safe-area-inset-top) + 10px);
+  left: 50%;
+  transform: translate(-50%, -6px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* Portrait phones: ask for landscape */
+#rotate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg);
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+#rotate .icon {
+  font-size: 44px;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate {
+    display: flex;
+  }
+}
+
+/* Short screens (phones in landscape) */
+@media (max-height: 430px) {
+  :root {
+    --top-h: 40px;
+    --bottom-h: 58px;
+  }
+  .name {
+    font-size: 13px;
+  }
+  .swatch {
+    width: 28px;
+    height: 28px;
+  }
+}
