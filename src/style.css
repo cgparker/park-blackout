@@ -352,7 +352,7 @@ body {
 }
 
 .train-panel {
-  width: 268px;
+  width: 280px;
 }
 
 .panel-head {
@@ -466,7 +466,8 @@ body {
 }
 
 .train-btn .meta {
-  white-space: normal;
+  white-space: nowrap;
+  font-size: 11px;
 }
 
 .price {

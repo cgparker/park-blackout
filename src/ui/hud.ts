@@ -284,7 +284,7 @@ export class Hud {
       const label = el('span', 'label');
       label.append(
         el('span', 'name', cfg.name),
-        el('span', 'meta', `${cfg.hp} HP · range ${Math.round(cfg.range / 40)} · ${cfg.trainSeconds} s`),
+        el('span', 'meta', `${cfg.hp}\u00a0HP · range\u00a0${Math.round(cfg.range / 40)} · ${cfg.trainSeconds}\u00a0s`),
       );
       b.append(icon, label, el('span', 'price', formatMoney(cfg.cost)));
       b.addEventListener('click', () => this.handlers?.train(kind));
