@@ -1,5 +1,7 @@
-import { COLORS, EXHIBITS, EXHIBIT_KINDS, type AnimalKind, type ExhibitKind } from '../config';
+import { COLORS, EXHIBITS, EXHIBIT_KINDS, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
 import type { PlacementPlan } from '../core/placement';
+import type { Result } from '../core/report';
+import type { Phase } from '../core/world';
 
 export interface ScreenRect {
   left: number;
@@ -8,20 +10,77 @@ export interface ScreenRect {
   bottom: number;
 }
 
-const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
-const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US');
-
-function animalIcon(kind: AnimalKind): string {
-  const fill = hex(COLORS.animal[kind]);
-  switch (kind) {
-    case 'triceratops':
-      return `<svg viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="13" rx="9.5" ry="6" fill="${fill}" stroke="#0b2a12" stroke-width="1.5"/></svg>`;
-    case 'raptor':
-      return `<svg viewBox="0 0 26 26" aria-hidden="true"><polygon points="6,6.5 21,13 6,19.5" fill="${fill}" stroke="#4a2500" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
-    case 'trex':
-      return `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="${fill}" stroke="#3a0a0a" stroke-width="1.5"/><rect x="17.5" y="11" width="6" height="4" rx="1" fill="${hex(COLORS.trexNotch)}"/></svg>`;
-  }
+export interface HudHandlers {
+  selectExhibit(kind: ExhibitKind): void;
+  confirmPlacement(): void;
+  cancelPlacement(): void;
+  start(options: { quick: boolean; debug: boolean }): void;
+  retry(): void;
+  openTraining(): void;
+  train(kind: UnitKind): void;
+  cancelQueued(queueId: number): void;
+  reinforce(exhibitId: number): void;
+  closePanel(): void;
+  selectAll(): void;
+  clearSelection(): void;
+  debugSpeed(speed: number): void;
+  debugBlackout(): void;
+  debugMoney(): void;
+  debugToggle(name: 'hp' | 'grid' | 'fps', on: boolean): void;
 }
+
+export interface TopView {
+  phase: Phase;
+  money: number;
+  revenue: number;
+  revenueTarget: number;
+  clockSeconds: number;
+  casualties: number;
+  casualtyLimit: number;
+  penned: number;
+  loose: number;
+  secured: number;
+  contained: number;
+  allClear: boolean;
+}
+
+export interface TrainingView {
+  money: number;
+  canTrain: boolean;
+  queue: { id: number; kind: UnitKind; progress: number }[];
+}
+
+export interface ExhibitView {
+  id: number;
+  name: string;
+  kind: ExhibitKind;
+  visits: number;
+  revenue: number;
+  fence: string;
+  animals: string;
+  /** null when reinforcing isn't possible any more. */
+  reinforceCost: number | null;
+  reinforced: boolean;
+  money: number;
+}
+
+export interface BriefingView {
+  buildSeconds: number;
+  quickSeconds: number;
+  revenueTarget: number;
+  villain: string;
+  quick: boolean;
+  debug: boolean;
+}
+
+export type Panel = 'place' | 'train' | 'exhibit';
+
+const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
+export const formatMoney = (n: number) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
+export const formatClock = (s: number) => {
+  const t = Math.max(0, Math.ceil(s));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -30,69 +89,354 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
-/** The HTML layer over the game canvas: top bar, build bar, placement panel, toasts. */
+function button(className: string, text?: string): HTMLButtonElement {
+  const b = el('button', className, text);
+  b.type = 'button';
+  return b;
+}
+
+/** Writes text only when it changed, so per-frame updates stay cheap. */
+function setText(node: HTMLElement, text: string): void {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function animalIcon(kind: AnimalKind): string {
+  const fill = hex(COLORS.animal[kind]);
+  const stroke = hex(COLORS.animalStroke[kind]);
+  switch (kind) {
+    case 'triceratops':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="13" rx="9.5" ry="6" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
+    case 'raptor':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><polygon points="6,6.5 21,13 6,19.5" fill="${fill}" stroke="${stroke}" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+    case 'trex':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/><rect x="17.5" y="11" width="6" height="4" rx="1" fill="${hex(COLORS.trexNotch)}"/></svg>`;
+  }
+}
+
+function unitIcon(kind: UnitKind): string {
+  const fill = hex(COLORS.unit);
+  const stroke = hex(COLORS.unitStroke);
+  return kind === 'tranq'
+    ? `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="7" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`
+    : `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="5" y="5" width="16" height="16" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
+}
+
+/** The HTML layer over the game canvas. */
 export class Hud {
-  onSelectExhibit: (kind: ExhibitKind) => void = () => {};
-  onConfirm: () => void = () => {};
-  onCancel: () => void = () => {};
+  handlers: HudHandlers | null = null;
 
   private readonly topBar: HTMLElement;
+  private readonly moneyVal: HTMLElement;
+  private readonly revenueVal: HTMLElement;
+  private readonly revenueCap: HTMLElement;
+  private readonly revenueMeter: HTMLElement;
+  private readonly revenueStat: HTMLElement;
+  private readonly clock: HTMLElement;
+  private readonly clockCap: HTMLElement;
+  private readonly clockVal: HTMLElement;
+  private readonly dinoVal: HTMLElement;
+  private readonly casualtyVal: HTMLElement;
+  private readonly casualtyStat: HTMLElement;
+
   private readonly bottomBar: HTMLElement;
-  private readonly moneyEl: HTMLElement;
-  private readonly centerEl: HTMLElement;
-  private readonly buttons = new Map<ExhibitKind, HTMLButtonElement>();
-  private readonly metaEls = new Map<ExhibitKind, HTMLElement>();
-  private readonly panel: HTMLElement;
-  private readonly panelTitle: HTMLElement;
-  private readonly panelLines: HTMLElement;
-  private readonly panelReason: HTMLElement;
+  private readonly buildGroup: HTMLElement;
+  private readonly buildButtons = new Map<ExhibitKind, HTMLButtonElement>();
+  private readonly buildMeta = new Map<ExhibitKind, HTMLElement>();
+  private readonly hqMeta: HTMLElement;
+  private readonly selectAllBtn: HTMLButtonElement;
+  private readonly clearBtn: HTMLButtonElement;
+  private readonly selSummary: HTMLElement;
+
+  private readonly placePanel: HTMLElement;
+  private readonly placeTitle: HTMLElement;
+  private readonly placeLines: HTMLElement;
+  private readonly placeReason: HTMLElement;
   private readonly confirmBtn: HTMLButtonElement;
+
+  private readonly trainPanel: HTMLElement;
+  private readonly trainButtons = new Map<UnitKind, HTMLButtonElement>();
+  private readonly queueLabel: HTMLElement;
+  private readonly queueChips: HTMLElement;
+  private queueKey = '';
+
+  private readonly exhibitPanel: HTMLElement;
+  private readonly exTitle: HTMLElement;
+  private readonly exVisits: HTMLElement;
+  private readonly exRevenue: HTMLElement;
+  private readonly exFence: HTMLElement;
+  private readonly exAnimals: HTMLElement;
+  private readonly reinforceBtn: HTMLButtonElement;
+  private readonly reinforceNote: HTMLElement;
+  private exhibitId = 0;
+
+  private readonly banner: HTMLElement;
+  private bannerTimer = 0;
   private readonly toastEl: HTMLElement;
   private toastTimer = 0;
 
-  constructor(root: HTMLElement) {
-    this.topBar = el('div', 'topbar');
-    this.moneyEl = el('div', 'money', '$0');
-    this.centerEl = el('div', 'center', 'Build your park');
-    const phase = el('div', 'phase', 'Build phase');
-    this.topBar.append(this.moneyEl, this.centerEl, phase);
+  private readonly briefing: HTMLElement;
+  private readonly briefTitle: HTMLElement;
+  private readonly briefIntro: HTMLElement;
+  private readonly briefGoal2: HTMLElement;
+  private readonly quickBox: HTMLInputElement;
+  private readonly debugBox: HTMLInputElement;
+  private briefView: BriefingView | null = null;
 
+  private readonly endScreen: HTMLElement;
+  private readonly endBody: HTMLElement;
+
+  private readonly debugPanel: HTMLElement;
+  private readonly fpsEl: HTMLElement;
+  private readonly speedButtons: HTMLButtonElement[] = [];
+
+  private openPanel: Panel | null = null;
+
+  constructor(root: HTMLElement) {
+    // ------------------------------------------------ top bar
+    this.topBar = el('div', 'topbar');
+    const stat = (cls: string, cap: string) => {
+      const box = el('div', `stat ${cls}`);
+      const c = el('span', 'cap', cap);
+      const v = el('span', 'val');
+      box.append(c, v);
+      return { box, cap: c, val: v };
+    };
+    const money = stat('money', 'Money');
+    const revenue = stat('revenue', 'Revenue');
+    this.revenueMeter = el('i');
+    const meter = el('span', 'meter');
+    meter.append(this.revenueMeter);
+    revenue.box.append(meter);
+    this.clock = el('div', 'clock');
+    this.clockCap = el('span', 'cap', 'Until blackout');
+    this.clockVal = el('span', 'val', '10:00');
+    this.clock.append(this.clockCap, this.clockVal);
+    const dinos = stat('dinos', 'Dinosaurs');
+    const casualties = stat('casualties', 'Casualties');
+    this.topBar.append(money.box, revenue.box, this.clock, dinos.box, casualties.box);
+    this.moneyVal = money.val;
+    this.revenueVal = revenue.val;
+    this.revenueCap = revenue.cap;
+    this.revenueStat = revenue.box;
+    this.dinoVal = dinos.val;
+    this.casualtyVal = casualties.val;
+    this.casualtyStat = casualties.box;
+
+    // ------------------------------------------------ bottom bar
     this.bottomBar = el('div', 'bottombar');
+    this.buildGroup = el('div', 'build-group');
     for (const kind of EXHIBIT_KINDS) {
       const cfg = EXHIBITS[kind];
-      const btn = el('button', 'build-btn');
-      btn.type = 'button';
-      btn.dataset.kind = kind;
-      btn.setAttribute('aria-pressed', 'false');
+      const b = button('build-btn');
+      b.dataset.kind = kind;
+      b.setAttribute('aria-pressed', 'false');
       const swatch = el('span', 'swatch');
       swatch.style.background = hex(COLORS.interior[kind]);
       swatch.innerHTML = animalIcon(cfg.animal);
       const label = el('span', 'label');
       const meta = el('span', 'meta');
-      label.append(el('span', 'name', cfg.name), meta);
-      btn.append(swatch, label);
-      btn.addEventListener('click', () => this.onSelectExhibit(kind));
-      this.buttons.set(kind, btn);
-      this.metaEls.set(kind, meta);
-      this.bottomBar.append(btn);
+      label.append(el('span', 'name', cfg.short), meta);
+      b.setAttribute('aria-label', cfg.name);
+      b.append(swatch, label);
+      b.addEventListener('click', () => this.handlers?.selectExhibit(kind));
+      this.buildButtons.set(kind, b);
+      this.buildMeta.set(kind, meta);
+      this.buildGroup.append(b);
     }
+    const troopGroup = el('div', 'troop-group');
+    const hqBtn = button('hq-btn');
+    const hqLabel = el('span', 'label');
+    this.hqMeta = el('span', 'meta', 'Queue 0/5');
+    hqLabel.append(el('span', 'name', 'Train'), this.hqMeta);
+    hqBtn.setAttribute('aria-label', 'Train troops at HQ');
+    hqBtn.append(el('span', 'hq-icon', 'HQ'), hqLabel);
+    hqBtn.addEventListener('click', () => this.handlers?.openTraining());
+    this.selSummary = el('span', 'sel-summary');
+    this.selectAllBtn = button('sel-btn sel-all');
+    this.selectAllBtn.addEventListener('click', () => this.handlers?.selectAll());
+    this.clearBtn = button('sel-btn sel-clear');
+    this.clearBtn.addEventListener('click', () => this.handlers?.clearSelection());
+    troopGroup.append(hqBtn, this.selSummary, this.selectAllBtn, this.clearBtn);
+    this.bottomBar.append(this.buildGroup, troopGroup);
 
-    this.panel = el('div', 'place-panel hidden');
-    this.panelTitle = el('div', 'place-title');
-    this.panelLines = el('div', 'place-lines');
-    this.panelReason = el('div', 'place-reason');
-    const actions = el('div', 'place-actions');
-    this.confirmBtn = el('button', 'confirm');
-    this.confirmBtn.type = 'button';
-    this.confirmBtn.addEventListener('click', () => this.onConfirm());
-    const cancel = el('button', 'cancel', 'Cancel');
-    cancel.type = 'button';
-    cancel.addEventListener('click', () => this.onCancel());
-    actions.append(this.confirmBtn, cancel);
-    this.panel.append(this.panelTitle, this.panelLines, this.panelReason, actions);
+    // ------------------------------------------------ placement panel
+    this.placePanel = el('div', 'panel place-panel hidden');
+    this.placeTitle = el('div', 'panel-title');
+    this.placeLines = el('div', 'lines');
+    this.placeReason = el('div', 'reason');
+    const placeActions = el('div', 'actions');
+    this.confirmBtn = button('primary');
+    this.confirmBtn.addEventListener('click', () => this.handlers?.confirmPlacement());
+    const cancel = button('secondary', 'Cancel');
+    cancel.addEventListener('click', () => this.handlers?.cancelPlacement());
+    placeActions.append(this.confirmBtn, cancel);
+    this.placePanel.append(this.placeTitle, this.placeLines, this.placeReason, placeActions);
 
+    // ------------------------------------------------ training panel
+    this.trainPanel = el('div', 'panel train-panel hidden');
+    this.trainPanel.append(this.panelHead('Containment HQ'));
+    for (const kind of UNIT_KINDS) {
+      const cfg = UNITS[kind];
+      const b = button('train-btn');
+      b.dataset.kind = kind;
+      const icon = el('span', 'unit-icon');
+      icon.innerHTML = unitIcon(kind);
+      const label = el('span', 'label');
+      label.append(
+        el('span', 'name', cfg.name),
+        el('span', 'meta', `${cfg.hp} HP · range ${Math.round(cfg.range / 40)} · ${cfg.trainSeconds} s`),
+      );
+      b.append(icon, label, el('span', 'price', formatMoney(cfg.cost)));
+      b.addEventListener('click', () => this.handlers?.train(kind));
+      this.trainButtons.set(kind, b);
+      this.trainPanel.append(b);
+    }
+    const queue = el('div', 'queue');
+    this.queueLabel = el('span', 'queue-label');
+    this.queueChips = el('div', 'chips');
+    queue.append(this.queueLabel, this.queueChips);
+    this.trainPanel.append(queue, el('div', 'note', 'Tap a queued troop to cancel it for a full refund.'));
+
+    // ------------------------------------------------ exhibit panel
+    this.exhibitPanel = el('div', 'panel exhibit-panel hidden');
+    const exHead = this.panelHead('');
+    this.exTitle = exHead.querySelector('.panel-title') as HTMLElement;
+    const rows = el('div', 'lines');
+    const row = (label: string) => {
+      const r = el('div', 'line');
+      const v = el('span', 'value');
+      r.append(el('span', '', label), v);
+      rows.append(r);
+      return v;
+    };
+    this.exVisits = row('Visits');
+    this.exRevenue = row('Revenue');
+    this.exFence = row('Fence');
+    this.exAnimals = row('Animals');
+    this.reinforceBtn = button('primary reinforce');
+    this.reinforceBtn.addEventListener('click', () => this.handlers?.reinforce(this.exhibitId));
+    this.reinforceNote = el('div', 'note');
+    this.exhibitPanel.append(exHead, rows, this.reinforceBtn, this.reinforceNote);
+
+    // ------------------------------------------------ banner, toast
+    this.banner = el('div', 'banner');
     this.toastEl = el('div', 'toast');
-    root.append(this.topBar, this.bottomBar, this.panel, this.toastEl);
+
+    // ------------------------------------------------ briefing
+    this.briefing = el('div', 'overlay briefing hidden');
+    const card = el('div', 'card brief-card');
+    const left = el('div', 'brief-main');
+    this.briefTitle = el('h1', 'brief-title');
+    this.briefIntro = el('p', 'brief-intro');
+    const options = el('div', 'options');
+    const check = (id: string, text: string) => {
+      const label = el('label', 'check');
+      const input = el('input');
+      input.type = 'checkbox';
+      input.id = id;
+      label.append(input, el('span', '', text));
+      options.append(label);
+      return input;
+    };
+    this.quickBox = check('opt-quick', 'Quick test: 3:00 build phase');
+    this.debugBox = check('opt-debug', 'Debug tools');
+    this.quickBox.addEventListener('change', () => this.renderBriefing());
+    const start = button('primary start', 'Start');
+    start.addEventListener('click', () => this.handlers?.start({ quick: this.quickBox.checked, debug: this.debugBox.checked }));
+    left.append(el('div', 'eyebrow', 'Park Blackout'), this.briefTitle, this.briefIntro, options, start);
+
+    const right = el('div', 'brief-side');
+    const goals = el('ul', 'goals');
+    const goal = (stars: string, text: string) => {
+      const li = el('li');
+      const t = el('span', 'goal-text', text);
+      li.append(el('span', 'goal-stars', stars), t);
+      goals.append(li);
+      return t;
+    };
+    goal('★', 'Secure every loose dinosaur after the power comes back.');
+    this.briefGoal2 = goal('★★', 'Also earn $40,000 before the blackout.');
+    goal('★★★', 'Also keep every visitor alive.');
+    const howto = el('ul', 'howto');
+    for (const line of [
+      'Tap an exhibit below, then tap the map to place it.',
+      'Tap HQ to train troops.',
+      'Tap a troop, then tap the map to move or a dinosaur to attack.',
+      'Hold, then drag, to select a group.',
+      'Drag to pan. Pinch to zoom.',
+    ]) {
+      howto.append(el('li', '', line));
+    }
+    right.append(el('h2', '', 'Goals'), goals, el('h2', '', 'Controls'), howto);
+    card.append(left, right);
+    this.briefing.append(card);
+
+    // ------------------------------------------------ end screen
+    this.endScreen = el('div', 'overlay end hidden');
+    const endCard = el('div', 'card end-card');
+    this.endBody = el('div', 'end-body');
+    const retry = button('primary retry', 'Retry');
+    retry.addEventListener('click', () => this.handlers?.retry());
+    endCard.append(this.endBody, retry);
+    this.endScreen.append(endCard);
+
+    // ------------------------------------------------ debug
+    this.debugPanel = el('div', 'debug hidden');
+    const dbgHead = button('dbg-head', 'Debug');
+    dbgHead.addEventListener('click', () => this.debugPanel.classList.toggle('collapsed'));
+    const speedRow = el('div', 'dbg-row');
+    speedRow.append(el('span', 'dbg-label', 'Speed'));
+    for (const s of [1, 2, 4]) {
+      const b = button('dbg-btn', `${s}x`);
+      b.dataset.speed = String(s);
+      b.addEventListener('click', () => this.handlers?.debugSpeed(s));
+      this.speedButtons.push(b);
+      speedRow.append(b);
+    }
+    const actionRow = el('div', 'dbg-row');
+    const blackout = button('dbg-btn', 'Blackout now');
+    blackout.addEventListener('click', () => this.handlers?.debugBlackout());
+    const cash = button('dbg-btn', '+$10,000');
+    cash.addEventListener('click', () => this.handlers?.debugMoney());
+    actionRow.append(blackout, cash);
+    const toggleRow = el('div', 'dbg-row');
+    for (const [name, text] of [
+      ['hp', 'Fence HP'],
+      ['grid', 'Grid'],
+      ['fps', 'FPS'],
+    ] as const) {
+      const label = el('label', 'dbg-check');
+      const input = el('input');
+      input.type = 'checkbox';
+      input.id = `dbg-${name}`;
+      input.addEventListener('change', () => this.handlers?.debugToggle(name, input.checked));
+      label.append(input, el('span', '', text));
+      toggleRow.append(label);
+    }
+    this.fpsEl = el('div', 'dbg-fps hidden');
+    this.debugPanel.append(dbgHead, speedRow, actionRow, toggleRow, this.fpsEl);
+
+    root.append(
+      this.topBar,
+      this.bottomBar,
+      this.placePanel,
+      this.trainPanel,
+      this.exhibitPanel,
+      this.banner,
+      this.toastEl,
+      this.debugPanel,
+      this.briefing,
+      this.endScreen,
+    );
+  }
+
+  private panelHead(title: string): HTMLElement {
+    const head = el('div', 'panel-head');
+    const close = button('close', '✕');
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', () => this.handlers?.closePanel());
+    head.append(el('span', 'panel-title', title), close);
+    return head;
   }
 
   /** Heights (CSS px) of the bars covering the top and bottom of the screen. */
@@ -103,76 +447,328 @@ export class Hud {
     };
   }
 
-  setMoney(amount: number): void {
-    this.moneyEl.textContent = money(amount);
+  get panel(): Panel | null {
+    return this.openPanel;
   }
 
-  setHint(text: string | null): void {
-    this.centerEl.textContent = text ?? 'Build your park';
-    this.centerEl.classList.toggle('hinting', text !== null);
+  reset(): void {
+    this.closePanels();
+    this.endScreen.classList.add('hidden');
+    this.banner.classList.remove('show');
+    this.toastEl.classList.remove('show');
+    this.queueKey = '';
   }
 
-  updateBuildButtons(cash: number, counts: Record<ExhibitKind, number>, placing: ExhibitKind | null): void {
+  // ------------------------------------------------ bars
+
+  setTop(v: TopView): void {
+    setText(this.moneyVal, formatMoney(v.money));
+    setText(this.revenueCap, `Revenue · ★★ at ${formatMoney(v.revenueTarget)}`);
+    setText(this.revenueVal, formatMoney(v.revenue));
+    const pct = Math.min(100, (v.revenue / Math.max(1, v.revenueTarget)) * 100);
+    const width = `${pct.toFixed(1)}%`;
+    if (this.revenueMeter.style.width !== width) this.revenueMeter.style.width = width;
+    this.revenueStat.classList.toggle('met', v.revenue >= v.revenueTarget);
+
+    const caption =
+      v.phase === 'blackout'
+        ? v.allClear
+          ? 'All clear · power in'
+          : 'Power returns in'
+        : v.phase === 'restored'
+          ? 'Secure them within'
+          : v.phase === 'ended'
+            ? 'Game over'
+            : 'Until blackout';
+    setText(this.clockCap, caption);
+    setText(this.clockVal, v.phase === 'ended' ? '' : formatClock(v.clockSeconds));
+    this.clock.classList.toggle('danger', v.phase === 'blackout' || v.phase === 'restored');
+    this.clock.classList.toggle('urgent', v.phase === 'build' && v.clockSeconds <= 60);
+
+    let dinos: string;
+    if (v.phase === 'briefing' || v.phase === 'build') dinos = v.penned ? `${v.penned} penned` : 'None yet';
+    else if (v.loose) dinos = `${v.loose} loose · ${v.secured} secured`;
+    else if (v.phase === 'blackout' && v.penned) dinos = `None loose · ${v.penned} penned`;
+    else dinos = v.secured ? `None loose · ${v.secured} secured` : 'None loose';
+    setText(this.dinoVal, dinos);
+
+    setText(this.casualtyVal, `${v.casualties} / ${v.casualtyLimit}`);
+    this.casualtyStat.classList.toggle('bad', v.casualties > 0);
+  }
+
+  setBuildBar(visible: boolean, cash: number, counts: Record<ExhibitKind, number>, placing: ExhibitKind | null): void {
+    this.buildGroup.classList.toggle('hidden', !visible);
+    if (!visible) return;
     for (const kind of EXHIBIT_KINDS) {
       const cfg = EXHIBITS[kind];
-      const btn = this.buttons.get(kind)!;
-      const meta = this.metaEls.get(kind)!;
+      const b = this.buildButtons.get(kind)!;
+      const meta = this.buildMeta.get(kind)!;
       const atLimit = cfg.maxPerLevel !== null && counts[kind] >= cfg.maxPerLevel;
       const left = cfg.maxPerLevel === null ? null : cfg.maxPerLevel - counts[kind];
-      meta.textContent = atLimit ? 'Limit reached' : left === null ? money(cfg.cost) : `${money(cfg.cost)} · ${left} left`;
-      btn.disabled = placing !== kind && (atLimit || cash < cfg.cost);
-      btn.setAttribute('aria-pressed', placing === kind ? 'true' : 'false');
+      setText(meta, atLimit ? 'Limit reached' : left === null ? formatMoney(cfg.cost) : `${formatMoney(cfg.cost)} · ${left} left`);
+      const disabled = placing !== kind && (atLimit || cash < cfg.cost);
+      if (b.disabled !== disabled) b.disabled = disabled;
+      const pressed = placing === kind ? 'true' : 'false';
+      if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
     }
+  }
+
+  setTroops(total: number, selected: number, summary: string, queued: number, wide: boolean): void {
+    setText(this.hqMeta, `Queue ${queued}/${SQUAD.queueMax}`);
+    setText(this.selectAllBtn, `Select all ${total}`);
+    setText(this.clearBtn, selected ? `Clear ${selected}` : 'Clear');
+    if (this.selectAllBtn.disabled !== (total === 0)) this.selectAllBtn.disabled = total === 0;
+    if (this.clearBtn.disabled !== (selected === 0)) this.clearBtn.disabled = selected === 0;
+    setText(this.selSummary, wide && selected ? summary : '');
+    this.selSummary.classList.toggle('hidden', !(wide && selected));
+  }
+
+  // ------------------------------------------------ panels
+
+  private show(panel: Panel): void {
+    this.openPanel = panel;
+    this.placePanel.classList.toggle('hidden', panel !== 'place');
+    this.trainPanel.classList.toggle('hidden', panel !== 'train');
+    this.exhibitPanel.classList.toggle('hidden', panel !== 'exhibit');
+  }
+
+  closePanels(): void {
+    this.openPanel = null;
+    this.placePanel.classList.add('hidden');
+    this.trainPanel.classList.add('hidden');
+    this.exhibitPanel.classList.add('hidden');
   }
 
   showPlacement(plan: PlacementPlan): void {
     const cfg = EXHIBITS[plan.kind];
-    this.panelTitle.textContent = cfg.name;
-    const tiles = plan.newPathTiles.length;
-    this.panelLines.innerHTML = '';
+    setText(this.placeTitle, cfg.name);
+    this.placeLines.innerHTML = '';
     const line = (label: string, value: string) => {
-      const row = el('div', 'place-line');
-      row.append(el('span', '', label), el('span', 'value', value));
-      this.panelLines.append(row);
+      const r = el('div', 'line');
+      r.append(el('span', '', label), el('span', 'value', value));
+      this.placeLines.append(r);
     };
-    line('Exhibit', money(plan.exhibitCost));
-    // The path is only known once the footprint fits and a route exists.
-    if (plan.viewingSpot) line(tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, money(plan.pathCost));
-    line('Earns per visit', money(cfg.pricePerVisit));
-    this.panelReason.textContent = plan.reason ?? '';
-    this.panelReason.classList.toggle('hidden', plan.reason === null);
-    this.confirmBtn.textContent = `Build ${money(plan.totalCost)}`;
+    line('Exhibit', formatMoney(plan.exhibitCost));
+    const tiles = plan.newPathTiles.length;
+    if (plan.viewingSpot) line(tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, formatMoney(plan.pathCost));
+    line('Earns per visit', formatMoney(cfg.pricePerVisit));
+    setText(this.placeReason, plan.reason ?? '');
+    this.placeReason.classList.toggle('hidden', plan.reason === null);
+    setText(this.confirmBtn, `Build ${formatMoney(plan.totalCost)}`);
     this.confirmBtn.disabled = !plan.valid;
-    this.panel.classList.remove('hidden');
+    this.show('place');
   }
 
-  hidePlacement(): void {
-    this.panel.classList.add('hidden');
+  showTraining(v: TrainingView): void {
+    this.queueKey = '';
+    this.updateTraining(v);
+    this.show('train');
   }
 
-  /** Puts the panel beside the ghost footprint without covering the bars. */
-  positionPlacement(ghost: ScreenRect): void {
-    if (this.panel.classList.contains('hidden')) return;
+  updateTraining(v: TrainingView): void {
+    for (const kind of UNIT_KINDS) {
+      const b = this.trainButtons.get(kind)!;
+      const disabled = !v.canTrain || v.queue.length >= SQUAD.queueMax || v.money < UNITS[kind].cost;
+      if (b.disabled !== disabled) b.disabled = disabled;
+    }
+    setText(this.queueLabel, v.queue.length ? `Queue ${v.queue.length}/${SQUAD.queueMax}` : 'Queue empty');
+    const key = v.queue.map((q) => q.id).join(',');
+    if (key !== this.queueKey) {
+      this.queueKey = key;
+      this.queueChips.innerHTML = '';
+      for (const q of v.queue) {
+        const chip = button('chip');
+        chip.dataset.id = String(q.id);
+        chip.setAttribute('aria-label', `Cancel ${UNITS[q.kind].name}`);
+        const icon = el('span', 'unit-icon');
+        icon.innerHTML = unitIcon(q.kind);
+        chip.append(icon, el('span', 'chip-bar'));
+        chip.addEventListener('click', () => this.handlers?.cancelQueued(q.id));
+        this.queueChips.append(chip);
+      }
+    }
+    v.queue.forEach((q, i) => {
+      const bar = this.queueChips.children[i]?.querySelector('.chip-bar') as HTMLElement | null;
+      if (bar) bar.style.setProperty('--p', `${Math.round(q.progress * 100)}%`);
+    });
+  }
+
+  showExhibit(v: ExhibitView): void {
+    this.updateExhibit(v);
+    this.show('exhibit');
+  }
+
+  updateExhibit(v: ExhibitView): void {
+    this.exhibitId = v.id;
+    setText(this.exTitle, v.name);
+    setText(this.exVisits, String(v.visits));
+    setText(this.exRevenue, formatMoney(v.revenue));
+    setText(this.exFence, v.fence);
+    setText(this.exAnimals, v.animals);
+    const canReinforce = v.reinforceCost !== null;
+    this.reinforceBtn.classList.toggle('hidden', !canReinforce);
+    if (canReinforce) {
+      setText(this.reinforceBtn, `Reinforce fence ${formatMoney(v.reinforceCost!)}`);
+      const disabled = v.money < v.reinforceCost!;
+      if (this.reinforceBtn.disabled !== disabled) this.reinforceBtn.disabled = disabled;
+    }
+    setText(
+      this.reinforceNote,
+      v.reinforced ? 'Concrete fence: 600 HP per segment.' : canReinforce ? 'Concrete: 600 HP per segment instead of 200.' : 'Fences can only be reinforced before the blackout.',
+    );
+  }
+
+  get shownExhibit(): number {
+    return this.openPanel === 'exhibit' ? this.exhibitId : 0;
+  }
+
+  /** Puts the open panel beside a screen rectangle without covering the bars. */
+  anchor(target: ScreenRect): void {
+    const panel = this.openPanel === 'place' ? this.placePanel : this.openPanel === 'train' ? this.trainPanel : this.openPanel === 'exhibit' ? this.exhibitPanel : null;
+    if (!panel) return;
     const gap = 10;
     const margin = 8;
     const { top, bottom } = this.insets;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const pw = this.panel.offsetWidth;
-    const ph = this.panel.offsetHeight;
+    const pw = panel.offsetWidth;
+    const ph = panel.offsetHeight;
+    let left = target.right + gap;
+    if (left + pw > vw - margin) left = target.left - gap - pw;
+    if (left < margin) left = Math.min(Math.max(margin, vw - pw - margin), target.right + gap);
+    const y = Math.max(top + margin, Math.min(target.top, vh - bottom - ph - margin));
+    const t = `translate(${Math.round(left)}px, ${Math.round(y)}px)`;
+    if (panel.style.transform !== t) panel.style.transform = t;
+  }
 
-    let left = ghost.right + gap;
-    if (left + pw > vw - margin) left = ghost.left - gap - pw;
-    if (left < margin) left = Math.min(Math.max(margin, vw - pw - margin), ghost.right + gap);
-    let y = ghost.top;
-    y = Math.max(top + margin, Math.min(y, vh - bottom - ph - margin));
-    this.panel.style.transform = `translate(${Math.round(left)}px, ${Math.round(y)}px)`;
+  // ------------------------------------------------ messages
+
+  showBanner(text: string, tone: 'warn' | 'danger' | 'good' | 'info', seconds = 3.5): void {
+    this.banner.textContent = text;
+    this.banner.dataset.tone = tone;
+    this.banner.classList.add('show');
+    window.clearTimeout(this.bannerTimer);
+    this.bannerTimer = window.setTimeout(() => this.banner.classList.remove('show'), seconds * 1000);
   }
 
   toast(message: string): void {
     this.toastEl.textContent = message;
     this.toastEl.classList.add('show');
     window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 1800);
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2000);
+  }
+
+  // ------------------------------------------------ briefing
+
+  showBriefing(v: BriefingView): void {
+    this.briefView = v;
+    this.quickBox.checked = v.quick;
+    this.debugBox.checked = v.debug;
+    this.renderBriefing();
+    this.briefing.classList.remove('hidden');
+  }
+
+  private renderBriefing(): void {
+    const v = this.briefView;
+    if (!v) return;
+    const seconds = this.quickBox.checked ? v.quickSeconds : v.buildSeconds;
+    const target = Math.round((v.revenueTarget * seconds) / v.buildSeconds);
+    setText(this.briefTitle, `Lights out in ${formatClock(seconds)}`);
+    setText(
+      this.briefIntro,
+      `${v.villain} will cut power to the electric fences in ${formatClock(seconds)} to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out.`,
+    );
+    setText(this.briefGoal2, `Also earn ${formatMoney(target)} before the blackout.`);
+  }
+
+  hideBriefing(): void {
+    this.briefing.classList.add('hidden');
+  }
+
+  get briefingOpen(): boolean {
+    return !this.briefing.classList.contains('hidden');
+  }
+
+  // ------------------------------------------------ end screen
+
+  showEnd(r: Result): void {
+    const b = this.endBody;
+    b.innerHTML = '';
+    const stars = el('div', 'stars');
+    stars.setAttribute('aria-label', `${r.stars} of 3 stars`);
+    for (let i = 0; i < 3; i++) stars.append(el('span', i < r.stars ? 'star on' : 'star', i < r.stars ? '★' : '☆'));
+    const head = el('div', `end-head ${r.won ? 'won' : 'lost'}`);
+    head.append(stars, el('h1', '', r.title), el('p', 'detail', r.detail));
+
+    const section = (title: string, rows: [string, string][], foot?: [string, string]) => {
+      const s = el('section');
+      s.append(el('h2', '', title));
+      const list = el('div', 'rows');
+      for (const [k, v] of rows) {
+        const r = el('div', 'line');
+        r.append(el('span', '', k), el('span', 'value', v));
+        list.append(r);
+      }
+      if (foot) {
+        const r = el('div', 'line total');
+        r.append(el('span', '', foot[0]), el('span', 'value', foot[1]));
+        list.append(r);
+      }
+      s.append(list);
+      return s;
+    };
+
+    const revenueRows: [string, string][] = r.exhibits.length
+      ? r.exhibits.map((e) => [`${e.name} · ${e.visits} visits`, formatMoney(e.revenue)])
+      : [['No exhibits built', '$0']];
+    const hit = r.revenue >= r.revenueTarget;
+    const s = r.spending;
+    const grid = el('div', 'end-grid');
+    grid.append(
+      section('Revenue', revenueRows, [`Total (★★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
+      section(
+        'Spending',
+        [
+          ['Exhibits', formatMoney(s.exhibits)],
+          ['Paths', formatMoney(s.paths)],
+          ['Reinforcement', formatMoney(s.reinforcement)],
+          ['Troops', formatMoney(s.troops)],
+        ],
+        ['Total', formatMoney(s.total)],
+      ),
+      section(
+        'Blackout',
+        [
+          ['Killed by raptors', String(r.casualties.raptor)],
+          ['Killed by the T. rex', String(r.casualties.trex)],
+          ['Trampled', String(r.casualties.stampede)],
+          ['Troops lost', `${r.troopsLost} of ${r.troopsTrained}`],
+          ['Dinosaurs secured', String(r.dinosSecured)],
+          ['Dinosaurs contained', String(r.dinosContained)],
+        ],
+        ['Visitors killed', String(r.casualtyTotal)],
+      ),
+    );
+    b.append(head, grid);
+    this.endScreen.classList.remove('hidden');
+    this.endScreen.scrollTop = 0;
+  }
+
+  // ------------------------------------------------ debug
+
+  showDebug(on: boolean): void {
+    const wasHidden = this.debugPanel.classList.contains('hidden');
+    this.debugPanel.classList.toggle('hidden', !on);
+    // Start folded on phones so it doesn't cover the map.
+    if (on && wasHidden && window.innerHeight < 500) this.debugPanel.classList.add('collapsed');
+  }
+
+  setDebugSpeed(speed: number): void {
+    for (const b of this.speedButtons) b.setAttribute('aria-pressed', b.dataset.speed === String(speed) ? 'true' : 'false');
+  }
+
+  setFps(fps: number | null): void {
+    this.fpsEl.classList.toggle('hidden', fps === null);
+    if (fps !== null) setText(this.fpsEl, `${Math.round(fps)} fps`);
   }
 }

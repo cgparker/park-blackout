@@ -1,4 +1,4 @@
-// Browser smoke test for the current milestone.
+// Browser smoke test: plays through the main flows with real taps, drags, and pinches.
 // Usage: npm run build && npx vite preview --port 4173 & node scripts/smoke.mjs [url] [outDir]
 // Needs a Playwright Chromium (`npx playwright install chromium`).
 import { chromium } from 'playwright';
@@ -7,6 +7,7 @@ import { mkdirSync } from 'node:fs';
 const url = process.argv[2] ?? 'http://localhost:4173/';
 const out = process.argv[3] ?? 'test-results';
 mkdirSync(out, { recursive: true });
+const T = 40;
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -14,54 +15,55 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
 };
 
-const browser = await chromium.launch({
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
-});
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const withQuery = (q) => url + (url.includes('?') ? '&' : '?') + q;
 
-async function phonePage() {
-  const ctx = await browser.newContext({
-    viewport: { width: 844, height: 390 },
-    deviceScaleFactor: 3,
-    isMobile: true,
-    hasTouch: true,
-  });
+async function open(ctxOptions, query = 'debug=1&seed=3') {
+  const ctx = await browser.newContext(ctxOptions);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(url + (url.includes('?') ? '&' : '?') + 'debug=1');
-  await page.waitForFunction(() => window.__pb?.scene?.cameras?.main, null, { timeout: 15000 });
+  await page.goto(withQuery(query));
+  await page.waitForFunction(() => window.__pb?.world, null, { timeout: 15000 });
   await page.waitForTimeout(300);
   return { ctx, page, errors };
 }
 
 const S = (page, fn, arg) => page.evaluate(fn, arg);
-const sceneState = (page) =>
-  S(page, () => {
+/** Polls until fn() is truthy (the HUD updates on the next frame, which is slow in software rendering). */
+async function soon(fn, timeout = 4000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const v = await fn();
+    if (v || Date.now() > end) return v;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+/** Runs the simulation forward without waiting on real time. */
+const advance = (page, seconds) =>
+  S(page, (s) => {
+    const w = window.__pb.world;
+    for (let i = 0; i < s * 60 && w.phase !== 'ended'; i++) w.update(1 / 60);
+  }, seconds);
+const cssOf = (page, wx, wy) => S(page, ([x, y]) => window.__pb.scene.worldToCss(x, y), [wx, wy]);
+const centerOn = (page, wx, wy, zoom = 0.8) =>
+  S(page, ([x, y, z]) => {
     const s = window.__pb.scene;
-    return {
-      money: window.__pb.state.money,
-      exhibits: window.__pb.state.exhibits.length,
-      zoom: s.zoomLevel,
-      cx: s.cx,
-      cy: s.cy,
-      placing: s.placingKind,
-      tile: s.placingTile,
-      plan: s.plan && { valid: s.plan.valid, reason: s.plan.reason, fp: s.plan.footprint, cost: s.plan.totalCost },
-    };
-  });
+    s.zoomLevel = z;
+    s.cx = x;
+    s.cy = y;
+    s.applyCamera();
+  }, [wx, wy, zoom]);
 
-/** Raw multi-touch through the DevTools protocol (Playwright has no pinch helper). */
 async function touch(page, cdp, type, points) {
-  await cdp.send('Input.dispatchTouchEvent', {
-    type,
-    touchPoints: points.map((p, i) => ({ x: p.x, y: p.y, id: p.id ?? i })),
-  });
+  await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((p, i) => ({ x: p.x, y: p.y, id: p.id ?? i })) });
   await page.waitForTimeout(16);
 }
 
-async function drag(page, cdp, from, to, steps = 8) {
+async function drag(page, cdp, from, to, { steps = 8, holdMs = 0 } = {}) {
   await touch(page, cdp, 'touchStart', [from]);
+  if (holdMs) await page.waitForTimeout(holdMs);
   for (let i = 1; i <= steps; i++) {
     await touch(page, cdp, 'touchMove', [{ x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps }]);
   }
@@ -82,111 +84,145 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
 
 // ---------------------------------------------------------------- phone, landscape
 {
-  const { ctx, page, errors } = await phonePage();
+  const { ctx, page, errors } = await open({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const cdp = await ctx.newCDPSession(page);
+  const world = (fn) => S(page, fn);
+
+  check('opens on the briefing', await page.isVisible('.briefing'));
+  check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 10:00');
+  await page.tap('#opt-quick');
+  check('quick test changes the countdown', (await page.textContent('.brief-title')) === 'Lights out in 3:00');
+  await page.tap('.start');
+  check('Start begins the build phase', (await world(() => window.__pb.world.phase)) === 'build' && !(await page.isVisible('.briefing')));
+  check('quick test sets a 3:00 build phase', (await world(() => window.__pb.world.buildPhaseSeconds)) === 180);
   await page.screenshot({ path: `${out}/1-start.png` });
 
-  const start = await sceneState(page);
-  check('starts with $15,000', start.money === 15000, `money=${start.money}`);
-  const renderer = await S(page, () => window.__pb.scene.game.renderer.type);
-  check('uses the WebGL renderer', renderer === 2, `type=${renderer}`);
-
-  // Pick the raptor pen: ghost appears mid-view.
+  // Build a raptor pen with the UI.
   await page.tap('.build-btn[data-kind="raptor"]');
-  await page.waitForTimeout(150);
-  let st = await sceneState(page);
-  check('choosing an exhibit shows a ghost', st.placing === 'raptor' && !!st.plan, JSON.stringify(st.plan));
-  const panelVisible = await page.isVisible('.place-panel');
-  check('placement panel is visible', panelVisible);
+  const spot = await cssOf(page, 9.5 * T, 8.5 * T);
+  await page.touchscreen.tap(spot.x, spot.y);
+  const plan = await world(() => window.__pb.scene.plan && { valid: window.__pb.scene.plan.valid, cost: window.__pb.scene.plan.totalCost });
+  check('tapping the map places a valid ghost', plan?.valid === true, JSON.stringify(plan));
+  await page.tap('.place-panel .primary');
+  const afterBuild = await world(() => ({ money: window.__pb.world.money, exhibits: window.__pb.world.exhibits.length }));
+  check('Build spends exhibit plus path', afterBuild.exhibits === 1 && afterBuild.money === 15000 - plan.cost, JSON.stringify(afterBuild));
 
-  // Tapping the HUD (top bar) must not move the ghost.
-  const tileBefore = st.tile;
-  await page.tap('.topbar', { position: { x: 420, y: 20 } });
-  st = await sceneState(page);
-  check('tapping the HUD does not touch the map', JSON.stringify(st.tile) === JSON.stringify(tileBefore) && st.placing === 'raptor');
+  // Visitors arrive and pay.
+  await advance(page, 60);
+  await page.waitForTimeout(120);
+  const econ = await world(() => ({ visits: window.__pb.world.exhibits[0].visits, revenue: window.__pb.world.revenue, money: window.__pb.world.money }));
+  check('visitors pay at the exhibit', econ.visits > 3 && econ.revenue === econ.visits * 25, JSON.stringify(econ));
+  check('HUD shows the money', await soon(async () => (await page.textContent('.stat.money .val')) === '$' + econ.money.toLocaleString('en-US')));
+  check('HUD shows the revenue', await soon(async () => (await page.textContent('.stat.revenue .val')) === '$' + econ.revenue.toLocaleString('en-US')));
+  check('clock counts down', await soon(async () => (await page.textContent('.clock .val')) === '2:00'), await page.textContent('.clock .val'));
+  await page.screenshot({ path: `${out}/2-visitors.png` });
 
-  // Tap the map to move the ghost to a specific tile.
-  const target = { x: 9, y: 10 };
-  const css = await S(page, (t) => window.__pb.scene.worldToCss((t.x + 0.5) * 40, (t.y + 0.5) * 40), target);
-  await page.touchscreen.tap(css.x, css.y);
+  // Exhibit panel and Reinforce.
+  const pen = await world(() => window.__pb.world.exhibits[0].footprint);
+  const penCenter = await cssOf(page, (pen.x + 2) * T, (pen.y + 2) * T);
+  await page.touchscreen.tap(penCenter.x, penCenter.y);
+  check('tapping an exhibit opens its panel', await page.isVisible('.exhibit-panel'));
+  await S(page, () => (window.__pb.world.money += 5000));
+  await page.tap('.exhibit-panel .reinforce');
+  check('Reinforce upgrades the fence', await world(() => window.__pb.world.exhibits[0].segments.every((s) => s.hp === 600)));
+  await page.tap('.exhibit-panel .close');
+
+  // Train at HQ.
+  await centerOn(page, 8 * T, 13 * T);
+  const hq = await cssOf(page, 3.5 * T, 15.5 * T);
+  await page.touchscreen.tap(hq.x, hq.y);
+  check('tapping HQ opens training', await page.isVisible('.train-panel'));
+  await S(page, () => (window.__pb.world.money += 20000));
+  await page.tap('.train-btn[data-kind="tranq"]');
+  await page.tap('.train-btn[data-kind="tranq"]');
+  await page.tap('.train-btn[data-kind="heavy"]');
+  await page.waitForTimeout(400);
+  check('queue shows three troops', await soon(async () => (await page.locator('.train-panel .chip').count()) === 3));
+  await page.tap('.train-panel .chip >> nth=2');
+  check('tapping a queued troop cancels it', (await world(() => window.__pb.world.queue.length)) === 2);
+  await page.tap('.train-btn[data-kind="heavy"]');
+  await advance(page, 32);
   await page.waitForTimeout(100);
-  st = await sceneState(page);
-  check('tapping the map moves the ghost', st.tile.x === target.x && st.tile.y === target.y, JSON.stringify(st.tile));
-  check('that spot is buildable', st.plan?.valid === true, JSON.stringify(st.plan));
-  await page.screenshot({ path: `${out}/2-ghost.png` });
+  check('troops appear beside HQ', (await world(() => window.__pb.world.units.length)) === 3);
+  await page.screenshot({ path: `${out}/3-training.png` });
+  await page.tap('.train-panel .close');
 
-  // Confirm.
-  const cost = st.plan.cost;
-  await page.tap('.place-panel .confirm');
-  await page.waitForTimeout(150);
-  st = await sceneState(page);
-  check('confirming builds the exhibit', st.exhibits === 1 && st.placing === null);
-  check('money drops by exhibit + path cost', st.money === 15000 - cost, `money=${st.money}, cost=${cost}`);
-  const hudMoney = await page.textContent('.money');
-  check('HUD money matches', hudMoney === '$' + st.money.toLocaleString('en-US'), hudMoney);
-  await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${out}/3-built.png` });
+  // Tap to select, tap to move.
+  const unit = await world(() => ({ id: window.__pb.world.units[0].id, x: window.__pb.world.units[0].x, y: window.__pb.world.units[0].y }));
+  const unitCss = await cssOf(page, unit.x, unit.y);
+  await page.touchscreen.tap(unitCss.x, unitCss.y);
+  check('tapping a troop selects it', JSON.stringify(await world(() => [...window.__pb.scene.selected])) === JSON.stringify([unit.id]));
+  check('Clear shows the selection count', await soon(async () => (await page.textContent('.sel-clear')) === 'Clear 1'));
+  const dest = await cssOf(page, 12.5 * T, 15.5 * T);
+  await page.touchscreen.tap(dest.x, dest.y);
+  check('tapping the ground orders a move', (await world(() => window.__pb.world.units[0].order)) === 'move');
+  await advance(page, 8);
+  const moved = await world(() => window.__pb.world.units[0]);
+  check('the troop walks there', Math.hypot(moved.x - 12.5 * T, moved.y - 15.5 * T) < 30, `${Math.round(moved.x)},${Math.round(moved.y)}`);
 
-  // Blocked spot: move the camera to the rocks, then tap them.
-  await page.tap('.build-btn[data-kind="pasture"]');
-  await S(page, () => {
-    const s = window.__pb.scene;
-    s.cx = 28.5 * 40;
-    s.cy = 14.5 * 40;
-    s.applyCamera();
-  });
-  const rock = await S(page, () => window.__pb.scene.worldToCss(28.5 * 40, 14.5 * 40));
-  await page.touchscreen.tap(rock.x, rock.y);
-  st = await sceneState(page);
-  check('rocks block placement', st.plan?.valid === false && st.plan?.reason === 'Blocked', JSON.stringify(st.plan));
-  check('build button disabled when blocked', await page.isDisabled('.place-panel .confirm'));
-  await page.screenshot({ path: `${out}/4-blocked.png` });
-  await page.tap('.place-panel .cancel');
-  st = await sceneState(page);
-  check('cancel leaves placement mode', st.placing === null);
+  // Select all and Clear.
+  await page.tap('.sel-clear');
+  check('Clear empties the selection', (await world(() => window.__pb.scene.selected.size)) === 0);
+  await page.tap('.sel-all');
+  check('Select all picks every troop', (await world(() => window.__pb.scene.selected.size)) === 3);
+  await page.tap('.sel-clear');
 
-  // Pan with one finger (drag right, so the view moves left).
-  const beforePan = await sceneState(page);
-  await drag(page, cdp, { x: 300, y: 200 }, { x: 500, y: 220 });
-  const afterPan = await sceneState(page);
-  check('one-finger drag pans', afterPan.cx < beforePan.cx - 50, `cx ${beforePan.cx.toFixed(0)} -> ${afterPan.cx.toFixed(0)}`);
-  check('a drag is not a tap', afterPan.placing === null && afterPan.exhibits === 1);
+  // Long-press, then drag, draws a selection box.
+  const box0 = await cssOf(page, 1.6 * T, 12.6 * T);
+  const box1 = await cssOf(page, 6.8 * T, 18.2 * T);
+  await drag(page, cdp, box0, box1, { holdMs: 420, steps: 10 });
+  const boxed = await world(() => window.__pb.scene.selected.size);
+  check('hold and drag box-selects troops near HQ', boxed === 2, `${boxed} selected`);
+  await page.screenshot({ path: `${out}/4-box.png` });
 
-  // Pinch in and out.
-  const z0 = (await sceneState(page)).zoom;
-  await pinch(page, cdp, { x: 420, y: 200 }, 120, 260);
-  const z1 = (await sceneState(page)).zoom;
-  check('pinch out zooms in', z1 > z0 * 1.4, `zoom ${z0.toFixed(2)} -> ${z1.toFixed(2)}`);
-  await pinch(page, cdp, { x: 420, y: 200 }, 300, 40);
-  const z2 = (await sceneState(page)).zoom;
-  check('pinch in zooms out', z2 < z1 * 0.5, `zoom ${z1.toFixed(2)} -> ${z2.toFixed(2)}`);
-  await page.screenshot({ path: `${out}/5-zoomed-out.png` });
+  // Pan and pinch still work.
+  const before = await world(() => ({ cx: window.__pb.scene.cx, zoom: window.__pb.scene.zoomLevel }));
+  await drag(page, cdp, { x: 600, y: 200 }, { x: 420, y: 200 });
+  const afterPan = await world(() => window.__pb.scene.cx);
+  check('a quick drag pans', afterPan > before.cx + 40, `${Math.round(before.cx)} -> ${Math.round(afterPan)}`);
+  await pinch(page, cdp, { x: 420, y: 200 }, 140, 300);
+  check('pinch zooms', (await world(() => window.__pb.scene.zoomLevel)) > before.zoom * 1.5);
 
-  // Zoomed all the way out the whole map should fit in the play area.
-  const fits = await S(page, () => {
-    const s = window.__pb.scene;
-    const cam = s.cameras.main;
-    const v = cam.worldView;
-    return v.x <= 0 && v.y <= 0 && v.right >= 1600 && v.bottom >= 960;
-  });
-  check('min zoom shows the whole map', fits);
-
-  // Limit: T. rex is 1 per level. Use money cheat, build one, then the button should disable.
-  await S(page, () => {
-    window.__pb.state.money = 100000;
-    window.__pb.scene.refreshHud();
-  });
-  await page.tap('.build-btn[data-kind="trex"]');
-  const tx = await S(page, () => window.__pb.scene.worldToCss(30 * 40, 19 * 40));
-  await page.touchscreen.tap(tx.x, tx.y);
-  st = await sceneState(page);
-  if (st.plan?.valid) await page.tap('.place-panel .confirm');
-  await page.waitForTimeout(100);
-  const trexDisabled = await page.isDisabled('.build-btn[data-kind="trex"]');
-  const trexMeta = await page.textContent('.build-btn[data-kind="trex"] .meta');
-  check('T. rex button locks after one', trexDisabled && trexMeta === 'Limit reached', trexMeta);
+  // Blackout from the debug panel.
+  await page.tap('.dbg-head');
+  if (!(await page.isVisible('.dbg-btn >> text=Blackout now'))) await page.tap('.dbg-head');
+  await page.tap('.dbg-btn >> text=Blackout now');
   await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/6-two-exhibits.png` });
+  check('Blackout now cuts the power', (await world(() => window.__pb.world.phase)) === 'blackout');
+  check('the blackout banner shows', await soon(async () => (await page.textContent('.banner')).includes('cut the power')));
+  check('build buttons hide after the blackout', await soon(async () => !(await page.isVisible('.build-group'))));
+  await advance(page, 26);
+  const fence = await world(() => Math.min(...window.__pb.world.exhibits[0].segments.map((s) => s.hp)));
+  check('raptors are breaking the concrete fence after 20 s', fence < 600, `weakest ${fence}`);
+
+  // Attack order on a dinosaur.
+  const target = await world(() => {
+    const d = window.__pb.world.dinos.find((d) => d.state === 'loose' || d.state === 'penned');
+    d.pause = 999;
+    return { id: d.id, x: d.x, y: d.y };
+  });
+  await S(page, () => {
+    const s = window.__pb.scene;
+    s.selected = new Set(window.__pb.world.units.map((u) => u.id));
+  });
+  await centerOn(page, target.x, target.y);
+  const tc = await cssOf(page, target.x, target.y);
+  await page.touchscreen.tap(tc.x, tc.y);
+  const orders = await world(() => window.__pb.world.units.map((u) => u.order + ':' + u.targetId));
+  check('tapping a dinosaur orders an attack', orders.every((o) => o === `attack:${target.id}`), orders.join(' '));
+  await page.screenshot({ path: `${out}/5-attack.png` });
+
+  // End screen and Retry.
+  await S(page, () => (window.__pb.world.casualties.raptor = 10));
+  await advance(page, 0.1);
+  check('ten casualties show the end screen', await soon(() => page.isVisible('.end'), 8000));
+  check('end screen names the loss', (await page.textContent('.end h1')) === 'The park has been shut down');
+  await page.screenshot({ path: `${out}/6-end.png` });
+  await page.tap('.retry');
+  await page.waitForTimeout(400);
+  const fresh = await world(() => ({ phase: window.__pb.world.phase, exhibits: window.__pb.world.exhibits.length }));
+  check('Retry starts a fresh game', fresh.phase === 'briefing' && fresh.exhibits === 0 && (await soon(() => page.isVisible('.briefing'))), JSON.stringify(fresh));
+  check('Retry keeps the quick-test choice', await page.isChecked('#opt-quick'));
 
   check('no console errors on phone', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -194,47 +230,54 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
 
 // ---------------------------------------------------------------- phone, portrait
 {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
-  const page = await ctx.newPage();
-  await page.goto(url);
-  await page.waitForTimeout(500);
+  const { ctx, page } = await open({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   check('portrait shows the rotate message', await page.isVisible('#rotate'));
-  await page.screenshot({ path: `${out}/7-portrait.png` });
   await ctx.close();
 }
 
 // ---------------------------------------------------------------- desktop, mouse
 {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(url + '?debug=1');
-  await page.waitForFunction(() => window.__pb?.scene?.cameras?.main, null, { timeout: 15000 });
+  const { ctx, page, errors } = await open({ viewport: { width: 1280, height: 720 } });
+  await page.click('.start');
+  await S(page, () => {
+    const w = window.__pb.world;
+    w.money = 50000;
+  });
   const z0 = await S(page, () => window.__pb.scene.zoomLevel);
   await page.mouse.move(640, 360);
   await page.mouse.wheel(0, -400);
   await page.waitForTimeout(100);
-  const z1 = await S(page, () => window.__pb.scene.zoomLevel);
-  check('mouse wheel zooms', z1 > z0, `${z0.toFixed(2)} -> ${z1.toFixed(2)}`);
+  check('mouse wheel zooms', (await S(page, () => window.__pb.scene.zoomLevel)) > z0);
+  await centerOn(page, 8 * T, 14 * T);
 
   await page.click('.build-btn[data-kind="pasture"]');
-  // Click a little left of the middle of the play area.
-  const p = await S(page, () => {
-    const s = window.__pb.scene;
-    const cam = s.cameras.main;
-    return { x: (cam.x + cam.width * 0.4) / s.dpr, y: (cam.y + cam.height * 0.5) / s.dpr };
-  });
+  const p = await cssOf(page, 10.5 * T, 9.5 * T);
   await page.mouse.click(p.x, p.y);
-  const placed = await S(page, () => ({ kind: window.__pb.scene.placingKind, valid: window.__pb.scene.plan?.valid }));
-  if (placed.valid) await page.click('.place-panel .confirm');
-  const built = await S(page, () => window.__pb.state.exhibits.map((e) => e.kind));
-  check('mouse click places and builds', placed.kind === 'pasture' && built.length === 1 && built[0] === 'pasture', JSON.stringify({ placed, built }));
+  if (await S(page, () => window.__pb.scene.plan?.valid)) await page.click('.place-panel .primary');
+  check('mouse click places and builds', (await S(page, () => window.__pb.world.exhibits.length)) === 1);
+
+  await S(page, () => {
+    const w = window.__pb.world;
+    for (let i = 0; i < 3; i++) window.__pb.scene.hud.handlers.train('tranq');
+  });
+  await advance(page, 30);
+  const units = await S(page, () => window.__pb.world.units.map((u) => ({ x: u.x, y: u.y })));
+  const a = await cssOf(page, Math.min(...units.map((u) => u.x)) - 20, Math.min(...units.map((u) => u.y)) - 20);
+  const b = await cssOf(page, Math.max(...units.map((u) => u.x)) + 20, Math.max(...units.map((u) => u.y)) + 20);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 });
+  await page.mouse.move(b.x, b.y, { steps: 4 });
+  await page.mouse.up();
+  check('left-drag box-selects', (await S(page, () => window.__pb.scene.selected.size)) === 3);
+  const r = await cssOf(page, 14.5 * T, 16.5 * T);
+  await page.mouse.click(r.x, r.y, { button: 'right' });
+  check('right-click orders a move', (await S(page, () => window.__pb.world.units.every((u) => u.order === 'move'))) === true);
   await page.keyboard.down('d');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(250);
   await page.keyboard.up('d');
   check('no console errors on desktop', errors.length === 0, errors.join(' | '));
-  await page.screenshot({ path: `${out}/8-desktop.png` });
+  await page.screenshot({ path: `${out}/7-desktop.png` });
   await ctx.close();
 }
 

@@ -1,45 +1,30 @@
 import Phaser from 'phaser';
-import {
-  ANIMAL_IDLE,
-  CAMERA,
-  COLORS,
-  ECONOMY,
-  EXHIBITS,
-  EXHIBIT_KINDS,
-  INPUT,
-  MAP,
-  type AnimalKind,
-  type ExhibitKind,
-} from '../config';
-import { createGrid, Tile, type Grid } from '../core/grid';
+import { BLACKOUT, CAMERA, COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, MAP, SCORING, SIM, UNITS, type ExhibitKind, type UnitKind } from '../config';
+import { reinforceCost } from '../core/exhibit';
+import type { Rect } from '../core/grid';
 import { planPlacement, type PlacementPlan } from '../core/placement';
-import { GameState, type Exhibit } from '../core/state';
-import type { Hud } from '../ui/hud';
+import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, orderAttack, orderMove } from '../core/units';
+import { World } from '../core/world';
+import type { Params } from '../params';
+import { WorldView } from '../render/worldView';
+import { formatMoney, type ExhibitView, type Hud } from '../ui/hud';
 
 const T = MAP.tileSize;
 const WORLD_W = MAP.cols * T;
 const WORLD_H = MAP.rows * T;
-const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
-interface TouchInfo {
+interface PointerInfo {
   x: number;
   y: number;
   downX: number;
   downY: number;
+  downTime: number;
+  touch: boolean;
 }
 
-type Gesture = 'idle' | 'press' | 'pan' | 'pinch';
-
-interface Animal {
-  kind: AnimalKind;
-  obj: Phaser.GameObjects.Ellipse | Phaser.GameObjects.Triangle | Phaser.GameObjects.Container;
-  bounds: { x0: number; y0: number; x1: number; y1: number };
-  target: { x: number; y: number } | null;
-  wait: number;
-}
+type Gesture = 'idle' | 'press' | 'pan' | 'pinch' | 'box';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 
 /** Keeps the camera center inside the map (plus a margin), or centers the map when it all fits. */
 function clampAxis(center: number, view: number, world: number, margin: number): number {
@@ -47,259 +32,363 @@ function clampAxis(center: number, view: number, world: number, margin: number):
   return clamp(center, view / 2 - margin, world + margin - view / 2);
 }
 
-/** Turns `from` toward `to` by at most `maxStep` radians, the short way around. */
-function turnToward(from: number, to: number, maxStep: number): number {
-  const diff = Math.atan2(Math.sin(to - from), Math.cos(to - from));
-  return from + clamp(diff, -maxStep, maxStep);
-}
-
-/** Cheap repeatable noise so rocks and water look the same every time. */
-function hash(i: number): number {
-  const s = Math.sin(i * 127.1 + 311.7) * 43758.5453;
-  return s - Math.floor(s);
+/** Settings that survive a Retry. */
+interface Session {
+  quick: boolean;
+  debug: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
   private readonly hud: Hud;
   private readonly dpr: number;
-  private grid!: Grid;
-  private state!: GameState;
+  private readonly params: Params;
+  private readonly session: Session;
+
+  private world!: World;
+  private view!: WorldView;
+  private ghostGfx!: Phaser.GameObjects.Graphics;
 
   /** Zoom in screen terms: 1 = one world pixel per CSS pixel. */
   private zoomLevel = CAMERA.defaultZoom;
-  private cx = WORLD_W / 2;
-  private cy = WORLD_H / 2;
+  private cx = 0;
+  private cy = 0;
 
-  private readonly touches = new Map<number, TouchInfo>();
+  private pointers = new Map<number, PointerInfo>();
   private gesture: Gesture = 'idle';
   private panStart = { cx: 0, cy: 0 };
   private pinchStart = { dist: 1, zoom: 1, anchorX: 0, anchorY: 0 };
+  private boxStart = { x: 0, y: 0 };
+  private boxEnd = { x: 0, y: 0 };
+  private rightDown: { x: number; y: number } | null = null;
   private keys: Record<string, Phaser.Input.Keyboard.Key> = {};
-
-  private pathGfx!: Phaser.GameObjects.Graphics;
-  private ghostGfx!: Phaser.GameObjects.Graphics;
-  private readonly exhibitGfx = new Map<number, Phaser.GameObjects.Graphics>();
-  private readonly animals: Animal[] = [];
 
   private placingKind: ExhibitKind | null = null;
   private placingTile = { x: 0, y: 0 };
   private plan: PlacementPlan | null = null;
 
-  constructor(hud: Hud, dpr: number) {
+  private selected = new Set<number>();
+  private accumulator = 0;
+  private speed = 1;
+  private wasAllClear = false;
+  private escapeToasts = new Map<string, number>();
+  private showFps = false;
+  private resizeHandler: (() => void) | null = null;
+
+  constructor(hud: Hud, dpr: number, params: Params) {
     super({ key: 'game' });
     this.hud = hud;
     this.dpr = dpr;
+    this.params = params;
+    this.session = { quick: false, debug: params.debug };
   }
 
   create(): void {
-    this.grid = createGrid(MAP);
-    this.state = new GameState(this.grid, ECONOMY.startingMoney);
-
-    this.drawGround();
-    this.pathGfx = this.add.graphics().setDepth(1);
-    this.drawPaths();
-    this.drawHQ();
+    // Everything per-game is set up here, because Retry restarts the scene on the same instance.
+    this.world = new World({ seed: this.params.seed ?? undefined, buildPhaseSeconds: this.params.buildPhaseSeconds ?? undefined });
+    this.view = new WorldView(this, this.world, this.dpr);
+    this.view.create();
     this.ghostGfx = this.add.graphics().setDepth(10);
+    this.pointers = new Map();
+    this.gesture = 'idle';
+    this.rightDown = null;
+    this.placingKind = null;
+    this.plan = null;
+    this.selected = new Set();
+    this.accumulator = 0;
+    this.wasAllClear = false;
+    this.escapeToasts = new Map();
+    this.zoomLevel = CAMERA.defaultZoom;
 
     this.setupCamera();
     this.setupInput();
+    this.wireHud();
+    this.hud.reset();
+    this.hud.showDebug(this.session.debug);
+    this.hud.setDebugSpeed(this.speed);
+    this.view.setGridVisible((document.getElementById('dbg-grid') as HTMLInputElement | null)?.checked ?? false);
+    this.view.setHpVisible((document.getElementById('dbg-hp') as HTMLInputElement | null)?.checked ?? false);
+    this.hud.showBriefing({
+      buildSeconds: this.world.buildPhaseSeconds,
+      quickSeconds: BLACKOUT.quickBuildPhaseSeconds,
+      revenueTarget: this.world.revenueTarget,
+      villain: BLACKOUT.villainName,
+      quick: this.session.quick,
+      debug: this.session.debug,
+    });
 
-    this.hud.onSelectExhibit = (kind) => this.togglePlacement(kind);
-    this.hud.onConfirm = () => this.confirmPlacement();
-    this.hud.onCancel = () => this.endPlacement();
-    this.refreshHud();
+    if (this.params.debug) (window as unknown as { __pb: unknown }).__pb = { scene: this, world: this.world };
 
-    if (DEBUG) (window as unknown as { __pb: unknown }).__pb = { scene: this, state: this.state, grid: this.grid };
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (this.resizeHandler) this.scale.off(Phaser.Scale.Events.RESIZE, this.resizeHandler);
+      this.resizeHandler = null;
+    });
   }
 
-  update(_time: number, deltaMs: number): void {
+  update(time: number, deltaMs: number): void {
     const dt = Math.min(deltaMs, 100) / 1000;
     this.updateKeyboardPan(dt);
-    this.updateAnimals(dt);
-    if (this.plan) this.positionPanel();
+    this.updateLongPress(time);
+
+    const w = this.world;
+    if (w.phase !== 'briefing' && w.phase !== 'ended') {
+      this.accumulator += dt * this.speed * w.timeScale;
+      let steps = 0;
+      while (this.accumulator >= SIM.step && steps < SIM.maxStepsPerFrame) {
+        w.update(SIM.step);
+        this.accumulator -= SIM.step;
+        steps++;
+      }
+      if (steps >= SIM.maxStepsPerFrame) this.accumulator = 0;
+    }
+
+    const events = w.events;
+    w.events = [];
+    this.view.handle(events);
+    this.handleEvents(events);
+
+    for (const id of this.selected) if (!w.unitById(id)) this.selected.delete(id);
+    this.view.render(dt, { selected: this.selected, box: this.gesture === 'box' ? this.boxRect() : null, press: this.pressRing(time) });
+    this.refreshHud();
+    if (this.showFps) this.hud.setFps(this.game.loop.actualFps);
   }
 
-  // ---------------------------------------------------------------- drawing
+  // ---------------------------------------------------------------- HUD wiring
 
-  private drawGround(): void {
-    const g = this.add.graphics().setDepth(0);
-    g.fillStyle(COLORS.grass, 1).fillRect(0, 0, WORLD_W, WORLD_H);
-
-    g.lineStyle(1, COLORS.gridLine, 0.12);
-    for (let x = 0; x <= MAP.cols; x++) g.lineBetween(x * T, 0, x * T, WORLD_H);
-    for (let y = 0; y <= MAP.rows; y++) g.lineBetween(0, y * T, WORLD_W, y * T);
-
-    for (let y = 0; y < MAP.rows; y++) {
-      for (let x = 0; x < MAP.cols; x++) {
-        const t = this.grid.get(x, y);
-        const n = hash(y * MAP.cols + x);
-        if (t === Tile.Water) {
-          g.fillStyle(COLORS.water, 1).fillRect(x * T, y * T, T, T);
-          g.fillStyle(COLORS.waterLight, 0.5).fillEllipse(x * T + 10 + n * 18, y * T + 12 + n * 14, 12, 4);
-        } else if (t === Tile.Rock) {
-          const inset = 3 + n * 3;
-          g.fillStyle(COLORS.rock, 1).fillRoundedRect(x * T + inset, y * T + inset, T - inset * 2, T - inset * 2, 9);
-          g.fillStyle(COLORS.rockLight, 0.9).fillCircle(x * T + 13 + n * 6, y * T + 13, 4);
+  private wireHud(): void {
+    this.hud.handlers = {
+      selectExhibit: (kind) => this.togglePlacement(kind),
+      confirmPlacement: () => this.confirmPlacement(),
+      cancelPlacement: () => this.endPlacement(),
+      start: (o) => this.startGame(o.quick, o.debug),
+      retry: () => this.scene.restart(),
+      openTraining: () => this.openTraining(),
+      train: (kind) => this.train(kind),
+      cancelQueued: (id) => cancelQueued(this.world, id),
+      reinforce: (id) => this.reinforce(id),
+      closePanel: () => this.closePanels(),
+      selectAll: () => {
+        this.selected = new Set(this.world.units.map((u) => u.id));
+      },
+      clearSelection: () => this.selected.clear(),
+      debugSpeed: (s) => {
+        this.speed = s;
+        this.hud.setDebugSpeed(s);
+      },
+      debugBlackout: () => {
+        if (this.world.phase === 'build') this.world.startBlackout();
+      },
+      debugMoney: () => {
+        this.world.money += 10000;
+      },
+      debugToggle: (name, on) => {
+        if (name === 'grid') this.view.setGridVisible(on);
+        if (name === 'hp') this.view.setHpVisible(on);
+        if (name === 'fps') {
+          this.showFps = on;
+          this.hud.setFps(on ? this.game.loop.actualFps : null);
         }
-      }
-    }
-
-    g.lineStyle(4, 0x0b160e, 1).strokeRect(0, 0, WORLD_W, WORLD_H);
-  }
-
-  private drawPaths(): void {
-    const g = this.pathGfx;
-    g.clear();
-    g.fillStyle(COLORS.path, 1);
-    for (let y = 0; y < MAP.rows; y++) {
-      for (let x = 0; x < MAP.cols; x++) {
-        if (this.grid.isPathNetwork(x, y)) g.fillRect(x * T, y * T, T, T);
-      }
-    }
-    // Gate: two posts and a bar on the map edge.
-    const gx = MAP.gate.x * T;
-    const gy = MAP.gate.y * T;
-    g.fillStyle(COLORS.gate, 1);
-    g.fillRect(gx + 2, gy - 4, 7, T + 8);
-    g.fillRect(gx + 2, gy - 8, 14, 7);
-    g.fillRect(gx + 2, gy + T + 1, 14, 7);
-  }
-
-  private drawHQ(): void {
-    const { x, y, w, h } = MAP.hq;
-    const px = x * T + 3;
-    const py = y * T + 3;
-    const pw = w * T - 6;
-    const ph = h * T - 6;
-    const g = this.add.graphics().setDepth(4);
-    g.fillStyle(COLORS.hq, 1).fillRoundedRect(px, py, pw, ph, 10);
-    g.lineStyle(3, COLORS.hqTrim, 1).strokeRoundedRect(px, py, pw, ph, 10);
-    g.lineStyle(2, COLORS.hqTrim, 0.45).strokeCircle(px + pw / 2, py + ph / 2, Math.min(pw, ph) * 0.36);
-    const label = this.add
-      .text(px + pw / 2, py + ph / 2, 'HQ', {
-        fontFamily: '-apple-system, system-ui, sans-serif',
-        fontSize: '26px',
-        fontStyle: 'bold',
-        color: '#e8f0ff',
-      })
-      .setOrigin(0.5)
-      .setDepth(5);
-    label.setResolution(this.dpr * 2);
-  }
-
-  private drawExhibit(ex: Exhibit): void {
-    let g = this.exhibitGfx.get(ex.id);
-    if (!g) {
-      g = this.add.graphics().setDepth(2);
-      this.exhibitGfx.set(ex.id, g);
-    }
-    g.clear();
-
-    const { x, y, w, h } = ex.footprint;
-    // Ground inside the fence line (the fence runs through the centers of the border tiles).
-    g.fillStyle(COLORS.interior[ex.kind], 1).fillRect(x * T + T / 2, y * T + T / 2, (w - 1) * T, (h - 1) * T);
-
-    const color = ex.reinforced ? COLORS.fenceReinforced : COLORS.fencePowered;
-    const width = ex.reinforced ? 6 : 4;
-    const segs = ex.segments;
-    const n = segs.length;
-    for (let i = 0; i < n; i++) {
-      const s = segs[i];
-      const alpha = 0.35 + 0.65 * (s.hp / s.maxHp);
-      const sx = (s.x + 0.5) * T;
-      const sy = (s.y + 0.5) * T;
-      g.lineStyle(width, color, alpha);
-      for (const nb of [segs[(i - 1 + n) % n], segs[(i + 1) % n]]) {
-        const reach = T / 2 - 2; // small gap shows where one segment ends
-        g.lineBetween(sx, sy, sx + Math.sign(nb.x - s.x) * reach, sy + Math.sign(nb.y - s.y) * reach);
-      }
-      g.fillStyle(color, alpha).fillCircle(sx, sy, width * 0.7);
-    }
-
-    // Viewing spot: where visitors will stand and pay.
-    const vx = (ex.viewingSpot.x + 0.5) * T;
-    const vy = (ex.viewingSpot.y + 0.5) * T;
-    g.fillStyle(0x3b2f20, 0.9).fillCircle(vx, vy, 7);
-    g.lineStyle(2, COLORS.viewingSpot, 0.9).strokeCircle(vx, vy, 7);
-  }
-
-  private drawGhost(): void {
-    const g = this.ghostGfx;
-    g.clear();
-    const plan = this.plan;
-    if (!plan) return;
-
-    g.fillStyle(COLORS.path, 0.8);
-    for (const p of plan.newPathTiles) g.fillRect(p.x * T + 5, p.y * T + 5, T - 10, T - 10);
-
-    const color = plan.valid ? COLORS.ghostValid : COLORS.ghostInvalid;
-    const { x, y, w, h } = plan.footprint;
-    g.fillStyle(color, 0.28).fillRect(x * T, y * T, w * T, h * T);
-    g.lineStyle(3, color, 0.95).strokeRect(x * T + 1.5, y * T + 1.5, w * T - 3, h * T - 3);
-    g.lineStyle(2, color, 0.7).strokeRect(x * T + T / 2, y * T + T / 2, (w - 1) * T, (h - 1) * T);
-
-    if (plan.viewingSpot) {
-      g.fillStyle(COLORS.viewingSpot, 0.95).fillCircle((plan.viewingSpot.x + 0.5) * T, (plan.viewingSpot.y + 0.5) * T, 6);
-    }
-  }
-
-  // ---------------------------------------------------------------- animals
-
-  private spawnAnimals(ex: Exhibit): void {
-    const cfg = EXHIBITS[ex.kind];
-    const { x, y, w, h } = ex.footprint;
-    const pad = cfg.animal === 'trex' ? 26 : 14;
-    const bounds = {
-      x0: x * T + T / 2 + pad,
-      y0: y * T + T / 2 + pad,
-      x1: (x + w - 1) * T + T / 2 - pad,
-      y1: (y + h - 1) * T + T / 2 - pad,
+      },
     };
-    for (let i = 0; i < cfg.animalCount; i++) {
-      const obj = this.makeAnimal(cfg.animal, rand(bounds.x0, bounds.x1), rand(bounds.y0, bounds.y1));
-      obj.rotation = rand(-Math.PI, Math.PI);
-      this.animals.push({ kind: cfg.animal, obj, bounds, target: null, wait: rand(0, 1.5) });
+  }
+
+  private startGame(quick: boolean, debug: boolean): void {
+    this.session.quick = quick;
+    this.session.debug = debug;
+    this.world.setBuildPhase(quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
+    this.hud.showDebug(debug);
+    this.hud.hideBriefing();
+    this.world.start();
+  }
+
+  private refreshHud(): void {
+    const w = this.world;
+    let penned = 0;
+    let loose = 0;
+    let contained = 0;
+    for (const d of w.dinos) {
+      if (d.state === 'penned') penned++;
+      else if (d.state === 'loose') loose++;
+      else if (d.state === 'contained') contained++;
+    }
+    this.hud.setTop({
+      phase: w.phase,
+      money: w.money,
+      revenue: w.revenue,
+      revenueTarget: w.revenueTarget,
+      clockSeconds: w.clockSeconds,
+      casualties: w.casualtyTotal,
+      casualtyLimit: SCORING.casualtyLimit,
+      penned,
+      loose,
+      secured: w.dinosSecured,
+      contained,
+      allClear: w.allClear,
+    });
+    const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
+    this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
+
+    let tranq = 0;
+    let heavy = 0;
+    for (const id of this.selected) {
+      const u = w.unitById(id);
+      if (u?.kind === 'tranq') tranq++;
+      else if (u?.kind === 'heavy') heavy++;
+    }
+    const parts = [tranq ? `${tranq} Tranq` : '', heavy ? `${heavy} Heavy` : ''].filter(Boolean);
+    this.hud.setTroops(w.units.length, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
+
+    switch (this.hud.panel) {
+      case 'place':
+        this.anchorToTiles(this.plan?.footprint);
+        break;
+      case 'train':
+        this.hud.updateTraining(this.trainingView());
+        this.anchorToTiles(MAP.hq);
+        break;
+      case 'exhibit': {
+        const ex = w.exhibitById(this.hud.shownExhibit);
+        if (ex) {
+          this.hud.updateExhibit(this.exhibitView(ex.id)!);
+          this.anchorToTiles(ex.footprint);
+        }
+        break;
+      }
     }
   }
 
-  private makeAnimal(kind: AnimalKind, x: number, y: number): Animal['obj'] {
-    const color = COLORS.animal[kind];
-    switch (kind) {
-      case 'triceratops':
-        return this.add.ellipse(x, y, 32, 20, color).setStrokeStyle(2, 0x0b2a12, 0.85).setDepth(5);
-      case 'raptor':
-        return this.add.triangle(x, y, 0, 0, 22, 7.5, 0, 15, color).setStrokeStyle(1.5, 0x4a2500, 0.9).setDepth(5);
-      case 'trex': {
-        const body = this.add.circle(0, 0, 21, color).setStrokeStyle(2.5, 0x3a0a0a, 0.9);
-        const notch = this.add.rectangle(18, 0, 13, 8, COLORS.trexNotch);
-        return this.add.container(x, y, [body, notch]).setDepth(5);
-      }
-    }
+  private anchorToTiles(r: Rect | undefined): void {
+    if (!r) return;
+    const tl = this.worldToCss(r.x * T, r.y * T);
+    const br = this.worldToCss((r.x + r.w) * T, (r.y + r.h) * T);
+    this.hud.anchor({ left: tl.x, top: tl.y, right: br.x, bottom: br.y });
   }
 
-  private updateAnimals(dt: number): void {
-    for (const a of this.animals) {
-      if (a.wait > 0) {
-        a.wait -= dt;
-        continue;
+  private handleEvents(events: readonly import('../core/world').GameEvent[]): void {
+    const w = this.world;
+    for (const e of events) {
+      switch (e.type) {
+        case 'warning':
+          this.hud.showBanner(`${BLACKOUT.villainName} cuts the power in 1:00`, 'warn');
+          break;
+        case 'blackout':
+          this.endPlacement();
+          if (this.hud.panel === 'exhibit') this.closePanels();
+          this.hud.showBanner(`${BLACKOUT.villainName} has cut the power.`, 'danger', 4);
+          break;
+        case 'escaped': {
+          const last = this.escapeToasts.get(e.kind) ?? -Infinity;
+          if (w.time - last > 3) {
+            this.escapeToasts.set(e.kind, w.time);
+            const name = e.kind === 'raptor' ? 'Raptors are loose!' : e.kind === 'trex' ? 'The T. rex is loose!' : 'A Triceratops broke out!';
+            this.hud.toast(name);
+          }
+          break;
+        }
+        case 'trained':
+          this.hud.toast(`${UNITS[e.kind].name} ready`);
+          break;
+        case 'unitLost':
+          this.hud.toast(`${UNITS[e.kind].name} lost`);
+          break;
+        case 'secured':
+          this.hud.toast(`${DINOS[e.kind].name} secured`);
+          break;
+        case 'powerRestored':
+          this.hud.showBanner(
+            e.contained ? `Power restored. ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : 'Power restored.',
+            'good',
+            4,
+          );
+          break;
+        case 'ended':
+          this.endPlacement();
+          this.closePanels();
+          this.time.delayedCall(1200, () => {
+            if (w.result) this.hud.showEnd(w.result);
+          });
+          break;
       }
-      if (!a.target) {
-        a.target = { x: rand(a.bounds.x0, a.bounds.x1), y: rand(a.bounds.y0, a.bounds.y1) };
-      }
-      const dx = a.target.x - a.obj.x;
-      const dy = a.target.y - a.obj.y;
-      const d = Math.hypot(dx, dy);
-      const idle = ANIMAL_IDLE[a.kind];
-      if (d < 1) {
-        a.target = null;
-        a.wait = rand(idle.pauseSeconds[0], idle.pauseSeconds[1]);
-        continue;
-      }
-      const step = Math.min(d, idle.speed * dt);
-      a.obj.x += (dx / d) * step;
-      a.obj.y += (dy / d) * step;
-      a.obj.rotation = turnToward(a.obj.rotation, Math.atan2(dy, dx), 6 * dt);
     }
+    const allClear = w.allClear;
+    if (allClear && !this.wasAllClear && w.phase === 'blackout') this.hud.showBanner('All clear. Fast-forwarding to power-on.', 'good');
+    this.wasAllClear = allClear;
+  }
+
+  // ---------------------------------------------------------------- panels
+
+  private closePanels(): void {
+    if (this.placingKind) this.endPlacement();
+    this.hud.closePanels();
+  }
+
+  private trainingView() {
+    const w = this.world;
+    return {
+      money: w.money,
+      canTrain: canTrainNow(w),
+      queue: w.queue.map((q, i) => ({
+        id: q.id,
+        kind: q.kind,
+        progress: i === 0 ? 1 - q.left / UNITS[q.kind].trainSeconds : 0,
+      })),
+    };
+  }
+
+  private openTraining(): void {
+    if (this.world.phase === 'briefing' || this.world.phase === 'ended') return;
+    if (this.placingKind) this.endPlacement();
+    this.hud.showTraining(this.trainingView());
+    this.anchorToTiles(MAP.hq);
+  }
+
+  private train(kind: UnitKind): void {
+    if (!enqueueUnit(this.world, kind)) this.hud.toast(this.world.money < UNITS[kind].cost ? 'Not enough money' : 'The queue is full');
+  }
+
+  private exhibitView(id: number): ExhibitView | null {
+    const w = this.world;
+    const ex = w.exhibitById(id);
+    if (!ex) return null;
+    const segs = ex.segments;
+    const gaps = segs.filter((s) => s.hp <= 0).length;
+    const weakest = Math.min(...segs.filter((s) => s.hp > 0).map((s) => s.hp));
+    const max = segs[0].maxHp;
+    const material = ex.reinforced ? 'Concrete' : 'Chain-link';
+    let fence: string;
+    if (w.powerOn) fence = `${material}, powered`;
+    else if (gaps) fence = `${gaps} ${gaps === 1 ? 'gap' : 'gaps'}, weakest ${Number.isFinite(weakest) ? weakest : 0}/${max}`;
+    else fence = `${material}, weakest ${weakest}/${max}`;
+    const kind = EXHIBITS[ex.kind].animal;
+    const mine = w.dinos.filter((d) => d.home === ex.id);
+    const inside = mine.filter((d) => d.state === 'penned' || d.state === 'contained').length;
+    const out = mine.filter((d) => d.state === 'loose').length;
+    const name = DINOS[kind];
+    const animals = out ? `${inside} inside · ${out} loose` : inside ? `${inside} ${inside === 1 ? name.name : name.plural}` : 'None left';
+    return {
+      id: ex.id,
+      name: EXHIBITS[ex.kind].name,
+      kind: ex.kind,
+      visits: ex.visits,
+      revenue: ex.revenue,
+      fence,
+      animals,
+      reinforceCost: w.canBuild && !ex.reinforced ? reinforceCost(ex.footprint) : null,
+      reinforced: ex.reinforced,
+      money: w.money,
+    };
+  }
+
+  private openExhibit(id: number): void {
+    const v = this.exhibitView(id);
+    if (!v) return;
+    this.hud.showExhibit(v);
+    const ex = this.world.exhibitById(id)!;
+    this.anchorToTiles(ex.footprint);
+  }
+
+  private reinforce(id: number): void {
+    if (this.world.reinforce(id)) this.hud.toast('Fence reinforced');
+    else this.hud.toast('Not enough money');
   }
 
   // ---------------------------------------------------------------- camera
@@ -307,17 +396,17 @@ export class GameScene extends Phaser.Scene {
   private setupCamera(): void {
     this.cameras.main.setBackgroundColor(COLORS.background);
     this.layoutViewport();
-    // Start at the gate side of the map.
     this.cx = 0;
     this.cy = (MAP.gate.y + 0.5) * T;
     this.applyCamera();
-    this.scale.on(Phaser.Scale.Events.RESIZE, () => {
+    this.resizeHandler = () => {
       this.layoutViewport();
       this.applyCamera();
-    });
+    };
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.resizeHandler);
   }
 
-  /** The camera only draws between the top bar and the build bar. */
+  /** The camera only draws between the top bar and the bottom bar. */
   private layoutViewport(): void {
     const { top, bottom } = this.hud.insets;
     const y = Math.round(top * this.dpr);
@@ -325,7 +414,6 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setViewport(0, y, this.scale.width, h);
   }
 
-  /** Zoomed all the way out, the whole map fits. */
   private minZoom(): number {
     const cam = this.cameras.main;
     const m = CAMERA.edgeMarginTiles * T;
@@ -348,26 +436,19 @@ export class GameScene extends Phaser.Scene {
   private screenToWorld(sx: number, sy: number): { x: number; y: number } {
     const cam = this.cameras.main;
     const z = this.zoomLevel * this.dpr;
-    return {
-      x: this.cx + (sx - (cam.x + cam.width / 2)) / z,
-      y: this.cy + (sy - (cam.y + cam.height / 2)) / z,
-    };
+    return { x: this.cx + (sx - (cam.x + cam.width / 2)) / z, y: this.cy + (sy - (cam.y + cam.height / 2)) / z };
   }
 
   /** World pixels to CSS pixels (for positioning HTML over the map). */
   private worldToCss(wx: number, wy: number): { x: number; y: number } {
     const cam = this.cameras.main;
     const z = this.zoomLevel * this.dpr;
-    return {
-      x: (cam.x + cam.width / 2 + (wx - this.cx) * z) / this.dpr,
-      y: (cam.y + cam.height / 2 + (wy - this.cy) * z) / this.dpr,
-    };
+    return { x: (cam.x + cam.width / 2 + (wx - this.cx) * z) / this.dpr, y: (cam.y + cam.height / 2 + (wy - this.cy) * z) / this.dpr };
   }
 
-  /** Zooms while keeping the world point under (sx, sy) in place. */
   private zoomAt(sx: number, sy: number, zoom: number): void {
-    const anchor = this.screenToWorld(sx, sy);
-    this.setZoomKeeping(anchor.x, anchor.y, sx, sy, zoom);
+    const a = this.screenToWorld(sx, sy);
+    this.setZoomKeeping(a.x, a.y, sx, sy, zoom);
   }
 
   private setZoomKeeping(wx: number, wy: number, sx: number, sy: number, zoom: number): void {
@@ -399,63 +480,91 @@ export class GameScene extends Phaser.Scene {
     this.input.on(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
     this.input.on(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
     this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.onPointerUp, this);
-    this.input.on(
-      Phaser.Input.Events.POINTER_WHEEL,
-      (p: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) =>
-        this.zoomAt(p.x, p.y, this.zoomLevel * Math.exp(-dy * CAMERA.wheelZoomFactor)),
+    this.input.on(Phaser.Input.Events.POINTER_WHEEL, (p: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) =>
+      this.zoomAt(p.x, p.y, this.zoomLevel * Math.exp(-dy * CAMERA.wheelZoomFactor)),
     );
-
     const kb = this.input.keyboard;
     if (kb) {
       this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT', false) as Record<string, Phaser.Input.Keyboard.Key>;
-      kb.on('keydown-ESC', () => this.endPlacement());
+      kb.on('keydown-ESC', () => {
+        if (this.placingKind) this.endPlacement();
+        else if (this.hud.panel) this.closePanels();
+        else this.selected.clear();
+      });
     }
   }
 
+  private get blocked(): boolean {
+    return this.world.phase === 'briefing';
+  }
+
   private onPointerDown(p: Phaser.Input.Pointer): void {
-    if (!p.wasTouch && p.button !== 0) return; // right-click is for unit orders later
-    this.touches.set(p.id, { x: p.x, y: p.y, downX: p.x, downY: p.y });
-    if (this.touches.size === 1) {
+    if (this.blocked) return;
+    const touch = p.wasTouch;
+    if (!touch && p.button === 2) {
+      this.rightDown = { x: p.x, y: p.y };
+      return;
+    }
+    const info: PointerInfo = { x: p.x, y: p.y, downX: p.x, downY: p.y, downTime: this.time.now, touch };
+    this.pointers.set(p.id, info);
+    if (!touch && p.button === 1) {
+      this.gesture = 'pan';
+      this.panStart = { cx: this.cx, cy: this.cy };
+    } else if (this.pointers.size === 1) {
       this.gesture = 'press';
       this.panStart = { cx: this.cx, cy: this.cy };
-    } else if (this.touches.size === 2) {
+    } else if (this.pointers.size === 2) {
       this.beginPinch();
     }
   }
 
   private onPointerMove(p: Phaser.Input.Pointer): void {
-    const t = this.touches.get(p.id);
-    if (!t) return;
-    t.x = p.x;
-    t.y = p.y;
-
+    const info = this.pointers.get(p.id);
+    if (!info) return;
+    info.x = p.x;
+    info.y = p.y;
     if (this.gesture === 'pinch') {
       this.updatePinch();
       return;
     }
-    if (this.gesture === 'press' && Math.hypot(t.x - t.downX, t.y - t.downY) > INPUT.tapMoveThreshold * this.dpr) {
-      this.gesture = 'pan';
+    const moved = Math.hypot(info.x - info.downX, info.y - info.downY) > INPUT.tapMoveThreshold * this.dpr;
+    if (this.gesture === 'press' && moved) {
+      if (info.touch) {
+        this.gesture = 'pan';
+      } else {
+        this.gesture = 'box';
+        this.boxStart = this.screenToWorld(info.downX, info.downY);
+      }
     }
     if (this.gesture === 'pan') {
       const z = this.zoomLevel * this.dpr;
-      this.cx = this.panStart.cx - (t.x - t.downX) / z;
-      this.cy = this.panStart.cy - (t.y - t.downY) / z;
+      this.cx = this.panStart.cx - (info.x - info.downX) / z;
+      this.cy = this.panStart.cy - (info.y - info.downY) / z;
       this.applyCamera();
+    } else if (this.gesture === 'box') {
+      this.boxEnd = this.screenToWorld(info.x, info.y);
     }
   }
 
   private onPointerUp(p: Phaser.Input.Pointer): void {
-    const t = this.touches.get(p.id);
-    if (!t) return;
-    this.touches.delete(p.id);
+    if (this.rightDown && !p.wasTouch && (p.button === 2 || this.pointers.size === 0)) {
+      const moved = Math.hypot(p.x - this.rightDown.x, p.y - this.rightDown.y) > INPUT.tapMoveThreshold * this.dpr;
+      const at = this.rightDown;
+      this.rightDown = null;
+      if (!moved && !this.blocked) this.command(at.x, at.y);
+      if (!this.pointers.has(p.id)) return;
+    }
+    const info = this.pointers.get(p.id);
+    if (!info) return;
+    this.pointers.delete(p.id);
 
-    if (this.gesture === 'press') this.handleTap(t.downX, t.downY);
+    if (this.gesture === 'press') this.handleTap(info.downX, info.downY);
+    else if (this.gesture === 'box') this.finishBox();
 
-    if (this.touches.size === 0) {
+    if (this.pointers.size === 0) {
       this.gesture = 'idle';
-    } else if (this.gesture === 'pinch' && this.touches.size === 1) {
-      // One finger lifted: keep panning with the other one.
-      const rest = [...this.touches.values()][0];
+    } else if (this.gesture === 'pinch' && this.pointers.size === 1) {
+      const rest = [...this.pointers.values()][0];
       rest.downX = rest.x;
       rest.downY = rest.y;
       this.panStart = { cx: this.cx, cy: this.cy };
@@ -463,50 +572,142 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Hold still for a moment, then drag, to draw a selection box. */
+  private updateLongPress(now: number): void {
+    if (this.gesture !== 'press' || this.pointers.size !== 1 || this.placingKind) return;
+    const info = [...this.pointers.values()][0];
+    if (!info.touch || now - info.downTime < INPUT.longPressMs) return;
+    this.gesture = 'box';
+    this.boxStart = this.screenToWorld(info.downX, info.downY);
+    this.boxEnd = this.screenToWorld(info.x, info.y);
+  }
+
+  private pressRing(now: number): { x: number; y: number; progress: number } | null {
+    if (this.gesture !== 'press' || this.pointers.size !== 1 || this.placingKind) return null;
+    const info = [...this.pointers.values()][0];
+    if (!info.touch) return null;
+    const p = this.screenToWorld(info.downX, info.downY);
+    return { x: p.x, y: p.y, progress: (now - info.downTime) / INPUT.longPressMs };
+  }
+
+  private boxRect(): Rect {
+    const x = Math.min(this.boxStart.x, this.boxEnd.x);
+    const y = Math.min(this.boxStart.y, this.boxEnd.y);
+    return { x, y, w: Math.abs(this.boxEnd.x - this.boxStart.x), h: Math.abs(this.boxEnd.y - this.boxStart.y) };
+  }
+
+  private finishBox(): void {
+    const b = this.boxRect();
+    const picked = this.world.units.filter((u) => u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h);
+    this.selected = new Set(picked.map((u) => u.id));
+    if (picked.length) this.closePanels();
+  }
+
   private beginPinch(): void {
-    const [a, b] = [...this.touches.values()];
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const anchor = this.screenToWorld(mid.x, mid.y);
-    this.pinchStart = {
-      dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
-      zoom: this.zoomLevel,
-      anchorX: anchor.x,
-      anchorY: anchor.y,
-    };
+    const [a, b] = [...this.pointers.values()];
+    const anchor = this.screenToWorld((a.x + b.x) / 2, (a.y + b.y) / 2);
+    this.pinchStart = { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), zoom: this.zoomLevel, anchorX: anchor.x, anchorY: anchor.y };
     this.gesture = 'pinch';
   }
 
   private updatePinch(): void {
-    const [a, b] = [...this.touches.values()];
+    const [a, b] = [...this.pointers.values()];
     if (!a || !b) return;
     const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
-    const zoom = (this.pinchStart.zoom * dist) / this.pinchStart.dist;
-    this.setZoomKeeping(this.pinchStart.anchorX, this.pinchStart.anchorY, (a.x + b.x) / 2, (a.y + b.y) / 2, zoom);
+    this.setZoomKeeping(this.pinchStart.anchorX, this.pinchStart.anchorY, (a.x + b.x) / 2, (a.y + b.y) / 2, (this.pinchStart.zoom * dist) / this.pinchStart.dist);
+  }
+
+  /** True when a canvas y coordinate is on the map, not under the top or bottom bar. */
+  private inView(sy: number): boolean {
+    const cam = this.cameras.main;
+    return sy >= cam.y && sy <= cam.y + cam.height;
   }
 
   private handleTap(sx: number, sy: number): void {
-    const cam = this.cameras.main;
-    if (sy < cam.y || sy > cam.y + cam.height) return;
-    const w = this.screenToWorld(sx, sy);
-    const tx = Math.floor(w.x / T);
-    const ty = Math.floor(w.y / T);
-    if (!this.grid.inBounds(tx, ty)) return;
+    if (!this.inView(sy) || this.world.phase === 'ended') return;
+    const p = this.screenToWorld(sx, sy);
+    const tx = Math.floor(p.x / T);
+    const ty = Math.floor(p.y / T);
 
     if (this.placingKind) {
+      if (!this.world.grid.inBounds(tx, ty)) return;
       this.placingTile = { x: tx, y: ty };
       this.updatePlan();
+      return;
     }
+
+    const unit = this.unitAt(p.x, p.y);
+    if (unit) {
+      this.selected = new Set([unit.id]);
+      if (this.hud.panel) this.closePanels();
+      return;
+    }
+    const { hq } = MAP;
+    if (tx >= hq.x && ty >= hq.y && tx < hq.x + hq.w && ty < hq.y + hq.h) {
+      this.openTraining();
+      return;
+    }
+    if (this.selected.size) {
+      this.command(sx, sy);
+      return;
+    }
+    const ex = this.world.exhibitAtTile(tx, ty);
+    if (ex) this.openExhibit(ex.id);
+    else this.closePanels();
+  }
+
+  /** Move or attack with the selected troops. */
+  private command(sx: number, sy: number): void {
+    if (!this.selected.size || !this.inView(sy) || this.world.phase === 'ended') return;
+    const p = this.screenToWorld(sx, sy);
+    const dino = this.dinoAt(p.x, p.y);
+    if (dino) {
+      orderAttack(this.world, this.selected, dino.id);
+      this.view.markAttack(dino.x, dino.y);
+    } else {
+      orderMove(this.world, this.selected, p.x, p.y);
+      this.view.markMove(p.x, p.y);
+    }
+  }
+
+  private unitAt(x: number, y: number) {
+    const slop = INPUT.tapSlop / this.zoomLevel;
+    let best = null;
+    let bestD = Infinity;
+    for (const u of this.world.units) {
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d <= UNITS[u.kind].radius + slop && d < bestD) {
+        bestD = d;
+        best = u;
+      }
+    }
+    return best;
+  }
+
+  private dinoAt(x: number, y: number) {
+    const slop = INPUT.tapSlop / this.zoomLevel;
+    let best = null;
+    let bestD = Infinity;
+    for (const d of this.world.dinos) {
+      if (!isTargetable(this.world, d)) continue;
+      const dd = Math.hypot(d.x - x, d.y - y);
+      if (dd <= DINOS[d.kind].radius + slop && dd < bestD) {
+        bestD = dd;
+        best = d;
+      }
+    }
+    return best;
   }
 
   // ---------------------------------------------------------------- building
 
   private togglePlacement(kind: ExhibitKind): void {
+    if (!this.world.canBuild) return;
     if (this.placingKind === kind) {
       this.endPlacement();
       return;
     }
     this.placingKind = kind;
-    // The ghost starts at the nearest open spot to the middle of the view; tap the map to move it.
     this.placingTile = this.findOpenTileNear(kind, Math.floor(this.cx / T), Math.floor(this.cy / T));
     this.updatePlan();
   }
@@ -514,17 +715,14 @@ export class GameScene extends Phaser.Scene {
   /** Spirals out from (tx, ty) looking for a spot where the footprint fits and a path can reach it. */
   private findOpenTileNear(kind: ExhibitKind, tx: number, ty: number): { x: number; y: number } {
     const start = { x: clamp(tx, 0, MAP.cols - 1), y: clamp(ty, 0, MAP.rows - 1) };
-    const fits = (x: number, y: number) => {
-      const reason = planPlacement(this.grid, kind, x, y, Infinity, 0).reason;
-      return reason === null;
-    };
+    const fits = (x: number, y: number) => planPlacement(this.world.grid, kind, x, y, Infinity, 0).reason === null;
     for (let r = 0; r <= 10; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
           const x = start.x + dx;
           const y = start.y + dy;
-          if (this.grid.inBounds(x, y) && fits(x, y)) return { x, y };
+          if (this.world.grid.inBounds(x, y) && fits(x, y)) return { x, y };
         }
       }
     }
@@ -534,33 +732,22 @@ export class GameScene extends Phaser.Scene {
   private updatePlan(): void {
     const kind = this.placingKind;
     if (!kind) return;
-    this.plan = planPlacement(
-      this.grid,
-      kind,
-      this.placingTile.x,
-      this.placingTile.y,
-      this.state.money,
-      this.state.countOf(kind),
-    );
+    this.plan = planPlacement(this.world.grid, kind, this.placingTile.x, this.placingTile.y, this.world.money, this.world.countOf(kind));
     this.drawGhost();
     this.hud.showPlacement(this.plan);
-    this.refreshHud();
-    this.positionPanel();
+    this.anchorToTiles(this.plan.footprint);
   }
 
   private confirmPlacement(): void {
-    if (!this.placingKind) return;
-    this.updatePlan(); // re-check against the park as it is right now
+    if (!this.placingKind || !this.world.canBuild) return;
+    this.updatePlan();
     const plan = this.plan;
     if (!plan || !plan.valid) {
       this.hud.toast(plan?.reason ?? 'Can’t build there');
       return;
     }
-    const ex = this.state.build(plan);
-    this.drawPaths();
-    this.drawExhibit(ex);
-    this.spawnAnimals(ex);
-    this.hud.toast(`${EXHIBITS[ex.kind].name} built`);
+    const ex = this.world.build(plan);
+    this.hud.toast(`${EXHIBITS[ex.kind].name} built for ${formatMoney(plan.totalCost)}`);
     this.endPlacement();
   }
 
@@ -568,22 +755,21 @@ export class GameScene extends Phaser.Scene {
     this.placingKind = null;
     this.plan = null;
     this.ghostGfx.clear();
-    this.hud.hidePlacement();
-    this.refreshHud();
+    if (this.hud.panel === 'place') this.hud.closePanels();
   }
 
-  private positionPanel(): void {
-    if (!this.plan) return;
-    const { x, y, w, h } = this.plan.footprint;
-    const tl = this.worldToCss(x * T, y * T);
-    const br = this.worldToCss((x + w) * T, (y + h) * T);
-    this.hud.positionPlacement({ left: tl.x, top: tl.y, right: br.x, bottom: br.y });
-  }
-
-  private refreshHud(): void {
-    const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, this.state.countOf(k)])) as Record<ExhibitKind, number>;
-    this.hud.setMoney(this.state.money);
-    this.hud.updateBuildButtons(this.state.money, counts, this.placingKind);
-    this.hud.setHint(this.placingKind ? 'Tap the map to move it. Drag to look around.' : null);
+  private drawGhost(): void {
+    const g = this.ghostGfx;
+    g.clear();
+    const plan = this.plan;
+    if (!plan) return;
+    g.fillStyle(COLORS.path, 0.8);
+    for (const p of plan.newPathTiles) g.fillRect(p.x * T + 5, p.y * T + 5, T - 10, T - 10);
+    const color = plan.valid ? COLORS.ghostValid : COLORS.ghostInvalid;
+    const { x, y, w, h } = plan.footprint;
+    g.fillStyle(color, 0.28).fillRect(x * T, y * T, w * T, h * T);
+    g.lineStyle(3, color, 0.95).strokeRect(x * T + 1.5, y * T + 1.5, w * T - 3, h * T - 3);
+    g.lineStyle(2, color, 0.7).strokeRect(x * T + T / 2, y * T + T / 2, (w - 1) * T, (h - 1) * T);
+    if (plan.viewingSpot) g.fillStyle(COLORS.viewingSpot, 0.95).fillCircle((plan.viewingSpot.x + 0.5) * T, (plan.viewingSpot.y + 0.5) * T, 6);
   }
 }

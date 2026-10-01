@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import './style.css';
 import { COLORS } from './config';
+import { readParams } from './params';
 import { GameScene } from './scenes/GameScene';
 import { Hud } from './ui/hud';
 
@@ -8,6 +9,7 @@ import { Hud } from './ui/hud';
 const dpr = Math.min(window.devicePixelRatio || 1, 3);
 const container = document.getElementById('game')!;
 const hud = new Hud(document.getElementById('hud')!);
+const params = readParams(window.location.search, window.location.hash);
 
 function canvasSize(): { w: number; h: number } {
   return {
@@ -29,7 +31,7 @@ const game = new Phaser.Game({
   },
   input: { activePointers: 3 },
   banner: false,
-  scene: [new GameScene(hud, dpr)],
+  scene: [new GameScene(hud, dpr, params)],
 });
 
 let resizeQueued = false;

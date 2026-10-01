@@ -3,7 +3,8 @@ import { ECONOMY, EXHIBITS, FENCE, MAP, type MapConfig } from '../src/config';
 import { createGrid, Grid, Tile, type Point, type Rect } from '../src/core/grid';
 import { planRoute, viewingSpotCandidates } from '../src/core/pathing';
 import { footprintAt, planPlacement } from '../src/core/placement';
-import { GameState, ringTiles } from '../src/core/state';
+import { ringTiles } from '../src/core/exhibit';
+import { World } from '../src/core/world';
 
 const RICH = 1_000_000;
 
@@ -157,8 +158,8 @@ describe('placement rules', () => {
 
 describe('building', () => {
   it('spends money, claims tiles, lays path, and builds the fence', () => {
-    const grid = createGrid(MAP);
-    const state = new GameState(grid, ECONOMY.startingMoney);
+    const state = new World({ seed: 1 });
+    const grid = state.grid;
     const plan = planPlacement(grid, 'raptor', 9, 11, state.money, 0);
     expect(plan.valid).toBe(true);
 
@@ -172,6 +173,9 @@ describe('building', () => {
     expect(ex.segments).toHaveLength(12);
     expect(ex.segments.every((s) => s.hp === FENCE.chainLinkHp)).toBe(true);
     expect(state.countOf('raptor')).toBe(1);
+    expect(state.spending.exhibits).toBe(EXHIBITS.raptor.cost);
+    expect(state.spending.paths).toBe(plan.pathCost);
+    expect(state.dinos.filter((d) => d.home === ex.id)).toHaveLength(EXHIBITS.raptor.animalCount);
   });
 
   it('has 16, 12, and 20 fence segments for the three exhibits', () => {
@@ -181,8 +185,8 @@ describe('building', () => {
   });
 
   it('lets a second exhibit route along the first one’s path', () => {
-    const grid = createGrid(MAP);
-    const state = new GameState(grid, RICH);
+    const state = new World({ seed: 1, startingMoney: RICH });
+    const grid = state.grid;
     const first = state.build(planPlacement(grid, 'pasture', 14, 15, state.money, 0));
     const second = planPlacement(grid, 'raptor', 15, 20, state.money, 0);
     expect(second.valid).toBe(true);
@@ -191,9 +195,8 @@ describe('building', () => {
   });
 
   it('refuses an invalid plan', () => {
-    const grid = createGrid(MAP);
-    const state = new GameState(grid, ECONOMY.startingMoney);
-    const plan = planPlacement(grid, 'raptor', 28, 14, state.money, 0);
+    const state = new World({ seed: 1 });
+    const plan = planPlacement(state.grid, 'raptor', 28, 14, state.money, 0);
     expect(() => state.build(plan)).toThrow();
   });
 });
