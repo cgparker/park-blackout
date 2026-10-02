@@ -41,6 +41,16 @@ Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex 
 
 17. **On screens narrower than 960 px the build bar drops its icons, the HQ button's label, and the "· 3 left" counts,** so four build buttons fit beside HQ and the selection buttons on a phone (checked at 667, 844, and 932 px wide with iPhone safe areas). The raptor button reads "Raptors", and a maxed-out exhibit reads "None left".
 
+## Tips
+
+Chosen by Chris: teach the two defense lessons in the game, and make the tips skippable.
+
+22. **Tips appear at the moment they apply, not as briefing text.** Five moments: the first raptor pen built, the T. rex paddock built, the 1:00 warning if a raptor pen is unguarded, raptors killing visitors beside an unguarded pen, and the T. rex killing a troop that was on its own. Each shows once per session, so Retry doesn't repeat them.
+23. **An open tip pauses the game,** so reading never costs clock time. Orders can still be given while it's paused.
+24. **The camera moves the tip's subject into the part of the map the card doesn't cover,** so "this pen" is on screen next to the text.
+25. **Three ways to skip:** **Got it** closes one tip, **Hide tips** turns them all off, and the briefing's **Show tips** checkbox turns them back on. The on or off choice is kept in the browser's storage, guarded so the game still works where storage is blocked (then it lasts until the page closes). Quick test and Debug tools still last only for the session.
+26. **"Guarded" means a troop within 6 tiles of the pen's center** (`TIPS.guardRadiusTiles`). Towers don't count, because the defense that measured best is troops at each pen. A troop the T. rex kills counts as alone when at most one other troop is within 4 tiles. Troop losses now record which animal did it, so the tip can tell a T. rex kill from a raptor kill.
+
 ## Round 2 follow-up: casualty limit and defense prices
 
 Chosen by Chris: make the casualty loss easier to hit, and make defense cost enough that the bank forces a tradeoff. The levers were picked by measurement (`npm run balance`, 16 seeds per defense, two dense parks, two defender styles).

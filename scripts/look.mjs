@@ -36,6 +36,10 @@ await page.evaluate(() => {
   build('tower', 21, 14);
   build('tower', 12, 12);
 });
+// The first build brings up a tip. Show one, then turn tips off for the rest of the tour.
+await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/01b-tip.png` });
+await page.evaluate(() => window.__pb.scene.hud.handlers.tipsOff());
 // Let visitors arrive.
 await page.evaluate(() => {
   const { world } = window.__pb;

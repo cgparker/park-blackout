@@ -343,6 +343,17 @@ export const BLACKOUT = {
   villainName: 'Mantah Corp',
 };
 
+/** Tips that teach the two defense lessons. Distances decide when they fire. */
+export const TIPS = {
+  /** A raptor pen counts as guarded when a troop is within this many tiles of its center. */
+  guardRadiusTiles: 6,
+  /** A raptor kill this close to an unguarded raptor pen explains what went wrong. */
+  killNearPenTiles: 8,
+  /** A troop the T. rex kills counts as alone when at most this many other troops are within the radius. */
+  lonerRadiusTiles: 4,
+  lonerMaxFriends: 1,
+};
+
 export const SCORING = {
   /** Visitors killed before the park is shut down. Careless raptor defense reaches it; a good one usually doesn't. */
   casualtyLimit: 8,

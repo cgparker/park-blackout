@@ -30,6 +30,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 | Drag | Middle-drag, or WASD / arrow keys | Pan |
 | Pinch | Scroll wheel | Zoom |
 | **Select all**, **Clear** | Same, or Esc to clear | Selection |
+| **Got it** or **Hide tips** on a tip | Same, or Esc to close it | Tips pause the game; turn them off here or on the briefing |
 
 ## Tuning
 
@@ -42,9 +43,9 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 ## Checks
 
-- `npm test` runs 58 unit tests: map, pathing, placement, visitors and what makes them run, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, and a full scripted game.
+- `npm test` runs 63 unit tests: map, pathing, placement, visitors and what makes them run, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, when each tip fires, and a full scripted game.
 - `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a number goes bad, or a game never ends.
-- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (51 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (61 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
 - `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
 - `npm run typecheck` checks types.
 

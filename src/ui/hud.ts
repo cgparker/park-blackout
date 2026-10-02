@@ -17,7 +17,7 @@ export interface HudHandlers {
   selectBuild(kind: BuildKind): void;
   confirmPlacement(): void;
   cancelPlacement(): void;
-  start(options: { quick: boolean; debug: boolean }): void;
+  start(options: { quick: boolean; debug: boolean; tips: boolean }): void;
   retry(): void;
   openTraining(): void;
   train(kind: UnitKind): void;
@@ -30,6 +30,10 @@ export interface HudHandlers {
   debugBlackout(): void;
   debugMoney(): void;
   debugToggle(name: 'hp' | 'grid' | 'fps', on: boolean): void;
+  /** The open tip was read. */
+  tipDone(): void;
+  /** Turn tips off. */
+  tipsOff(): void;
 }
 
 export interface TopView {
@@ -86,6 +90,7 @@ export interface BriefingView {
   villain: string;
   quick: boolean;
   debug: boolean;
+  tips: boolean;
 }
 
 export type Panel = 'place' | 'train' | 'exhibit';
@@ -201,6 +206,11 @@ export class Hud {
   private readonly quickBox: HTMLInputElement;
   private readonly quickLabel: HTMLElement;
   private readonly debugBox: HTMLInputElement;
+  private readonly tipsBox: HTMLInputElement;
+
+  private readonly tipCard: HTMLElement;
+  private readonly tipTitle: HTMLElement;
+  private readonly tipBody: HTMLElement;
   private briefView: BriefingView | null = null;
 
   private readonly endScreen: HTMLElement;
@@ -347,6 +357,19 @@ export class Hud {
     this.banner = el('div', 'banner');
     this.toastEl = el('div', 'toast');
 
+    // ------------------------------------------------ tip
+    this.tipCard = el('div', 'tip hidden');
+    this.tipCard.setAttribute('role', 'dialog');
+    this.tipTitle = el('div', 'tip-title');
+    this.tipBody = el('p', 'tip-body');
+    const tipActions = el('div', 'actions');
+    const gotIt = button('primary tip-ok', 'Got it');
+    gotIt.addEventListener('click', () => this.handlers?.tipDone());
+    const off = button('secondary tip-off', 'Hide tips');
+    off.addEventListener('click', () => this.handlers?.tipsOff());
+    tipActions.append(gotIt, off);
+    this.tipCard.append(el('div', 'tip-eyebrow', 'Tip · game paused'), this.tipTitle, this.tipBody, tipActions);
+
     // ------------------------------------------------ briefing
     this.briefing = el('div', 'overlay briefing hidden');
     const card = el('div', 'card brief-card');
@@ -365,10 +388,13 @@ export class Hud {
     };
     this.quickBox = check('opt-quick', 'Quick test');
     this.quickLabel = this.quickBox.nextElementSibling as HTMLElement;
+    this.tipsBox = check('opt-tips', 'Show tips');
     this.debugBox = check('opt-debug', 'Debug tools');
     this.quickBox.addEventListener('change', () => this.renderBriefing());
     const start = button('primary start', 'Start');
-    start.addEventListener('click', () => this.handlers?.start({ quick: this.quickBox.checked, debug: this.debugBox.checked }));
+    start.addEventListener('click', () =>
+      this.handlers?.start({ quick: this.quickBox.checked, debug: this.debugBox.checked, tips: this.tipsBox.checked }),
+    );
     left.append(el('div', 'eyebrow', 'Park Blackout'), this.briefTitle, this.briefIntro, options, start);
 
     const right = el('div', 'brief-side');
@@ -450,6 +476,7 @@ export class Hud {
       this.exhibitPanel,
       this.banner,
       this.toastEl,
+      this.tipCard,
       this.debugPanel,
       this.briefing,
       this.endScreen,
@@ -479,6 +506,7 @@ export class Hud {
 
   reset(): void {
     this.closePanels();
+    this.hideTip();
     this.endScreen.classList.add('hidden');
     this.banner.classList.remove('show');
     this.toastEl.classList.remove('show');
@@ -696,12 +724,35 @@ export class Hud {
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2000);
   }
 
+  // ------------------------------------------------ tips
+
+  showTip(title: string, body: string): void {
+    setText(this.tipTitle, title);
+    setText(this.tipBody, body);
+    this.toastEl.classList.remove('show');
+    this.tipCard.classList.remove('hidden');
+  }
+
+  hideTip(): void {
+    this.tipCard.classList.add('hidden');
+  }
+
+  get tipOpen(): boolean {
+    return !this.tipCard.classList.contains('hidden');
+  }
+
+  /** Top edge of the open tip card, in CSS pixels. */
+  get tipTop(): number {
+    return this.tipCard.getBoundingClientRect().top;
+  }
+
   // ------------------------------------------------ briefing
 
   showBriefing(v: BriefingView): void {
     this.briefView = v;
     this.quickBox.checked = v.quick;
     this.debugBox.checked = v.debug;
+    this.tipsBox.checked = v.tips;
     this.renderBriefing();
     this.briefing.classList.remove('hidden');
   }

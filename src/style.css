@@ -614,6 +614,54 @@ body {
   transform: translate(-50%, 0);
 }
 
+/* ------------------------------------------------------------ tip */
+
+/* Sits above the bottom bar, over panels and the banner. The game pauses while it's open. */
+.tip {
+  position: absolute;
+  z-index: 14;
+  left: 50%;
+  bottom: calc(var(--bottom-h) + var(--safe-b) + 10px);
+  width: min(460px, calc(100% - 32px - var(--safe-l) - var(--safe-r)));
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--card);
+  border: 1px solid rgba(63, 224, 255, 0.55);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.tip-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.tip-title {
+  margin: 2px 0 4px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.tip-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #d6e0d9;
+}
+
+.tip .actions {
+  margin-top: 10px;
+}
+
+.tip .secondary {
+  flex: none;
+}
+
 /* ------------------------------------------------------------ overlays */
 
 .overlay {
@@ -1001,6 +1049,24 @@ body {
   .banner {
     font-size: 16px;
     padding: 8px 14px;
+  }
+  .tip {
+    bottom: calc(var(--bottom-h) + var(--safe-b) + 6px);
+    padding: 9px 12px;
+  }
+  .tip-title {
+    font-size: 15px;
+  }
+  .tip-body {
+    font-size: 13px;
+    line-height: 1.35;
+  }
+  .tip .actions {
+    margin-top: 8px;
+  }
+  .tip .primary,
+  .tip .secondary {
+    min-height: 38px;
   }
 }
 

@@ -512,7 +512,7 @@ function chargeStep(w: World, d: Dino, dt: number): void {
     d.facing = Math.atan2(hit.y - d.y, hit.x - d.x);
     d.cooldown = cfg.biteIntervalSeconds;
     w.events.push({ type: 'bite', x: hit.x, y: hit.y });
-    damageUnit(w, hit, cfg.troopDamage);
+    damageUnit(w, hit, cfg.troopDamage, 'trex');
     endCharge(d);
     return;
   }
@@ -738,7 +738,7 @@ function biteTroops(w: World, d: Dino): void {
   d.cooldown = cfg.biteIntervalSeconds;
   d.facing = Math.atan2(victim.y - d.y, victim.x - d.x);
   w.events.push({ type: 'bite', x: victim.x, y: victim.y });
-  damageUnit(w, victim, cfg.troopDamage);
+  damageUnit(w, victim, cfg.troopDamage, d.kind);
 }
 
 // ------------------------------------------------------------------ Triceratops

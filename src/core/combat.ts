@@ -1,10 +1,11 @@
-import { DINO_AI } from '../config';
+import { DINO_AI, type AnimalKind } from '../config';
 import type { Dino } from './dinos';
 import { Tile } from './grid';
 import type { Unit } from './units';
 import type { World } from './world';
 
-export function damageUnit(w: World, u: Unit, amount: number): void {
+/** `by` is the kind of animal that did it, so the screen can explain the loss. */
+export function damageUnit(w: World, u: Unit, amount: number, by: AnimalKind | null = null): void {
   if (u.dead) return;
   u.hp -= amount;
   u.hurtAt = w.time;
@@ -18,7 +19,7 @@ export function damageUnit(w: World, u: Unit, amount: number): void {
   } else {
     w.troopsLost++;
   }
-  w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y });
+  w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y, by });
 }
 
 /** A dart lands. At zero sedation the dinosaur is secured: it fades out and stops counting as loose. */

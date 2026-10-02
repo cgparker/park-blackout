@@ -143,6 +143,14 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 - **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/10). In Act 2 the countdown switches to time until power returns, the revenue slot shows how many visitors are still in the park, and it adds loose and secured dinosaur counts.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 
+### Tips
+
+Short tips teach the two defense lessons from section 13: guard each raptor pen, and keep troops together against the T. rex.
+
+- A tip appears when it's useful, once per session: when you build your first raptor pen, when you build the T. rex paddock, at the 1:00 warning if a raptor pen has no troops nearby, when raptors kill visitors beside an unguarded pen, and when the T. rex kills a troop that was on its own.
+- The game pauses while a tip is open, and the camera moves to what the tip is about. Orders still work while paused.
+- **Got it** closes the tip. **Hide tips** turns tips off. The briefing has a **Show tips** checkbox, and the choice is remembered on that device.
+
 ## 8. The blackout
 
 ### At 0:00

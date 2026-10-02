@@ -8,6 +8,8 @@ import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
 import { formatMoney, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
+import { loadTipsOn, saveTipsOn } from '../ui/prefs';
+import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
 const T = MAP.tileSize;
 const WORLD_W = MAP.cols * T;
@@ -36,6 +38,7 @@ function clampAxis(center: number, view: number, world: number, margin: number):
 interface Session {
   quick: boolean;
   debug: boolean;
+  tips: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -72,6 +75,9 @@ export class GameScene extends Phaser.Scene {
   private speed = 1;
   private wasAllClear = false;
   private escapeToasts = new Map<string, number>();
+  /** Tips already shown this session (Retry doesn't repeat them), and tips waiting their turn. */
+  private readonly seenTips = new Set<TipId>();
+  private tipQueue: Tip[] = [];
   private showFps = false;
   private resizeHandler: (() => void) | null = null;
 
@@ -80,7 +86,7 @@ export class GameScene extends Phaser.Scene {
     this.hud = hud;
     this.dpr = dpr;
     this.params = params;
-    this.session = { quick: false, debug: params.debug };
+    this.session = { quick: false, debug: params.debug, tips: loadTipsOn() };
   }
 
   create(): void {
@@ -99,6 +105,7 @@ export class GameScene extends Phaser.Scene {
     this.accumulator = 0;
     this.wasAllClear = false;
     this.escapeToasts = new Map();
+    this.tipQueue = [];
     this.zoomLevel = CAMERA.defaultZoom;
 
     this.setupCamera();
@@ -116,6 +123,7 @@ export class GameScene extends Phaser.Scene {
       villain: BLACKOUT.villainName,
       quick: this.session.quick,
       debug: this.session.debug,
+      tips: this.session.tips,
     });
 
     if (this.params.debug) (window as unknown as { __pb: unknown }).__pb = { scene: this, world: this.world };
@@ -132,7 +140,8 @@ export class GameScene extends Phaser.Scene {
     this.updateLongPress(time);
 
     const w = this.world;
-    if (w.phase !== 'briefing' && w.phase !== 'ended') {
+    // An open tip pauses the game, so reading it never costs clock time. Orders can still be given.
+    if (w.phase !== 'briefing' && w.phase !== 'ended' && !this.hud.tipOpen) {
       this.accumulator += dt * this.speed * w.timeScale;
       let steps = 0;
       while (this.accumulator >= SIM.step && steps < SIM.maxStepsPerFrame) {
@@ -161,7 +170,7 @@ export class GameScene extends Phaser.Scene {
       selectBuild: (kind) => this.togglePlacement(kind),
       confirmPlacement: () => this.confirmPlacement(),
       cancelPlacement: () => this.endPlacement(),
-      start: (o) => this.startGame(o.quick, o.debug),
+      start: (o) => this.startGame(o.quick, o.debug, o.tips),
       retry: () => this.scene.restart(),
       openTraining: () => this.openTraining(),
       train: (kind) => this.train(kind),
@@ -172,6 +181,14 @@ export class GameScene extends Phaser.Scene {
         this.selected = new Set(this.world.units.filter(isTroop).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
+      tipDone: () => this.nextTip(),
+      tipsOff: () => {
+        this.session.tips = false;
+        saveTipsOn(false);
+        this.tipQueue = [];
+        this.hud.hideTip();
+        this.hud.toast('Tips are off. Turn them back on from the briefing.');
+      },
       debugSpeed: (s) => {
         this.speed = s;
         this.hud.setDebugSpeed(s);
@@ -193,9 +210,11 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private startGame(quick: boolean, debug: boolean): void {
+  private startGame(quick: boolean, debug: boolean, tips: boolean): void {
     this.session.quick = quick;
     this.session.debug = debug;
+    if (tips !== this.session.tips) saveTipsOn(tips);
+    this.session.tips = tips;
     this.world.setBuildPhase(quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
     this.hud.showDebug(debug);
     this.hud.hideBriefing();
@@ -307,6 +326,8 @@ export class GameScene extends Phaser.Scene {
         case 'ended':
           this.endPlacement();
           this.closePanels();
+          this.tipQueue = [];
+          this.hud.hideTip();
           this.time.delayedCall(1200, () => {
             if (w.result) this.hud.showEnd(w.result);
           });
@@ -316,6 +337,44 @@ export class GameScene extends Phaser.Scene {
     const allClear = w.allClear;
     if (allClear && !this.wasAllClear && w.phase === 'blackout') this.hud.showBanner('All clear. Fast-forwarding to power-on.', 'good');
     this.wasAllClear = allClear;
+    this.queueTips(events);
+  }
+
+  // ---------------------------------------------------------------- tips
+
+  /** Each tip shows once per session, and only while tips are on and the game is running. */
+  private queueTips(events: readonly import('../core/world').GameEvent[]): void {
+    const w = this.world;
+    if (!this.session.tips || w.phase === 'briefing' || w.phase === 'ended' || !events.length) return;
+    for (const tip of tipsFor(w, events)) {
+      if (this.seenTips.has(tip.id)) continue;
+      this.seenTips.add(tip.id);
+      this.tipQueue.push(tip);
+    }
+    if (!this.hud.tipOpen) this.nextTip();
+  }
+
+  /** Closes the open tip and shows the next one waiting, pointing the camera at what it's about. */
+  private nextTip(): void {
+    const tip = this.world.phase === 'ended' ? undefined : this.tipQueue.shift();
+    if (!tip) {
+      this.hud.hideTip();
+      return;
+    }
+    this.hud.showTip(tip.title, tip.body);
+    if (tip.focus) this.focusAboveTip(tip.focus.x, tip.focus.y);
+  }
+
+  /** Puts a world point in the middle of the map area the tip card leaves uncovered. */
+  private focusAboveTip(wx: number, wy: number): void {
+    const cam = this.cameras.main;
+    const top = cam.y / this.dpr;
+    const bottom = (cam.y + cam.height) / this.dpr;
+    const centerY = (top + bottom) / 2;
+    const targetY = (top + Math.min(bottom, this.hud.tipTop)) / 2;
+    this.cx = wx;
+    this.cy = wy - (targetY - centerY) / this.zoomLevel;
+    this.applyCamera();
   }
 
   // ---------------------------------------------------------------- panels
@@ -491,7 +550,8 @@ export class GameScene extends Phaser.Scene {
     if (kb) {
       this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT', false) as Record<string, Phaser.Input.Keyboard.Key>;
       kb.on('keydown-ESC', () => {
-        if (this.placingKind) this.endPlacement();
+        if (this.hud.tipOpen) this.nextTip();
+        else if (this.placingKind) this.endPlacement();
         else if (this.hud.panel) this.closePanels();
         else this.selected.clear();
       });

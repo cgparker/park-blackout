@@ -89,6 +89,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const world = (fn) => S(page, fn);
 
   check('opens on the briefing', await page.isVisible('.briefing'));
+  check('tips are on by default', await page.isChecked('#opt-tips'));
   check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 5:00');
   check('briefing offers a 2:00 quick test', (await page.textContent('label.check')).includes('Quick test: 2:00 build phase'));
   await page.tap('#opt-quick');
@@ -109,6 +110,17 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const afterBuild = await world(() => ({ money: window.__pb.world.money, exhibits: window.__pb.world.exhibits.length }));
   check('Build spends exhibit plus path', afterBuild.exhibits === 1 && afterBuild.money === money0 - plan.cost, JSON.stringify(afterBuild));
 
+  // The first raptor pen brings up a tip, and the game waits while it's open.
+  check('a raptor pen brings up a tip', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Raptors go for visitors'));
+  const t0 = await world(() => window.__pb.world.phaseTime);
+  await page.waitForTimeout(700);
+  check('the game pauses while a tip is open', (await world(() => window.__pb.world.phaseTime)) === t0);
+  await page.screenshot({ path: `${out}/1b-tip.png` });
+  await page.tap('.tip-ok');
+  check('Got it closes the tip', !(await page.isVisible('.tip')));
+  await page.waitForTimeout(700);
+  check('the game runs again after Got it', (await world(() => window.__pb.world.phaseTime)) > t0);
+
   // Visitors arrive and pay.
   await advance(page, 60);
   await page.waitForTimeout(120);
@@ -116,8 +128,18 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('visitors pay at the exhibit', econ.visits > 3 && econ.revenue === econ.visits * 25, JSON.stringify(econ));
   check('HUD shows the money', await soon(async () => (await page.textContent('.stat.money .val')) === '$' + econ.money.toLocaleString('en-US')));
   check('HUD shows the revenue', await soon(async () => (await page.textContent('.stat.revenue .val')) === '$' + econ.revenue.toLocaleString('en-US')));
-  check('clock counts down', await soon(async () => (await page.textContent('.clock .val')) === '1:00'), await page.textContent('.clock .val'));
+  // About 60 s of the 2:00 phase have run (plus a moment of real time).
+  const clockSecs = async () => {
+    const [m, s] = (await page.textContent('.clock .val')).split(':').map(Number);
+    return m * 60 + s;
+  };
+  check('clock counts down', await soon(async () => (await clockSecs()) <= 60 && (await clockSecs()) >= 55), await page.textContent('.clock .val'));
   await page.screenshot({ path: `${out}/2-visitors.png` });
+
+  // The 1:00 warning points out the unguarded raptor pen. Hide tips turns them all off.
+  check('the warning flags an unguarded raptor pen', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'A raptor pen is unguarded'));
+  await page.tap('.tip-off');
+  check('Hide tips closes the tip and turns tips off', !(await page.isVisible('.tip')) && (await world(() => window.__pb.scene.session.tips)) === false);
   // The page also runs in real time, so give the rest of this walkthrough room before the lights go out.
   await S(page, () => (window.__pb.world.buildPhaseSeconds = 600));
 
@@ -253,6 +275,11 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const fresh = await world(() => ({ phase: window.__pb.world.phase, exhibits: window.__pb.world.exhibits.length }));
   check('Retry starts a fresh game', fresh.phase === 'briefing' && fresh.exhibits === 0 && (await soon(() => page.isVisible('.briefing'))), JSON.stringify(fresh));
   check('Retry keeps the quick-test choice', await page.isChecked('#opt-quick'));
+  check('no tips showed after they were turned off', !(await page.isVisible('.tip')));
+  check('Retry keeps tips off', !(await page.isChecked('#opt-tips')));
+  await page.reload();
+  await page.waitForFunction(() => window.__pb?.world, null, { timeout: 15000 });
+  check('tips stay off after a reload', !(await page.isChecked('#opt-tips')));
 
   check('no console errors on phone', errors.length === 0, errors.join(' | '));
   await ctx.close();

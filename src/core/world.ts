@@ -22,7 +22,7 @@ export type GameEvent =
   | { type: 'powerRestored'; contained: number }
   | { type: 'trained'; unitId: number; kind: UnitKind }
   | { type: 'towerBuilt'; unitId: number }
-  | { type: 'unitLost'; unitId: number; kind: UnitKind; x: number; y: number }
+  | { type: 'unitLost'; unitId: number; kind: UnitKind; x: number; y: number; by: AnimalKind | null }
   | { type: 'charge'; dinoId: number; x: number; y: number }
   | { type: 'dart'; x0: number; y0: number; x1: number; y1: number; heavy: boolean }
   | { type: 'bite'; x: number; y: number }
