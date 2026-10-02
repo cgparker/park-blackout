@@ -97,7 +97,7 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 
 | | Tranq Squad | Heavy Team | Tranq Tower |
 |---|---|---|---|
-| Cost | $1,500 | $4,000 | $3,000 |
+| Cost | $2,250 | $6,000 | $4,500 |
 | Train time | 8 s | 15 s | Built at once, before the blackout only |
 | HP | 100 | 250 | 200 |
 | Speed | 100 px/s | 70 px/s | Never moves |
@@ -191,7 +191,7 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 ## 9. Winning and losing
 
-- **Lose:** 10 casualties at any point ("The park has been shut down"), or any dinosaur still loose 3:00 after power returns ("The park is overrun").
+- **Lose:** 8 casualties at any point ("The park has been shut down"), or any dinosaur still loose 3:00 after power returns ("The park is overrun").
 - **Win:** Power has returned and no dinosaurs are loose.
 
 ### Stars
@@ -261,16 +261,35 @@ Build phase (5:00, ★★ target $20,000, 3 seeds each):
 
 The visit length decides how much spacing costs. At 40 s the spread park still earned about $27,000; at 35 s it drops to about $15,000 while dense and medium parks barely change. The starting money went from $15,000 to $25,000 with the shorter build phase: at $15,000 no scripted build could afford the T. rex before 3:30, and none reached $20,000.
 
-Whole blackouts, dense T. rex park (5 seeds each). The bank is spent at 3:30, troops alternate Heavy and Tranq, towers go beside the predator pens, and a simple defender sends every troop at the nearest loose predator. About 52 visitors are in the park when the power goes out, and the first fence breaks at about 14 s.
+Whole blackouts (16 seeds each, `SEEDS=16 npm run balance`). The bank is spent at 3:30 and troops alternate Heavy and Tranq. Two defender styles: **massed** keeps every troop together and sends them all at the nearest loose predator; **split** posts troops at the predator pens' viewing spots, raptor pens first, and each one fights whatever comes near it. About 52 visitors are in the park when the power goes out, and the first fence breaks at about 14 s.
 
-| Defense | Result | Visitors killed | Lost |
-|---|---|---|---|
-| Nothing | Overrun 5 of 5 | ~2 | |
-| 4 troops ($11,000) | Overrun 5 of 5 | ~4 | All 4 troops |
-| 6 troops ($16,500) | Won 5 of 5 (one ★★★) | ~1 | ~0.2 troops |
-| 10 troops ($27,500) | Won 5 of 5 | ~3 | None |
-| 4 towers ($12,000) | Overrun 4 of 5 | ~2 | All 4 towers |
-| 2 towers + 6 troops | Won 4 of 5 | ~2 | 2 towers, ~2.4 troops |
+Dense T. rex park (about $30,500 to spend):
+
+| Defense | Spent | Result |
+|---|---|---|
+| Nothing | $0 | Overrun 16 of 16 |
+| 4 troops, massed | $16,500 (54%) | Overrun 16 of 16 |
+| 5 troops, massed | $18,750 (61%) | Won 15 of 16 |
+| Whole bank, massed (10 troops) | $30,000 | Won 16 of 16 |
+| Whole bank, split (10 troops) | $30,000 | Won 16 of 16 |
+| Concrete, rest split (8 troops) | $28,350 | Won 7, overrun 9 |
+| 2 towers, rest massed (7 troops) | $28,500 | Won 15 of 16, 4 of them ★★★ |
+
+With any real defense, 1 to 3 visitors die on average, never more than 6.
+
+Dense three-raptor park (about $24,200 to spend):
+
+| Defense | Spent | Result |
+|---|---|---|
+| Nothing | $0 | Shut down 14, overrun 2 |
+| 4 troops, massed | $16,500 (68%) | Shut down 13, won 3 |
+| 5 troops, massed | $18,750 (77%) | Shut down 16 of 16 |
+| Whole bank, massed (7 troops) | $23,250 | Shut down 14, won 2 |
+| Whole bank, split (7 troops) | $23,250 | Shut down 9, won 7 |
+| Concrete, rest split (6 troops) | $22,650 | Won 13, shut down 3 |
+| 2 towers, rest massed (5 troops) | $24,000 | Shut down 13, won 3 |
+
+About 5 visitors die with concrete and split troops, 7 to 8 with everything else.
 
 Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles away, 5 seeds each):
 
@@ -286,11 +305,14 @@ Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles a
 | T. rex vs 4 Heavy Teams | Troops win, no losses |
 | T. rex vs 2 Towers + 2 Heavy Teams | Troops win, lose 1 |
 
-`npm run stress` plays 40 random games: 5 wins, 21 overruns, 14 shutdowns. Careless play now loses to casualties too.
+`npm run stress` plays 40 random games: 1 win, 18 overruns, 21 shutdowns. Careless play loses.
 
 What to watch in playtests:
 
-- Casualties happen in almost every blackout now (1 to 4 in the runs above), so the third star has to be earned. Most deaths are raptor kills. The 10-casualty shutdown still doesn't happen with a sensible defense. If it should, the levers are a lower limit (`SCORING.casualtyLimit`), a shorter raptor breakout delay, or a slower flee speed.
+- Each park punishes a different mistake. The T. rex park loses to too few troops, or troops spread thin: the T. rex picks off small groups, so concrete plus split troops gets overrun 9 of 16. The raptor park loses to visitor deaths unless its fences are reinforced and troops guard each pen.
+- In these runs the raptor park has one defense that reliably works (concrete plus split troops). A player can do better than the scripted defender (towers on the paths, troops bought earlier), but if it plays like a puzzle with one answer, the levers are the casualty limit (`SCORING.casualtyLimit`) and the raptor breakout delay.
+- The casualty limit is 8. A defended T. rex park never lost more than 6 visitors, so the limit bites where raptors are many. At 6, even concrete plus split troops survived only about half the raptor park runs. `UNCAPPED=1 npm run balance` prints every game's deaths, to judge another limit.
+- The cheapest defense that holds the T. rex park costs about 61% of what that park leaves, up from under half before troop and tower prices rose 50%. Extra troops, towers, or concrete for ★★★ take most of the rest.
 - The T. rex is slower than a running visitor (90 vs 100 px/s), so it mostly kills troops, towers, and anyone who walks toward it. Its charges and lock-on make it the fight that costs troops.
 - The jump from 4 to 6 troops is the difference between losing and winning the dense park. The dense park leaves about $30,000, so a careful player can afford plenty. If that feels too safe, raise exhibit prices or the T. rex's sedation, or lower the starting money.
 - Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.

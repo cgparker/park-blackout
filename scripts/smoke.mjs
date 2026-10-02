@@ -238,12 +238,15 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.screenshot({ path: `${out}/5-attack.png` });
 
   // End screen and Retry.
-  await S(page, () => (window.__pb.world.casualties.raptor = 10));
+  // The HUD shows "killed / limit"; push the count to the limit.
+  const limit = Number((await page.textContent('.stat.casualties .val')).split('/')[1]);
+  check('the HUD shows a casualty limit of 8', limit === 8, String(limit));
+  await S(page, (n) => (window.__pb.world.casualties.raptor = n), limit);
   await advance(page, 0.1);
-  check('ten casualties show the end screen', await soon(() => page.isVisible('.end'), 8000));
+  check('reaching the casualty limit shows the end screen', await soon(() => page.isVisible('.end'), 8000));
   check('end screen names the loss', (await page.textContent('.end h1')) === 'The park has been shut down');
   const endText = await page.textContent('.end');
-  check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && endText.includes('Towers$3,000'), endText.slice(0, 80));
+  check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && /Towers\$4,500/.test(endText), endText.slice(0, 80));
   await page.screenshot({ path: `${out}/6-end.png` });
   await page.tap('.retry');
   await page.waitForTimeout(400);

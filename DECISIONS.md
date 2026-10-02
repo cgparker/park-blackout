@@ -22,7 +22,7 @@ Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex 
 ### Towers
 
 8. **Towers are placed from the bottom bar** like exhibits (ghost, range circle, Build and Cancel), not from the HQ panel. Placing is the same action, and it's one tap instead of two.
-9. **$3,000, 200 HP, 20 sedation every 1.5 s, range 5 tiles.** At 300 HP one tower beat a whole raptor pack alone; at 200 it loses to the pack and two towers win.
+9. **200 HP, 20 sedation every 1.5 s, range 5 tiles.** At 300 HP one tower beat a whole raptor pack alone; at 200 it loses to the pack and two towers win. It cost $3,000 at first; see 19 for the current price.
 10. **A tower fills its tile.** Troops and animals path around it, Triceratops stampedes stop at it, and it can't be selected, boxed, or ordered. It doesn't count as a troop anywhere (Select all, troop counts, troops trained or lost).
 11. **Towers don't scare Triceratops.** Otherwise a tower beside a pasture would set off a stampede every few seconds for the whole blackout.
 12. **A tower right outside a fence still counts as a way out.** Animals break that segment and then knock the tower down, so towers can't wall a pen in. A destroyed tower leaves grass.
@@ -40,6 +40,15 @@ Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex 
 ### Screen
 
 17. **On screens narrower than 960 px the build bar drops its icons, the HQ button's label, and the "· 3 left" counts,** so four build buttons fit beside HQ and the selection buttons on a phone (checked at 667, 844, and 932 px wide with iPhone safe areas). The raptor button reads "Raptors", and a maxed-out exhibit reads "None left".
+
+## Round 2 follow-up: casualty limit and defense prices
+
+Chosen by Chris: make the casualty loss easier to hit, and make defense cost enough that the bank forces a tradeoff. The levers were picked by measurement (`npm run balance`, 16 seeds per defense, two dense parks, two defender styles).
+
+18. **Casualty limit 8, down from 10.** In the three-raptor park, concrete fences plus troops split across the pens survive 13 of 16 games; massing every troop in one spot survives 2 of 16. At 6, even that best defense survived only about half, which would make raptor-heavy parks a trap. A defended T. rex park never lost more than 6 visitors, so the limit only bites where raptors are many.
+19. **Troops and towers cost 50% more:** Tranq Squad $2,250, Heavy Team $6,000, Tranq Tower $4,500. Tranq and Heavy keep the same sedation per dollar relative to each other. The cheapest defense that holds the dense T. rex park went from under half its bank to about 61% (5 troops win 15 of 16; 4 lose every time), and the raptor park's working defense takes about 94% of its bank. At 25% more, the T. rex park still needed only about half.
+20. **Not chosen:** raptors breaking out at 10 s instead of 20 s. In the T. rex park it raised deaths at every troop count measured (with 10 massed troops, from about 1.3 per game to 2.8), so it would mostly make ★★★ rarer rather than punish careless play. A lower starting money would have reopened the ★★ tuning, since the opening build decides revenue.
+21. **The balance script plays two defender styles.** Massed keeps troops together; split posts them at each predator pen. They expose the two lessons: too few troops spread across the pens lose to the T. rex (concrete plus split troops: overrun 9 of 16), and massed troops lose visitors to raptors. `UNCAPPED=1` lifts the casualty limit and prints every game's deaths; `SEEDS=16` steadies the numbers.
 
 ## Milestone 6: tuning tools and deploy
 

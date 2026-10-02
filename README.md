@@ -34,7 +34,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 ## Tuning
 
 - Every number is in `src/config.ts`.
-- `npm run balance` plays five build strategies, six blackout defenses, and ten fights headlessly and prints the results. SPEC.md section 13 has the latest numbers.
+- `npm run balance` plays five build strategies, two dense parks against seven defenses, and ten fights headlessly and prints the results. SPEC.md section 13 has the latest numbers. Add `SEEDS=16` for steadier numbers, or `UNCAPPED=1` to lift the casualty limit and see every game's deaths.
 - Debug tools: tick **Debug tools** on the briefing screen, or add `?debug=1`. You get game speed (1x, 2x, 4x), **Blackout now**, **+$10,000**, fence HP numbers, the tile grid, and FPS.
 - Short games: tick **Quick test** on the briefing screen for a 2:00 build phase, or add `?blackout=120` for any length in seconds.
 - `?seed=7` makes a game repeatable.
@@ -44,7 +44,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 - `npm test` runs 58 unit tests: map, pathing, placement, visitors and what makes them run, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, and a full scripted game.
 - `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a number goes bad, or a game never ends.
-- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (50 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (51 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
 - `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
 - `npm run typecheck` checks types.
 

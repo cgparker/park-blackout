@@ -1,7 +1,7 @@
 // Headless balance checks. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { BLACKOUT, EXHIBITS, MAP, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
+import { BLACKOUT, EXHIBITS, MAP, SCORING, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
 import { footprintCenter, inFootprint } from '../src/core/exhibit';
 import type { Point, Rect } from '../src/core/grid';
 import { nearestOpenTile } from '../src/core/nav';
@@ -56,20 +56,28 @@ function bestSpot(w: World, kind: ExhibitKind, gap: number): PlacementPlan | nul
   return best;
 }
 
-/** What the bank buys late in the build phase: troops alternate Heavy and Tranq. */
+/** How the defender plays the blackout. */
+type Style = 'massed' | 'split';
+
+/** What the bank buys at 70% of the build phase. Troops alternate Heavy and Tranq. */
 interface Defense {
   name: string;
+  /** Troops to buy. Infinity means as many as the bank allows. */
   troops: number;
   towers: number;
+  /** Reinforce every predator pen first. */
+  concrete: boolean;
+  style: Style;
 }
 
 const DEFENSES: Defense[] = [
-  { name: 'Nothing', troops: 0, towers: 0 },
-  { name: '4 troops', troops: 4, towers: 0 },
-  { name: '6 troops', troops: 6, towers: 0 },
-  { name: '10 troops', troops: 10, towers: 0 },
-  { name: '4 towers', troops: 0, towers: 4 },
-  { name: '2 towers + 6 troops', troops: 6, towers: 2 },
+  { name: 'Nothing', troops: 0, towers: 0, concrete: false, style: 'massed' },
+  { name: '4 troops, massed', troops: 4, towers: 0, concrete: false, style: 'massed' },
+  { name: '5 troops, massed', troops: 5, towers: 0, concrete: false, style: 'massed' },
+  { name: 'Whole bank, massed', troops: Infinity, towers: 0, concrete: false, style: 'massed' },
+  { name: 'Whole bank, split', troops: Infinity, towers: 0, concrete: false, style: 'split' },
+  { name: 'Concrete, rest split', troops: Infinity, towers: 0, concrete: true, style: 'split' },
+  { name: '2 towers, rest massed', troops: Infinity, towers: 2, concrete: false, style: 'massed' },
 ];
 
 /** Plays the build phase: builds the strategy's exhibits, then spends the bank on the chosen defense. */
@@ -79,7 +87,7 @@ function buildPhase(s: Strategy, seed: number, defense: Defense = DEFENSES[0]): 
   const queue = [...s.order];
   const step = 1 / 30;
   let nextLook = 0;
-  let towersDone = false;
+  let prepared = false;
   while (w.phase === 'build') {
     const late = w.phaseTime >= s.stopAt * PHASE;
     if (!late && queue.length && w.phaseTime >= nextLook && w.money >= EXHIBITS[queue[0]].cost) {
@@ -91,9 +99,10 @@ function buildPhase(s: Strategy, seed: number, defense: Defense = DEFENSES[0]): 
         queue.shift();
       }
     }
-    if (late && defense.towers && !towersDone) {
-      towersDone = true;
-      buildTowers(w, defense.towers);
+    if (late && !prepared) {
+      prepared = true;
+      if (defense.concrete) for (const ex of w.exhibits) if (ex.kind !== 'pasture') w.reinforce(ex.id);
+      if (defense.towers) buildTowers(w, defense.towers);
     }
     const ordered = w.troopsTrained + w.queue.length;
     if (late && ordered < defense.troops && w.queue.length < 5) {
@@ -133,16 +142,34 @@ function buildTowers(w: World, max: number): void {
   }
 }
 
-/** A simple defender: rallies between the predator pens, then sends everyone at the nearest loose predator. */
-function blackoutPhase(w: World) {
+const toTile = (w: World, x: number, y: number) => {
+  const t = nearestOpenTile(w.grid.cols, w.grid.rows, w.unitWalk, x, y)!;
+  return { x: (t.x + 0.5) * T, y: (t.y + 0.5) * T };
+};
+
+/**
+ * Massed: every troop rallies between the predator pens, then all go after the nearest loose predator.
+ * Split: troops are dealt out to the predator pens (raptor pens first) and wait at each viewing spot,
+ * where the visitors are. Each fights whatever comes within 8 tiles of it.
+ */
+function blackoutPhase(w: World, style: Style) {
   const pens = w.exhibits.filter((e) => e.kind !== 'pasture');
   const c = pens.length
     ? pens.map((e) => footprintCenter(e.footprint, T)).reduce((a, p) => ({ x: a.x + p.x / pens.length, y: a.y + p.y / pens.length }), { x: 0, y: 0 })
     : { x: 10 * T, y: 12 * T };
-  const rallyTile = nearestOpenTile(w.grid.cols, w.grid.rows, w.unitWalk, Math.floor(c.x / T), Math.floor(c.y / T))!;
-  const rally = { x: (rallyTile.x + 0.5) * T, y: (rallyTile.y + 0.5) * T };
+  const rally = toTile(w, Math.floor(c.x / T), Math.floor(c.y / T));
+  const posts = [...pens].sort((a, b) => Number(b.kind === 'raptor') - Number(a.kind === 'raptor')).map((e) => toTile(w, e.viewingSpot.x, e.viewingSpot.y));
+  const post = new Map<number, { x: number; y: number }>();
   const troops = () => w.units.filter(isTroop);
-  orderMove(w, troops().map((u) => u.id), rally.x, rally.y);
+  const placeNew = () => {
+    for (const u of troops()) {
+      if (post.has(u.id)) continue;
+      const p = style === 'split' && posts.length ? posts[post.size % posts.length] : rally;
+      post.set(u.id, p);
+      orderMove(w, [u.id], p.x, p.y);
+    }
+  };
+  placeNew();
   const inPark = w.visitorsAtBlackout;
   let firstBreach = -1;
   let next = 0;
@@ -153,16 +180,33 @@ function blackoutPhase(w: World) {
     w.events = [];
     if (w.time < next) continue;
     next = w.time + 1;
+    placeNew();
     const squad = troops();
-    if (!squad.length) continue;
     const loose = w.dinos.filter((d) => d.state === 'loose');
-    if (!loose.length) continue;
-    const cx = squad.reduce((a, u) => a + u.x, 0) / squad.length;
-    const cy = squad.reduce((a, u) => a + u.y, 0) / squad.length;
-    const pick = (list: typeof loose) => list.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0];
-    const target = pick(loose.filter((d) => d.kind !== 'triceratops')) ?? pick(loose);
-    const idle = squad.filter((u) => !(u.order === 'attack' && u.targetId === target.id));
-    if (idle.length) orderAttack(w, idle.map((u) => u.id), target.id);
+    if (!squad.length || !loose.length) continue;
+    const nearest = (x: number, y: number, list: typeof loose) =>
+      [...list].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+    if (style === 'massed') {
+      const cx = squad.reduce((a, u) => a + u.x, 0) / squad.length;
+      const cy = squad.reduce((a, u) => a + u.y, 0) / squad.length;
+      const target = nearest(cx, cy, loose.filter((d) => d.kind !== 'triceratops')) ?? nearest(cx, cy, loose);
+      const idle = squad.filter((u) => !(u.order === 'attack' && u.targetId === target.id));
+      if (idle.length) orderAttack(w, idle.map((u) => u.id), target.id);
+      continue;
+    }
+    const stillPenned = w.dinos.some((d) => d.state === 'penned' && d.kind !== 'triceratops');
+    for (const u of squad) {
+      const close = loose.filter((d) => Math.hypot(d.x - u.x, d.y - u.y) <= 8 * T);
+      const target =
+        nearest(u.x, u.y, close.filter((d) => d.kind !== 'triceratops')) ??
+        nearest(u.x, u.y, close) ??
+        (stillPenned ? undefined : nearest(u.x, u.y, loose.filter((d) => d.kind !== 'triceratops')));
+      if (target && !(u.order === 'attack' && u.targetId === target.id)) orderAttack(w, [u.id], target.id);
+      else if (!target && u.order === 'idle') {
+        const p = post.get(u.id)!;
+        if (Math.hypot(p.x - u.x, p.y - u.y) > 2 * T) orderMove(w, [u.id], p.x, p.y);
+      }
+    }
   }
   return { inPark, firstBreach, result: w.result! };
 }
@@ -188,27 +232,47 @@ describe.skipIf(!process.env.BALANCE)('balance', () => {
     console.log(`\nBuild phase ${PHASE / 60}:00, revenue target ${money(target)}\n` + rows.join('\n'));
   });
 
-  it('prints whole blackouts for the dense T. rex park', { timeout: 900_000 }, () => {
+  // SEEDS=16 for steadier numbers. UNCAPPED=1 lifts the casualty limit and prints every game's deaths,
+  // so you can see what a different limit would do.
+  it('prints whole blackouts for two dense parks', { timeout: 1_800_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const uncapped = !!process.env.UNCAPPED;
+    const limit = SCORING.casualtyLimit;
+    if (uncapped) SCORING.casualtyLimit = Infinity;
     const rows: string[] = [];
-    for (const defense of DEFENSES) {
-      const runs = [1, 2, 3, 4, 5].map((seed) => {
-        const w = buildPhase(STRATEGIES[0], seed, defense);
-        const troopsAtStart = w.units.filter(isTroop).length + w.queue.length;
-        const towers = w.units.length - w.units.filter(isTroop).length;
-        return { ...blackoutPhase(w), troopsAtStart, towers };
-      });
-      const avg = (f: (r: (typeof runs)[number]) => number) => runs.reduce((a, r) => a + f(r), 0) / runs.length;
-      const outcomes = runs.map((r) => (r.result.won ? `won ${r.result.stars}★` : r.result.reason)).join(', ');
-      rows.push(
-        `${defense.name.padEnd(20)} troops ${avg((r) => r.troopsAtStart).toFixed(1)}  towers ${avg((r) => r.towers).toFixed(1)}  ` +
-          `in park ${avg((r) => r.inPark).toFixed(0)}  first breach ${avg((r) => r.firstBreach).toFixed(0)}s  ` +
-          `killed ${avg((r) => r.result.casualtyTotal).toFixed(1)} (raptor ${avg((r) => r.result.casualties.raptor).toFixed(1)}, ` +
-          `T. rex ${avg((r) => r.result.casualties.trex).toFixed(1)}, trampled ${avg((r) => r.result.casualties.stampede).toFixed(1)})  ` +
-          `troops lost ${avg((r) => r.result.troopsLost).toFixed(1)}  ` +
-          `towers lost ${avg((r) => r.result.towersLost).toFixed(1)}  | ${outcomes}`,
-      );
+    try {
+      for (const park of [STRATEGIES[0], STRATEGIES[1]]) {
+        rows.push(`\n${park.name}`);
+        for (const defense of DEFENSES) {
+          const runs = Array.from({ length: seeds }, (_, i) => i + 1).map((seed) => {
+            const w = buildPhase(park, seed, defense);
+            const s = w.spending;
+            const spent = s.troops + s.towers + s.reinforcement;
+            const troops = w.units.filter(isTroop).length + w.queue.length;
+            return { ...blackoutPhase(w, defense.style), spent, share: spent / (spent + w.money), troops };
+          });
+          const avg = (f: (r: (typeof runs)[number]) => number) => runs.reduce((a, r) => a + f(r), 0) / runs.length;
+          const tally: Record<string, number> = {};
+          for (const r of runs) {
+            const k = r.result.won ? `won ${r.result.stars}★` : r.result.reason;
+            tally[k] = (tally[k] ?? 0) + 1;
+          }
+          const killed = runs.map((r) => r.result.casualtyTotal);
+          rows.push(
+            `  ${defense.name.padEnd(22)} troops ${avg((r) => r.troops).toFixed(1).padStart(4)}  spent ${money(avg((r) => r.spent)).padStart(7)} ` +
+              `(${Math.round(avg((r) => r.share) * 100)}% of bank)  killed ${avg((r) => r.result.casualtyTotal).toFixed(1)} [${Math.min(...killed)}-${Math.max(...killed)}]  ` +
+              `troops lost ${avg((r) => r.result.troopsLost).toFixed(1)}  | ${Object.entries(tally)
+                .map(([k, n]) => `${n} ${k}`)
+                .join(', ')}`,
+          );
+          if (uncapped) rows.push(`    deaths per game: ${[...killed].sort((a, b) => a - b).join(' ')}`);
+        }
+      }
+    } finally {
+      SCORING.casualtyLimit = limit;
     }
-    console.log('\nDense T. rex park, 5 seeds per defense (spend the bank at 70% of the build phase)\n' + rows.join('\n'));
+    const cap = uncapped ? 'no casualty limit' : `casualty limit ${limit}`;
+    console.log(`\nWhole blackouts, ${seeds} seeds per defense (${cap}; the bank is spent at 70% of the build phase)` + rows.join('\n'));
   });
 });
 

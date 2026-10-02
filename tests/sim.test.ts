@@ -556,7 +556,7 @@ describe('combat', () => {
     expect(events.some((e) => e.type === 'casualty')).toBe(true);
   });
 
-  it('ten casualties shut the park down', () => {
+  it('reaching the casualty limit shuts the park down', () => {
     const w = blackoutWorld((w) => place(w, 'pasture', 6, 9));
     w.casualties.raptor = SCORING.casualtyLimit;
     run(w, 0.1);

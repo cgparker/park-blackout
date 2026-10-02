@@ -181,7 +181,7 @@ export interface UnitConfig {
 export const UNITS: Record<UnitKind, UnitConfig> = {
   tranq: {
     name: 'Tranq Squad',
-    cost: 1500,
+    cost: 2250,
     trainSeconds: 8,
     hp: 100,
     speed: 100,
@@ -192,7 +192,7 @@ export const UNITS: Record<UnitKind, UnitConfig> = {
   },
   heavy: {
     name: 'Heavy Team',
-    cost: 4000,
+    cost: 6000,
     trainSeconds: 15,
     hp: 250,
     speed: 70,
@@ -204,7 +204,7 @@ export const UNITS: Record<UnitKind, UnitConfig> = {
   /** Built on grass before the blackout. Never moves. Its body fills its tile, so animals bite it from the next one. */
   tower: {
     name: 'Tranq Tower',
-    cost: 3000,
+    cost: 4500,
     trainSeconds: 0,
     hp: 200,
     speed: 0,
@@ -344,7 +344,8 @@ export const BLACKOUT = {
 };
 
 export const SCORING = {
-  casualtyLimit: 10,
+  /** Visitors killed before the park is shut down. Careless raptor defense reaches it; a good one usually doesn't. */
+  casualtyLimit: 8,
 };
 
 export const SIM = {
