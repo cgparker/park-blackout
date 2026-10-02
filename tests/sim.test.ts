@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BLACKOUT, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, SCORING, SQUAD, UNITS, VISITORS, type ExhibitKind } from '../src/config';
-import type { Dino } from '../src/core/dinos';
+import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, SCORING, SQUAD, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
 import { Tile } from '../src/core/grid';
-import { planPlacement } from '../src/core/placement';
+import { planPlacement, planTower } from '../src/core/placement';
 import { starsFor } from '../src/core/report';
 import { cancelQueued, enqueueUnit, orderAttack, orderMove, spawnUnit } from '../src/core/units';
 import type { Visitor } from '../src/core/visitors';
@@ -113,19 +113,26 @@ describe('visitors and income', () => {
   });
 
   it('holds at most 80 visitors', () => {
-    const w = new World({ seed: 4, startingMoney: RICH, buildPhaseSeconds: 900 });
-    place(w, 'trex', 20, 16);
-    place(w, 'raptor', 9, 8);
-    place(w, 'raptor', 30, 9);
-    place(w, 'raptor', 14, 20);
-    place(w, 'pasture', 4, 3);
-    w.start();
-    let most = 0;
-    for (let i = 0; i < 200 / STEP; i++) {
-      w.update(STEP);
-      most = Math.max(most, w.visitors.length);
+    // Short visits rarely fill the park, so stretch them to hit the cap.
+    const budget = VISITORS.timeBudgetSeconds;
+    VISITORS.timeBudgetSeconds = 120;
+    try {
+      const w = new World({ seed: 4, startingMoney: RICH, buildPhaseSeconds: 900 });
+      place(w, 'trex', 20, 16);
+      place(w, 'raptor', 9, 8);
+      place(w, 'raptor', 30, 9);
+      place(w, 'raptor', 14, 20);
+      place(w, 'pasture', 4, 3);
+      w.start();
+      let most = 0;
+      for (let i = 0; i < 200 / STEP; i++) {
+        w.update(STEP);
+        most = Math.max(most, w.visitors.length);
+      }
+      expect(most).toBe(VISITORS.maxInPark);
+    } finally {
+      VISITORS.timeBudgetSeconds = budget;
     }
-    expect(most).toBe(VISITORS.maxInPark);
   });
 
   it('a visitor out of time walks back to the gate and leaves', () => {
@@ -140,7 +147,7 @@ describe('visitors and income', () => {
     expect(v.done).toBe(true);
   });
 
-  it('warns at 1:00, then cuts the power and everyone flees', () => {
+  it('warns at 1:00, then cuts the power, and visitors stroll on without paying', () => {
     const w = new World({ seed: 6, buildPhaseSeconds: 90 });
     place(w, 'pasture', 6, 9);
     w.start();
@@ -151,18 +158,69 @@ describe('visitors and income', () => {
     expect(w.phase).toBe('blackout');
     expect(w.powerOn).toBe(false);
     expect(w.visitors.length).toBeGreaterThan(0);
-    expect(w.visitors.every((v) => v.mode === 'fleeing')).toBe(true);
+    expect(w.visitorsAtBlackout).toBe(w.visitors.length);
+    // Nothing is loose and nothing broke, so nobody has noticed.
+    expect(w.visitors.some((v) => v.mode === 'fleeing')).toBe(false);
 
     const revenue = w.revenue;
-    run(w, 60);
+    run(w, VISITORS.timeBudgetSeconds + 60);
     expect(w.revenue).toBe(revenue);
     expect(w.visitors).toHaveLength(0);
-    expect(w.visitorsSafe).toBeGreaterThan(0);
+    expect(w.visitorsSafe).toBe(w.visitorsAtBlackout);
   });
 
   it('scales the revenue target with the build phase', () => {
-    expect(new World({ buildPhaseSeconds: 600 }).revenueTarget).toBe(40000);
-    expect(new World({ buildPhaseSeconds: 180 }).revenueTarget).toBe(12000);
+    const perMinute = ECONOMY.revenueTargetPerMinute;
+    expect(new World({ buildPhaseSeconds: 300 }).revenueTarget).toBe(perMinute * 5);
+    expect(new World({ buildPhaseSeconds: 120 }).revenueTarget).toBe(perMinute * 2);
+  });
+});
+
+describe('visitors in the dark', () => {
+  it('a fence breaking sends visitors within 8 tiles running; the rest stroll on', () => {
+    let pen!: ReturnType<typeof place>;
+    let far!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      pen = place(w, 'raptor', 9, 11);
+      far = place(w, 'pasture', 30, 20);
+    });
+    const near = bystander(w, (pen.viewingSpot.x + 0.5) * T, (pen.viewingSpot.y + 0.5) * T);
+    const away = bystander(w, (far.viewingSpot.x + 0.5) * T, (far.viewingSpot.y + 0.5) * T);
+    const i = pen.segments.findIndex((s) => !s.corner);
+    damageSegment(w, pen, i, FENCE.chainLinkHp);
+    expect(near.mode).toBe('fleeing');
+    expect(away.mode).toBe('viewing');
+  });
+
+  it('visitors run once a loose dinosaur is within 5 tiles', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const v = bystander(w, (pen.viewingSpot.x + 0.5) * T, (pen.viewingSpot.y + 0.5) * T);
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    setLoose(raptor, v.x, v.y + (VISITORS.panicDinoRadiusTiles + 1) * T);
+    raptor.pause = 999;
+    run(w, 0.5);
+    expect(v.mode).toBe('viewing');
+    raptor.y = v.y + (VISITORS.panicDinoRadiusTiles - 1) * T;
+    run(w, STEP);
+    expect(v.mode).toBe('fleeing');
+  });
+
+  it('a death sends everyone within 6 tiles running', () => {
+    let pen!: ReturnType<typeof place>;
+    let far!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      pen = place(w, 'raptor', 9, 11);
+      far = place(w, 'pasture', 30, 20);
+    });
+    const spot = pen.viewingSpot;
+    const victim = bystander(w, (spot.x + 0.5) * T, (spot.y + 0.5) * T);
+    const witness = bystander(w, (spot.x + 0.5) * T + 3 * T, (spot.y + 0.5) * T);
+    const away = bystander(w, (far.viewingSpot.x + 0.5) * T, (far.viewingSpot.y + 0.5) * T);
+    killVisitor(w, victim, 'raptor');
+    expect(witness.mode).toBe('fleeing');
+    expect(away.mode).toBe('viewing');
+    expect(w.casualties.raptor).toBe(1);
   });
 });
 
@@ -392,14 +450,109 @@ describe('combat', () => {
     expect(shooter.hp).toBe(UNITS.tranq.hp - DINOS.trex.troopDamage);
   });
 
-  it('a loose raptor kills a visitor after half a second of contact', () => {
+  it('the T. rex locks onto one troop and stays on it while others shoot', () => {
+    let paddock!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (paddock = place(w, 'trex', 20, 16)));
+    const rex = w.dinos.find((d) => d.home === paddock.id)!;
+    setLoose(rex, 30.5 * T, 21.5 * T);
+    rex.chargeCooldown = 999;
+    const first = spawnUnit(w, 'tranq', { x: 34.5 * T, y: 21.5 * T });
+    first.hp = first.maxHp = 100000;
+    run(w, 1.2);
+    expect(rex.lockId).toBe(first.id);
+    const second = spawnUnit(w, 'heavy', { x: 30.5 * T, y: 17.5 * T });
+    const events = run(w, 4);
+    expect(events.some((e) => e.type === 'dart' && e.x0 === second.x && e.y0 === second.y)).toBe(true);
+    expect(rex.lockId).toBe(first.id);
+    expect(rex.target).toEqual({ type: 'unit', id: first.id });
+    expect(second.hp).toBe(UNITS.heavy.hp);
+  });
+
+  it('the T. rex lets go once its troop is more than 12 tiles away', () => {
+    let paddock!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (paddock = place(w, 'trex', 20, 16)));
+    const rex = w.dinos.find((d) => d.home === paddock.id)!;
+    setLoose(rex, 30.5 * T, 21.5 * T);
+    rex.chargeCooldown = 999;
+    const u = spawnUnit(w, 'tranq', { x: 34.5 * T, y: 21.5 * T });
+    run(w, 0.6);
+    expect(rex.lockId).toBe(u.id);
+    // The troop gets clear, and a visitor is close by (but not close enough to notice).
+    u.x = 8.5 * T;
+    u.y = 21.5 * T;
+    const v = bystander(w, rex.x, rex.y - 7 * T);
+    run(w, DINO_AI.thinkSeconds + STEP);
+    expect(rex.lockId).toBe(0);
+    expect(rex.target).toEqual({ type: 'visitor', id: v.id });
+  });
+
+  it('the T. rex winds up, charges at double speed, and bites what it hits', () => {
+    let paddock!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (paddock = place(w, 'trex', 20, 16)));
+    const rex = w.dinos.find((d) => d.home === paddock.id)!;
+    setLoose(rex, 24.5 * T, 21.5 * T);
+    const u = spawnUnit(w, 'heavy', { x: 28.5 * T, y: 21.5 * T });
+    u.hp = u.maxHp = 100000;
+    const events = run(w, 0.5, () => rex.windup > 0);
+    expect(rex.lockId).toBe(u.id);
+    expect(events.some((e) => e.type === 'charge')).toBe(true);
+    const x0 = rex.x;
+    run(w, DINO_AI.trexChargeWindupSeconds - 0.05);
+    expect(rex.x).toBe(x0);
+    run(w, 0.2, () => rex.charge > 0);
+    expect(rex.charge).toBeGreaterThan(0);
+    run(w, STEP);
+    const xa = rex.x;
+    run(w, 0.2);
+    expect((rex.x - xa) / 0.2).toBeCloseTo(DINOS.trex.speed * DINO_AI.trexChargeSpeedMultiplier, 0);
+    run(w, 2, () => u.hp < u.maxHp);
+    expect(u.hp).toBe(u.maxHp - DINOS.trex.troopDamage);
+    expect(rex.charge).toBe(0);
+    expect(rex.chargeCooldown).toBeGreaterThan(0);
+  });
+
+  it('a charging T. rex tramples visitors in its way', () => {
+    let paddock!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (paddock = place(w, 'trex', 20, 16)));
+    const rex = w.dinos.find((d) => d.home === paddock.id)!;
+    // On the path stub by the gate, charging inward at a visitor who runs for the gate.
+    setLoose(rex, (MAP.gate.x + 1.5) * T, (MAP.gate.y + 0.5) * T);
+    rex.charge = 1;
+    rex.cdx = 1;
+    rex.cdy = 0;
+    bystander(w, (MAP.gate.x + 3.5) * T, (MAP.gate.y + 0.5) * T);
+    run(w, 1);
+    expect(w.casualties.trex).toBe(1);
+  });
+
+  it('nothing behind its own fence can be darted', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const fp = pen.footprint;
+    spawnUnit(w, 'heavy', { x: (fp.x + fp.w + 1.5) * T, y: (fp.y + 1.5) * T });
+    const events = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    expect(events.some((e) => e.type === 'dart')).toBe(false);
+    expect(w.dinos.every((d) => d.sedation === DINOS[d.kind].sedation)).toBe(true);
+  });
+
+  it('a loose raptor runs down a visitor and kills after half a second of contact', () => {
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const raptor = w.dinos.find((d) => d.home === pen.id)!;
-    setLoose(raptor, 20.5 * T, 20.5 * T);
-    bystander(w, 22.5 * T, 20.5 * T);
-    const events = run(w, 5, () => w.casualtyTotal > 0);
+    // The visitor stands at the viewing spot; the raptor waits two tiles further out from the pen.
+    const spot = pen.viewingSpot;
+    const fp = pen.footprint;
+    const dx = spot.x < fp.x ? -1 : spot.x >= fp.x + fp.w ? 1 : 0;
+    const dy = spot.y < fp.y ? -1 : spot.y >= fp.y + fp.h ? 1 : 0;
+    const v = bystander(w, (spot.x + 0.5) * T, (spot.y + 0.5) * T);
+    setLoose(raptor, (spot.x + 2 * dx + 0.5) * T, (spot.y + 2 * dy + 0.5) * T);
+    let contactSeen = 0;
+    const events = run(w, 5, () => {
+      contactSeen = Math.max(contactSeen, v.contact);
+      return w.casualtyTotal > 0;
+    });
     expect(w.casualties.raptor).toBe(1);
+    expect(contactSeen).toBeGreaterThan(DINO_AI.visitorContactSeconds - 0.05);
     expect(events.some((e) => e.type === 'casualty')).toBe(true);
   });
 
@@ -410,6 +563,79 @@ describe('combat', () => {
     expect(w.phase).toBe('ended');
     expect(w.result?.reason).toBe('shutdown');
     expect(w.result?.stars).toBe(0);
+  });
+});
+
+describe('towers', () => {
+  it('build on one grass tile before the blackout, block it, and take no orders', () => {
+    const w = new World({ seed: 30, startingMoney: RICH });
+    w.start();
+    expect(planTower(w.grid, MAP.gate.x + 1, MAP.gate.y, w.money).valid).toBe(false);
+    expect(planTower(w.grid, MAP.hq.x, MAP.hq.y, w.money).valid).toBe(false);
+    expect(planTower(w.grid, 10, 4, UNITS.tower.cost - 1).reason).toBe('Not enough money');
+
+    const standing = spawnUnit(w, 'tranq', { x: 12.5 * T, y: 6.5 * T });
+    const tower = w.buildTower(planTower(w.grid, 12, 6, w.money));
+    expect(w.grid.get(12, 6)).toBe(Tile.Tower);
+    expect(w.unitWalk(12, 6)).toBe(false);
+    expect(w.dinoWalk(12, 6)).toBe(false);
+    expect(Math.floor(standing.x / T) !== 12 || Math.floor(standing.y / T) !== 6).toBe(true);
+    expect(w.spending.towers).toBe(UNITS.tower.cost);
+    expect(w.towersBuilt).toBe(1);
+    expect(w.troopsTrained).toBe(1);
+
+    orderMove(w, [tower.id], 20 * T, 20 * T);
+    orderAttack(w, [tower.id], 1);
+    run(w, 2);
+    expect(tower.order).toBe('idle');
+    expect(tower.x).toBe(12.5 * T);
+    expect(tower.y).toBe(6.5 * T);
+
+    w.startBlackout();
+    expect(() => w.buildTower(planTower(w.grid, 10, 4, w.money))).toThrow();
+  });
+
+  it('dart loose dinosaurs in range, but not penned ones', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      pen = place(w, 'raptor', 9, 11);
+      const fp = pen.footprint;
+      w.buildTower(planTower(w.grid, fp.x + fp.w + 1, fp.y + 1, w.money));
+    });
+    const quiet = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    expect(quiet.some((e) => e.type === 'dart')).toBe(false);
+    const fight = run(w, 40, () => w.dinosSecured > 0);
+    expect(fight.some((e) => e.type === 'dart')).toBe(true);
+    expect(w.dinosSecured).toBeGreaterThan(0);
+  });
+
+  it('the T. rex locks onto a tower that darts it and knocks it down; the tile turns back to grass', () => {
+    let paddock!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      paddock = place(w, 'trex', 20, 16);
+      w.buildTower(planTower(w.grid, 30, 21, w.money));
+    });
+    const tower = w.units.find((u) => u.kind === 'tower')!;
+    const rex = w.dinos.find((d) => d.home === paddock.id)!;
+    setLoose(rex, 26.5 * T, 21.5 * T);
+    run(w, 1.6);
+    expect(rex.lockId).toBe(tower.id);
+    const events = run(w, 40, () => tower.dead);
+    expect(tower.dead).toBe(true);
+    expect(events.some((e) => e.type === 'unitLost' && e.kind === 'tower')).toBe(true);
+    expect(w.towersLost).toBe(1);
+    expect(w.troopsLost).toBe(0);
+    expect(w.grid.get(30, 21)).toBe(Tile.Grass);
+    expect(rex.sedation).toBeLessThan(DINOS.trex.sedation);
+  });
+
+  it('a tower outside a fence still counts as a way out, so towers cannot wall a pen in', () => {
+    const w = new World({ seed: 33, startingMoney: RICH });
+    const pen = place(w, 'raptor', 9, 11);
+    const s = pen.segments.find((s) => !s.corner && w.grid.get(s.x + s.nx, s.y + s.ny) === Tile.Grass)!;
+    w.buildTower(planTower(w.grid, s.x + s.nx, s.y + s.ny, w.money));
+    s.hp = 0;
+    expect(hasExit(w, pen)).toBe(true);
   });
 });
 

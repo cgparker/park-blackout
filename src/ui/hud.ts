@@ -1,7 +1,10 @@
-import { COLORS, EXHIBITS, EXHIBIT_KINDS, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
-import type { PlacementPlan } from '../core/placement';
+import { COLORS, EXHIBITS, EXHIBIT_KINDS, MAP, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
 import type { Result } from '../core/report';
 import type { Phase } from '../core/world';
+
+/** Things placed from the build bar. */
+export type BuildKind = ExhibitKind | 'tower';
+const BUILD_KINDS: readonly BuildKind[] = [...EXHIBIT_KINDS, 'tower'];
 
 export interface ScreenRect {
   left: number;
@@ -11,7 +14,7 @@ export interface ScreenRect {
 }
 
 export interface HudHandlers {
-  selectExhibit(kind: ExhibitKind): void;
+  selectBuild(kind: BuildKind): void;
   confirmPlacement(): void;
   cancelPlacement(): void;
   start(options: { quick: boolean; debug: boolean }): void;
@@ -42,6 +45,18 @@ export interface TopView {
   secured: number;
   contained: number;
   allClear: boolean;
+  /** Visitors still in the park. */
+  inPark: number;
+}
+
+/** What the placement panel shows for an exhibit or a tower. */
+export interface PlaceView {
+  title: string;
+  lines: [string, string][];
+  /** Why it can't be built, or null when it can. */
+  reason: string | null;
+  cost: number;
+  valid: boolean;
 }
 
 export interface TrainingView {
@@ -116,9 +131,14 @@ function animalIcon(kind: AnimalKind): string {
 function unitIcon(kind: UnitKind): string {
   const fill = hex(COLORS.unit);
   const stroke = hex(COLORS.unitStroke);
-  return kind === 'tranq'
-    ? `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="7" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`
-    : `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="5" y="5" width="16" height="16" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
+  switch (kind) {
+    case 'tranq':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="7" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
+    case 'heavy':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="5" y="5" width="16" height="16" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
+    case 'tower':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="3" y="3" width="20" height="20" rx="3" fill="${hex(COLORS.tower)}" stroke="${hex(COLORS.towerTrim)}" stroke-width="1.5"/><circle cx="13" cy="13" r="5.5" fill="${fill}" stroke="${stroke}" stroke-width="1.3"/><rect x="17" y="11.8" width="6" height="2.4" fill="#e8f0ff"/></svg>`;
+  }
 }
 
 /** The HTML layer over the game canvas. */
@@ -140,8 +160,8 @@ export class Hud {
 
   private readonly bottomBar: HTMLElement;
   private readonly buildGroup: HTMLElement;
-  private readonly buildButtons = new Map<ExhibitKind, HTMLButtonElement>();
-  private readonly buildMeta = new Map<ExhibitKind, HTMLElement>();
+  private readonly buildButtons = new Map<BuildKind, HTMLButtonElement>();
+  private readonly buildMeta = new Map<BuildKind, { price: HTMLElement; left: HTMLElement }>();
   private readonly hqMeta: HTMLElement;
   private readonly selectAllBtn: HTMLButtonElement;
   private readonly clearBtn: HTMLButtonElement;
@@ -179,6 +199,7 @@ export class Hud {
   private readonly briefIntro: HTMLElement;
   private readonly briefGoal2: HTMLElement;
   private readonly quickBox: HTMLInputElement;
+  private readonly quickLabel: HTMLElement;
   private readonly debugBox: HTMLInputElement;
   private briefView: BriefingView | null = null;
 
@@ -225,22 +246,26 @@ export class Hud {
     // ------------------------------------------------ bottom bar
     this.bottomBar = el('div', 'bottombar');
     this.buildGroup = el('div', 'build-group');
-    for (const kind of EXHIBIT_KINDS) {
-      const cfg = EXHIBITS[kind];
-      const b = button('build-btn');
+    for (const kind of BUILD_KINDS) {
+      const tower = kind === 'tower';
+      const b = button(tower ? 'build-btn tower' : 'build-btn');
       b.dataset.kind = kind;
       b.setAttribute('aria-pressed', 'false');
       const swatch = el('span', 'swatch');
-      swatch.style.background = hex(COLORS.interior[kind]);
-      swatch.innerHTML = animalIcon(cfg.animal);
+      swatch.style.background = hex(tower ? COLORS.grass : COLORS.interior[kind]);
+      swatch.innerHTML = tower ? unitIcon('tower') : animalIcon(EXHIBITS[kind].animal);
       const label = el('span', 'label');
       const meta = el('span', 'meta');
-      label.append(el('span', 'name', cfg.short), meta);
-      b.setAttribute('aria-label', cfg.name);
+      // "· 3 left" drops out on narrow screens; the price stays.
+      const price = el('span', 'cost');
+      const left = el('span', 'left');
+      meta.append(price, left);
+      label.append(el('span', 'name', tower ? 'Tower' : EXHIBITS[kind].short), meta);
+      b.setAttribute('aria-label', tower ? UNITS.tower.name : EXHIBITS[kind].name);
       b.append(swatch, label);
-      b.addEventListener('click', () => this.handlers?.selectExhibit(kind));
+      b.addEventListener('click', () => this.handlers?.selectBuild(kind));
       this.buildButtons.set(kind, b);
-      this.buildMeta.set(kind, meta);
+      this.buildMeta.set(kind, { price, left });
       this.buildGroup.append(b);
     }
     const troopGroup = el('div', 'troop-group');
@@ -284,7 +309,7 @@ export class Hud {
       const label = el('span', 'label');
       label.append(
         el('span', 'name', cfg.name),
-        el('span', 'meta', `${cfg.hp}\u00a0HP · range\u00a0${Math.round(cfg.range / 40)} · ${cfg.trainSeconds}\u00a0s`),
+        el('span', 'meta', `${cfg.hp}\u00a0HP · range\u00a0${Math.round(cfg.range / MAP.tileSize)} · ${cfg.trainSeconds}\u00a0s`),
       );
       b.append(icon, label, el('span', 'price', formatMoney(cfg.cost)));
       b.addEventListener('click', () => this.handlers?.train(kind));
@@ -338,7 +363,8 @@ export class Hud {
       options.append(label);
       return input;
     };
-    this.quickBox = check('opt-quick', 'Quick test: 3:00 build phase');
+    this.quickBox = check('opt-quick', 'Quick test');
+    this.quickLabel = this.quickBox.nextElementSibling as HTMLElement;
     this.debugBox = check('opt-debug', 'Debug tools');
     this.quickBox.addEventListener('change', () => this.renderBriefing());
     const start = button('primary start', 'Start');
@@ -359,8 +385,8 @@ export class Hud {
     goal('★★★', 'Also keep every visitor alive.');
     const howto = el('ul', 'howto');
     for (const line of [
-      'Tap an exhibit below, then tap the map to place it.',
-      'Tap HQ to train troops.',
+      'Tap an exhibit or a tower below, then tap the map to place it.',
+      'Tap HQ to train troops. Towers guard a spot on their own.',
       'Tap a troop, then tap the map to move or a dinosaur to attack.',
       'Hold, then drag, to select a group.',
       'Drag to pan. Pinch to zoom.',
@@ -463,8 +489,16 @@ export class Hud {
 
   setTop(v: TopView): void {
     setText(this.moneyVal, formatMoney(v.money));
-    setText(this.revenueCap, `Revenue · ★★ at ${formatMoney(v.revenueTarget)}`);
-    setText(this.revenueVal, formatMoney(v.revenue));
+    // Revenue stops at the blackout. From then on this slot shows who is still in the park.
+    const dark = v.phase === 'blackout' || v.phase === 'restored';
+    this.revenueStat.classList.toggle('people', dark);
+    if (dark) {
+      setText(this.revenueCap, 'Visitors in park');
+      setText(this.revenueVal, v.inPark ? String(v.inPark) : 'Everyone is out');
+    } else {
+      setText(this.revenueCap, `Revenue · ★★ at ${formatMoney(v.revenueTarget)}`);
+      setText(this.revenueVal, formatMoney(v.revenue));
+    }
     const pct = Math.min(100, (v.revenue / Math.max(1, v.revenueTarget)) * 100);
     const width = `${pct.toFixed(1)}%`;
     if (this.revenueMeter.style.width !== width) this.revenueMeter.style.width = width;
@@ -496,17 +530,26 @@ export class Hud {
     this.casualtyStat.classList.toggle('bad', v.casualties > 0);
   }
 
-  setBuildBar(visible: boolean, cash: number, counts: Record<ExhibitKind, number>, placing: ExhibitKind | null): void {
+  setBuildBar(visible: boolean, cash: number, counts: Record<ExhibitKind, number>, placing: BuildKind | null): void {
     this.buildGroup.classList.toggle('hidden', !visible);
     if (!visible) return;
-    for (const kind of EXHIBIT_KINDS) {
-      const cfg = EXHIBITS[kind];
+    for (const kind of BUILD_KINDS) {
       const b = this.buildButtons.get(kind)!;
       const meta = this.buildMeta.get(kind)!;
-      const atLimit = cfg.maxPerLevel !== null && counts[kind] >= cfg.maxPerLevel;
-      const left = cfg.maxPerLevel === null ? null : cfg.maxPerLevel - counts[kind];
-      setText(meta, atLimit ? 'Limit reached' : left === null ? formatMoney(cfg.cost) : `${formatMoney(cfg.cost)} · ${left} left`);
-      const disabled = placing !== kind && (atLimit || cash < cfg.cost);
+      let cost: number;
+      let atLimit = false;
+      if (kind === 'tower') {
+        cost = UNITS.tower.cost;
+        setText(meta.price, formatMoney(cost));
+      } else {
+        const cfg = EXHIBITS[kind];
+        cost = cfg.cost;
+        atLimit = cfg.maxPerLevel !== null && counts[kind] >= cfg.maxPerLevel;
+        const left = cfg.maxPerLevel === null ? null : cfg.maxPerLevel - counts[kind];
+        setText(meta.price, atLimit ? 'None left' : formatMoney(cost));
+        setText(meta.left, atLimit || left === null ? '' : ` · ${left} left`);
+      }
+      const disabled = placing !== kind && (atLimit || cash < cost);
       if (b.disabled !== disabled) b.disabled = disabled;
       const pressed = placing === kind ? 'true' : 'false';
       if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
@@ -539,23 +582,18 @@ export class Hud {
     this.exhibitPanel.classList.add('hidden');
   }
 
-  showPlacement(plan: PlacementPlan): void {
-    const cfg = EXHIBITS[plan.kind];
-    setText(this.placeTitle, cfg.name);
+  showPlacement(v: PlaceView): void {
+    setText(this.placeTitle, v.title);
     this.placeLines.innerHTML = '';
-    const line = (label: string, value: string) => {
+    for (const [label, value] of v.lines) {
       const r = el('div', 'line');
       r.append(el('span', '', label), el('span', 'value', value));
       this.placeLines.append(r);
-    };
-    line('Exhibit', formatMoney(plan.exhibitCost));
-    const tiles = plan.newPathTiles.length;
-    if (plan.viewingSpot) line(tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, formatMoney(plan.pathCost));
-    line('Earns per visit', formatMoney(cfg.pricePerVisit));
-    setText(this.placeReason, plan.reason ?? '');
-    this.placeReason.classList.toggle('hidden', plan.reason === null);
-    setText(this.confirmBtn, `Build ${formatMoney(plan.totalCost)}`);
-    this.confirmBtn.disabled = !plan.valid;
+    }
+    setText(this.placeReason, v.reason ?? '');
+    this.placeReason.classList.toggle('hidden', v.reason === null);
+    setText(this.confirmBtn, `Build ${formatMoney(v.cost)}`);
+    this.confirmBtn.disabled = !v.valid;
     this.show('place');
   }
 
@@ -673,6 +711,7 @@ export class Hud {
     if (!v) return;
     const seconds = this.quickBox.checked ? v.quickSeconds : v.buildSeconds;
     const target = Math.round((v.revenueTarget * seconds) / v.buildSeconds);
+    setText(this.quickLabel, `Quick test: ${formatClock(v.quickSeconds)} build phase`);
     setText(this.briefTitle, `Lights out in ${formatClock(seconds)}`);
     setText(
       this.briefIntro,
@@ -723,6 +762,16 @@ export class Hud {
       : [['No exhibits built', '$0']];
     const hit = r.revenue >= r.revenueTarget;
     const s = r.spending;
+    const blackoutRows: [string, string][] = [
+      ['In the park at blackout', String(r.visitorsAtBlackout)],
+      ['Got out safely', String(r.visitorsSafe)],
+      ['Killed by raptors', String(r.casualties.raptor)],
+      ['Killed by the T. rex', String(r.casualties.trex)],
+      ['Trampled', String(r.casualties.stampede)],
+      ['Troops lost', `${r.troopsLost} of ${r.troopsTrained}`],
+    ];
+    if (r.towersBuilt) blackoutRows.push(['Towers lost', `${r.towersLost} of ${r.towersBuilt}`]);
+    blackoutRows.push(['Dinosaurs secured', String(r.dinosSecured)], ['Dinosaurs contained', String(r.dinosContained)]);
     const grid = el('div', 'end-grid');
     grid.append(
       section('Revenue', revenueRows, [`Total (★★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
@@ -733,21 +782,11 @@ export class Hud {
           ['Paths', formatMoney(s.paths)],
           ['Reinforcement', formatMoney(s.reinforcement)],
           ['Troops', formatMoney(s.troops)],
+          ['Towers', formatMoney(s.towers)],
         ],
         ['Total', formatMoney(s.total)],
       ),
-      section(
-        'Blackout',
-        [
-          ['Killed by raptors', String(r.casualties.raptor)],
-          ['Killed by the T. rex', String(r.casualties.trex)],
-          ['Trampled', String(r.casualties.stampede)],
-          ['Troops lost', `${r.troopsLost} of ${r.troopsTrained}`],
-          ['Dinosaurs secured', String(r.dinosSecured)],
-          ['Dinosaurs contained', String(r.dinosContained)],
-        ],
-        ['Visitors killed', String(r.casualtyTotal)],
-      ),
+      section('Blackout', blackoutRows, ['Visitors killed', String(r.casualtyTotal)]),
     );
     b.append(head, grid);
     this.endScreen.classList.remove('hidden');

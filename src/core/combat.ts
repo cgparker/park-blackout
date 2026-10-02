@@ -1,5 +1,6 @@
 import { DINO_AI } from '../config';
 import type { Dino } from './dinos';
+import { Tile } from './grid';
 import type { Unit } from './units';
 import type { World } from './world';
 
@@ -10,7 +11,13 @@ export function damageUnit(w: World, u: Unit, amount: number): void {
   if (u.hp > 0) return;
   u.hp = 0;
   u.dead = true;
-  w.troopsLost++;
+  if (u.kind === 'tower') {
+    // The tile opens up again.
+    w.towersLost++;
+    w.grid.set(Math.floor(u.x / w.T), Math.floor(u.y / w.T), Tile.Grass);
+  } else {
+    w.troopsLost++;
+  }
   w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y });
 }
 
@@ -28,6 +35,9 @@ export function sedate(w: World, d: Dino, amount: number, unitId: number): void 
   d.target = null;
   d.path = [];
   d.pathIndex = 0;
+  d.lockId = 0;
+  d.windup = 0;
+  d.charge = 0;
   w.dinosSecured++;
   w.events.push({ type: 'secured', dinoId: d.id, kind: d.kind, x: d.x, y: d.y });
 }

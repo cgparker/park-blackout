@@ -4,7 +4,7 @@ A single-player RTS prototype for phones. Build a dinosaur park, earn money from
 
 ## Status
 
-All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
+All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
 
 ## Run it
 
@@ -20,6 +20,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 | Phone | Desktop | Does |
 |---|---|---|
 | Tap an exhibit in the bottom bar, then the map | Same, with clicks | Place an exhibit, then tap **Build** |
+| Tap **Tower** in the bottom bar, then the map | Same, with clicks | Place a Tranq Tower, then tap **Build** |
 | Tap an exhibit on the map | Click it | Visits, revenue, fence, and **Reinforce** |
 | Tap HQ, or **Train** in the bottom bar | Same | Train troops |
 | Tap a troop | Click it | Select it |
@@ -33,18 +34,18 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 ## Tuning
 
 - Every number is in `src/config.ts`.
-- `npm run balance` plays five build strategies and six fights headlessly and prints the results. SPEC.md section 13 has the latest numbers.
+- `npm run balance` plays five build strategies, six blackout defenses, and ten fights headlessly and prints the results. SPEC.md section 13 has the latest numbers.
 - Debug tools: tick **Debug tools** on the briefing screen, or add `?debug=1`. You get game speed (1x, 2x, 4x), **Blackout now**, **+$10,000**, fence HP numbers, the tile grid, and FPS.
-- Short games: tick **Quick test** on the briefing screen for a 3:00 build phase, or add `?blackout=180` for any length in seconds.
+- Short games: tick **Quick test** on the briefing screen for a 2:00 build phase, or add `?blackout=120` for any length in seconds.
 - `?seed=7` makes a game repeatable.
-- Inside a Claude artifact, query strings don't reach the page. Use the briefing checkboxes, or a hash such as `#debug.blackout-180.seed-7`.
+- Inside a Claude artifact, query strings don't reach the page. Use the briefing checkboxes, or a hash such as `#debug.blackout-120.seed-7`.
 
 ## Checks
 
-- `npm test` runs 46 unit tests: map, pathing, placement, visitors, training, orders, the blackout cascade, combat, power return, and a full scripted game.
-- `npm run stress` plays 40 randomized games and fails if anyone walks through a rock or pen, a number goes bad, or a game never ends.
-- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (42 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
-- `node scripts/look.mjs` saves screenshots of the main game states to `test-results/look`.
+- `npm test` runs 58 unit tests: map, pathing, placement, visitors and what makes them run, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, and a full scripted game.
+- `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a number goes bad, or a game never ends.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (50 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
 - `npm run typecheck` checks types.
 
 ## Where things live

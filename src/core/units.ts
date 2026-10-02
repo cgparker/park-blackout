@@ -1,9 +1,12 @@
-import { SQUAD, UNITS, type UnitKind } from '../config';
+import { COMBAT, SQUAD, UNITS, type UnitKind } from '../config';
 import { sedate } from './combat';
 import type { Dino } from './dinos';
 import type { Point } from './grid';
 import { findPath, followPath, nearestOpenTile, toWaypoints, type PathFollower } from './nav';
 import type { World } from './world';
+
+/** Towers live in the unit list so dinosaurs can attack them, but they never move or take orders. */
+export const isTroop = (u: Unit): boolean => u.kind !== 'tower';
 
 export type UnitOrder = 'idle' | 'move' | 'attack';
 
@@ -65,9 +68,17 @@ export function updateTraining(w: World, dt: number): void {
   spawnUnit(w, head.kind);
 }
 
+/** A troop walks out of HQ (or appears at `at`, for tests). */
 export function spawnUnit(w: World, kind: UnitKind, at?: Point): Unit {
+  const u = createUnit(w, kind, at ?? spawnPoint(w));
+  w.troopsTrained++;
+  w.events.push({ type: 'trained', unitId: u.id, kind });
+  return u;
+}
+
+/** Adds a unit to the world. Towers come through here too, from World.buildTower. */
+export function createUnit(w: World, kind: UnitKind, p: Point): Unit {
   const cfg = UNITS[kind];
-  const p = at ?? spawnPoint(w);
   const u: Unit = {
     id: w.newId(),
     kind,
@@ -87,8 +98,6 @@ export function spawnUnit(w: World, kind: UnitKind, at?: Point): Unit {
     dead: false,
   };
   w.units.push(u);
-  w.troopsTrained++;
-  w.events.push({ type: 'trained', unitId: u.id, kind });
   return u;
 }
 
@@ -109,7 +118,7 @@ function spawnPoint(w: World): Point {
     const cx = (t.x + 0.5) * T;
     const cy = (t.y + 0.5) * T;
     let count = 0;
-    for (const u of w.units) if (!u.dead && Math.hypot(u.x - cx, u.y - cy) < T * 0.7) count++;
+    for (const u of w.units) if (!u.dead && isTroop(u) && Math.hypot(u.x - cx, u.y - cy) < T * 0.7) count++;
     if (count < bestCount) {
       bestCount = count;
       best = { x: cx, y: cy };
@@ -122,8 +131,10 @@ function spawnPoint(w: World): Point {
   return { x: best.x + (w.rng() - 0.5) * 8, y: best.y + (w.rng() - 0.5) * 8 };
 }
 
+/** Darts only fly during the blackout and after. Animals still behind their own fence are out of reach. */
 export function isTargetable(w: World, d: Dino): boolean {
-  return (w.phase === 'blackout' || w.phase === 'restored') && (d.state === 'penned' || d.state === 'loose');
+  if (w.phase !== 'blackout' && w.phase !== 'restored') return false;
+  return d.state === 'loose' || (COMBAT.dartPennedAnimals && d.state === 'penned');
 }
 
 /** Sends troops to a spot, spread out in a loose grid so they don't stack. */
@@ -156,7 +167,7 @@ export function orderMove(w: World, ids: Iterable<number>, x: number, y: number)
 export function unitsAfterBuild(w: World): void {
   const T = w.T;
   for (const u of w.units) {
-    if (u.dead) continue;
+    if (u.dead || !isTroop(u)) continue;
     const tx = Math.floor(u.x / T);
     const ty = Math.floor(u.y / T);
     if (!w.unitWalk(tx, ty)) {
@@ -248,7 +259,7 @@ export function updateUnits(w: World, dt: number): void {
 function fire(w: World, u: Unit, d: Dino): void {
   const cfg = UNITS[u.kind];
   u.cooldown = cfg.fireIntervalSeconds;
-  w.events.push({ type: 'dart', x0: u.x, y0: u.y, x1: d.x, y1: d.y, heavy: u.kind === 'heavy' });
+  w.events.push({ type: 'dart', x0: u.x, y0: u.y, x1: d.x, y1: d.y, heavy: u.kind !== 'tranq' });
   sedate(w, d, cfg.dartSedation, u.id);
 }
 
@@ -270,11 +281,12 @@ function autoTarget(w: World, u: Unit): Dino | null {
   return best;
 }
 
+/** Live troops among the ids. Towers can't take orders. */
 function liveUnits(w: World, ids: Iterable<number>): Unit[] {
   const out: Unit[] = [];
   for (const id of ids) {
     const u = w.unitById(id);
-    if (u && !u.dead) out.push(u);
+    if (u && !u.dead && isTroop(u)) out.push(u);
   }
   return out;
 }
@@ -319,9 +331,9 @@ function planRoute(w: World, u: Unit, x: number, y: number): void {
   u.pathIndex = 0;
 }
 
-/** Pushes overlapping troops apart. */
+/** Pushes overlapping troops apart. Towers stay put, and troops can't stand on their tiles anyway. */
 function separate(w: World): void {
-  const live = w.units.filter((u) => !u.dead);
+  const live = w.units.filter((u) => !u.dead && isTroop(u));
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i];

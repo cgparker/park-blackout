@@ -33,6 +33,8 @@ await page.evaluate(() => {
   build('pasture', 6, 3);
   build('trex', 16, 16);
   build('raptor', 23, 9);
+  build('tower', 21, 14);
+  build('tower', 12, 12);
 });
 // Let visitors arrive.
 await page.evaluate(() => {
@@ -59,17 +61,43 @@ await page.evaluate(() => window.__pb.scene.closePanels());
 await page.waitForTimeout(200);
 await page.screenshot({ path: `${out}/04-selected.png` });
 
-// Blackout.
+// Blackout: the T. rex picks a target, winds up, and charges.
+await page.evaluate(() => window.__pb.world.startBlackout());
+for (const [name, field] of [
+  ['05a-trex-windup', 'windup'],
+  ['05b-trex-charge', 'charge'],
+]) {
+  const found = await page.evaluate((field) => {
+    const { world, scene } = window.__pb;
+    const rex = () => world.dinos.find((d) => d.kind === 'trex');
+    for (let i = 0; i < 60 * 60 && rex() && !(rex()[field] > 0); i++) world.update(1 / 60);
+    const d = rex();
+    if (!d || !(d[field] > 0)) return false;
+    // Step a little into the wind-up so the warning arc shows.
+    if (field === 'windup') for (let i = 0; i < 20; i++) world.update(1 / 60);
+    scene.cx = d.x;
+    scene.cy = d.y;
+    scene.zoomLevel = 1.3;
+    scene.applyCamera();
+    // Freeze the sim so the screenshot catches this moment (the page otherwise runs in real time).
+    scene.speed = 0;
+    return true;
+  }, field);
+  await page.waitForTimeout(300);
+  if (found) await page.screenshot({ path: `${out}/${name}.png` });
+  else console.log(`no T. rex ${field} to show`);
+  await page.evaluate(() => (window.__pb.scene.speed = 1));
+}
 await page.evaluate(() => {
   const { world, scene } = window.__pb;
-  world.startBlackout();
-  for (let i = 0; i < 60 * 24; i++) world.update(1 / 60);
+  for (let i = 0; i < 60 * 6; i++) world.update(1 / 60);
+  scene.zoomLevel = 0.8;
   scene.cx = 16 * 40;
   scene.cy = 13 * 40;
   scene.applyCamera();
 });
 await page.waitForTimeout(400);
-await page.screenshot({ path: `${out}/05-blackout.png` });
+await page.screenshot({ path: `${out}/05c-blackout.png` });
 
 // Exhibit panel.
 await page.evaluate(() => {

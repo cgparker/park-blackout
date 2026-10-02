@@ -2,6 +2,45 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Round 2: making the blackout matter
+
+Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex that locks on and charges, Tranq Towers, and a 5:00 build phase. The calls below fill in the details.
+
+### Visitors
+
+1. **What counts as danger:** a fence breaking within 8 tiles, a loose dinosaur within 5 tiles, or someone killed within 6 tiles (`VISITORS.panic*RadiusTiles`). Until then visitors keep strolling and viewing, but nobody pays after the lights go out.
+2. **Anyone who walks out after the blackout counts as safe,** running or strolling. The end screen shows how many were in the park at the blackout and how many got out.
+3. **During the blackout the revenue slot in the top bar shows visitors still in the park.** Revenue can't change after the blackout, and the end screen still shows it.
+4. **Visits last 35 s, down from 60.** Measured: dense and 3-tile parks barely change; a park spread 7 tiles apart drops from about $27,000 at 40 s to about $15,000 at 35 s, under the $20,000 target.
+
+### T. rex
+
+5. **Lock-on:** it locks onto whoever darted it in the last 5 s within 8 tiles, or onto the nearest troop or tower once there's nothing else to chase. It keeps that target until it dies or gets more than 12 tiles away, ignores darts from others meanwhile, and bites the locked target first when several are in reach.
+6. **Charge:** only while locked on, 1.5 to 5 tiles away, with a clear run. A 0.6 s wind-up is the warning (an orange arc fills around it, a line points at the target, "Charge!" floats up). Then it runs straight at double speed for up to 1.2 s, bites the first troop or tower it touches, tramples visitors in its path like a Triceratops stampede, and stops at anything solid. 4 s between charges.
+7. **Sedation 800,** the top of the 500 to 800 range. With the lock and charge, 2 Heavy + 2 Tranq win on open grass but lose 2 troops, which was the goal.
+
+### Towers
+
+8. **Towers are placed from the bottom bar** like exhibits (ghost, range circle, Build and Cancel), not from the HQ panel. Placing is the same action, and it's one tap instead of two.
+9. **$3,000, 200 HP, 20 sedation every 1.5 s, range 5 tiles.** At 300 HP one tower beat a whole raptor pack alone; at 200 it loses to the pack and two towers win.
+10. **A tower fills its tile.** Troops and animals path around it, Triceratops stampedes stop at it, and it can't be selected, boxed, or ordered. It doesn't count as a troop anywhere (Select all, troop counts, troops trained or lost).
+11. **Towers don't scare Triceratops.** Otherwise a tower beside a pasture would set off a stampede every few seconds for the whole blackout.
+12. **A tower right outside a fence still counts as a way out.** Animals break that segment and then knock the tower down, so towers can't wall a pen in. A destroyed tower leaves grass.
+13. **Animals reach a tower from the next tile.** Its body radius is half a tile, and a chasing animal only needs a clear line to the spot where it stops, not to the tower's center.
+
+### Darts
+
+14. **Nothing behind its own fence can be darted, by troops or towers** (`COMBAT.dartPennedAnimals`, off). This replaces Milestones 2 to 5 decision 12. Measured with the old rule: one Tranq Squad parked beside a raptor pen secured all three raptors, and in 2 of 3 runs none ever got out. One tower did it in all 3 runs. No escapes means no cascade and nothing to fight. With the new rule the same lone Tranq Squad dies and all three raptors get out.
+
+### Build phase and economy
+
+15. **5:00 build phase, 2:00 quick test.** The revenue target stays $4,000 per minute of build phase, so ★★ is $20,000.
+16. **Starting money $25,000, up from $15,000.** At $15,000 and 5:00, no scripted build could afford the T. rex before 3:30, and none reached $20,000. At $25,000 you can open with a T. rex, or two raptor pens and a pasture.
+
+### Screen
+
+17. **On screens narrower than 960 px the build bar drops its icons, the HQ button's label, and the "· 3 left" counts,** so four build buttons fit beside HQ and the selection buttons on a phone (checked at 667, 844, and 932 px wide with iPhone safe areas). The raptor button reads "Raptors", and a maxed-out exhibit reads "None left".
+
 ## Milestone 6: tuning tools and deploy
 
 1. **Quick test and Debug tools are also checkboxes on the briefing screen.** Inside a Claude artifact the query string never reaches the page, so `?debug=1` and `?blackout=180` can't work there. The checkboxes cover phone playtests; the URL options still work locally and on GitHub Pages. Hash tokens work in both: `#debug.blackout-180.seed-7`.

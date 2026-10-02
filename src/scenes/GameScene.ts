@@ -2,12 +2,12 @@ import Phaser from 'phaser';
 import { BLACKOUT, CAMERA, COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, MAP, SCORING, SIM, UNITS, type ExhibitKind, type UnitKind } from '../config';
 import { reinforceCost } from '../core/exhibit';
 import type { Rect } from '../core/grid';
-import { planPlacement, type PlacementPlan } from '../core/placement';
-import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, orderAttack, orderMove } from '../core/units';
+import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
+import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
 import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
-import { formatMoney, type ExhibitView, type Hud } from '../ui/hud';
+import { formatMoney, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
 
 const T = MAP.tileSize;
 const WORLD_W = MAP.cols * T;
@@ -62,9 +62,10 @@ export class GameScene extends Phaser.Scene {
   private rightDown: { x: number; y: number } | null = null;
   private keys: Record<string, Phaser.Input.Keyboard.Key> = {};
 
-  private placingKind: ExhibitKind | null = null;
+  private placingKind: BuildKind | null = null;
   private placingTile = { x: 0, y: 0 };
   private plan: PlacementPlan | null = null;
+  private towerPlan: TowerPlan | null = null;
 
   private selected = new Set<number>();
   private accumulator = 0;
@@ -93,6 +94,7 @@ export class GameScene extends Phaser.Scene {
     this.rightDown = null;
     this.placingKind = null;
     this.plan = null;
+    this.towerPlan = null;
     this.selected = new Set();
     this.accumulator = 0;
     this.wasAllClear = false;
@@ -156,7 +158,7 @@ export class GameScene extends Phaser.Scene {
 
   private wireHud(): void {
     this.hud.handlers = {
-      selectExhibit: (kind) => this.togglePlacement(kind),
+      selectBuild: (kind) => this.togglePlacement(kind),
       confirmPlacement: () => this.confirmPlacement(),
       cancelPlacement: () => this.endPlacement(),
       start: (o) => this.startGame(o.quick, o.debug),
@@ -167,7 +169,7 @@ export class GameScene extends Phaser.Scene {
       reinforce: (id) => this.reinforce(id),
       closePanel: () => this.closePanels(),
       selectAll: () => {
-        this.selected = new Set(this.world.units.map((u) => u.id));
+        this.selected = new Set(this.world.units.filter(isTroop).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
       debugSpeed: (s) => {
@@ -223,6 +225,7 @@ export class GameScene extends Phaser.Scene {
       secured: w.dinosSecured,
       contained,
       allClear: w.allClear,
+      inPark: w.visitors.reduce((n, v) => (v.done ? n : n + 1), 0),
     });
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
@@ -235,11 +238,12 @@ export class GameScene extends Phaser.Scene {
       else if (u?.kind === 'heavy') heavy++;
     }
     const parts = [tranq ? `${tranq} Tranq` : '', heavy ? `${heavy} Heavy` : ''].filter(Boolean);
-    this.hud.setTroops(w.units.length, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
+    const troops = w.units.reduce((n, u) => (isTroop(u) ? n + 1 : n), 0);
+    this.hud.setTroops(troops, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
 
     switch (this.hud.panel) {
       case 'place':
-        this.anchorToTiles(this.plan?.footprint);
+        this.anchorToTiles(this.placementRect());
         break;
       case 'train':
         this.hud.updateTraining(this.trainingView());
@@ -598,7 +602,7 @@ export class GameScene extends Phaser.Scene {
 
   private finishBox(): void {
     const b = this.boxRect();
-    const picked = this.world.units.filter((u) => u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h);
+    const picked = this.world.units.filter((u) => isTroop(u) && u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h);
     this.selected = new Set(picked.map((u) => u.id));
     if (picked.length) this.closePanels();
   }
@@ -670,11 +674,13 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** The troop under a tap. Towers can't be selected. */
   private unitAt(x: number, y: number) {
     const slop = INPUT.tapSlop / this.zoomLevel;
     let best = null;
     let bestD = Infinity;
     for (const u of this.world.units) {
+      if (!isTroop(u)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d <= UNITS[u.kind].radius + slop && d < bestD) {
         bestD = d;
@@ -701,7 +707,7 @@ export class GameScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- building
 
-  private togglePlacement(kind: ExhibitKind): void {
+  private togglePlacement(kind: BuildKind): void {
     if (!this.world.canBuild) return;
     if (this.placingKind === kind) {
       this.endPlacement();
@@ -712,10 +718,12 @@ export class GameScene extends Phaser.Scene {
     this.updatePlan();
   }
 
-  /** Spirals out from (tx, ty) looking for a spot where the footprint fits and a path can reach it. */
-  private findOpenTileNear(kind: ExhibitKind, tx: number, ty: number): { x: number; y: number } {
+  /** Spirals out from (tx, ty) looking for a spot where the exhibit (and a path to it) or the tower fits. */
+  private findOpenTileNear(kind: BuildKind, tx: number, ty: number): { x: number; y: number } {
     const start = { x: clamp(tx, 0, MAP.cols - 1), y: clamp(ty, 0, MAP.rows - 1) };
-    const fits = (x: number, y: number) => planPlacement(this.world.grid, kind, x, y, Infinity, 0).reason === null;
+    const grid = this.world.grid;
+    const fits = (x: number, y: number) =>
+      kind === 'tower' ? planTower(grid, x, y, Infinity).valid : planPlacement(grid, kind, x, y, Infinity, 0).reason === null;
     for (let r = 0; r <= 10; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -732,15 +740,65 @@ export class GameScene extends Phaser.Scene {
   private updatePlan(): void {
     const kind = this.placingKind;
     if (!kind) return;
-    this.plan = planPlacement(this.world.grid, kind, this.placingTile.x, this.placingTile.y, this.world.money, this.world.countOf(kind));
+    const w = this.world;
+    const { x, y } = this.placingTile;
+    if (kind === 'tower') {
+      this.plan = null;
+      this.towerPlan = planTower(w.grid, x, y, w.money);
+      this.hud.showPlacement(this.towerView(this.towerPlan));
+    } else {
+      this.towerPlan = null;
+      this.plan = planPlacement(w.grid, kind, x, y, w.money, w.countOf(kind));
+      this.hud.showPlacement(this.exhibitPlaceView(this.plan));
+    }
     this.drawGhost();
-    this.hud.showPlacement(this.plan);
-    this.anchorToTiles(this.plan.footprint);
+    this.anchorToTiles(this.placementRect());
+  }
+
+  private exhibitPlaceView(plan: PlacementPlan): PlaceView {
+    const cfg = EXHIBITS[plan.kind];
+    const tiles = plan.newPathTiles.length;
+    const lines: [string, string][] = [['Exhibit', formatMoney(plan.exhibitCost)]];
+    if (plan.viewingSpot) lines.push([tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, formatMoney(plan.pathCost)]);
+    lines.push(['Earns per visit', formatMoney(cfg.pricePerVisit)]);
+    return { title: cfg.name, lines, reason: plan.reason, cost: plan.totalCost, valid: plan.valid };
+  }
+
+  private towerView(plan: TowerPlan): PlaceView {
+    const cfg = UNITS.tower;
+    return {
+      title: cfg.name,
+      lines: [
+        ['Darts', `${cfg.dartSedation} every ${cfg.fireIntervalSeconds} s`],
+        ['Range', `${Math.round(cfg.range / T)} tiles`],
+        ['HP', String(cfg.hp)],
+      ],
+      reason: plan.reason,
+      cost: plan.cost,
+      valid: plan.valid,
+    };
+  }
+
+  /** Tiles covered by the thing being placed, for the ghost and the panel position. */
+  private placementRect(): Rect | undefined {
+    if (this.towerPlan) return { x: this.towerPlan.tile.x, y: this.towerPlan.tile.y, w: 1, h: 1 };
+    return this.plan?.footprint;
   }
 
   private confirmPlacement(): void {
     if (!this.placingKind || !this.world.canBuild) return;
     this.updatePlan();
+    if (this.placingKind === 'tower') {
+      const plan = this.towerPlan;
+      if (!plan || !plan.valid) {
+        this.hud.toast(plan?.reason ?? 'Can’t build there');
+        return;
+      }
+      this.world.buildTower(plan);
+      this.hud.toast(`${UNITS.tower.name} built for ${formatMoney(plan.cost)}`);
+      this.endPlacement();
+      return;
+    }
     const plan = this.plan;
     if (!plan || !plan.valid) {
       this.hud.toast(plan?.reason ?? 'Can’t build there');
@@ -754,6 +812,7 @@ export class GameScene extends Phaser.Scene {
   private endPlacement(): void {
     this.placingKind = null;
     this.plan = null;
+    this.towerPlan = null;
     this.ghostGfx.clear();
     if (this.hud.panel === 'place') this.hud.closePanels();
   }
@@ -761,6 +820,17 @@ export class GameScene extends Phaser.Scene {
   private drawGhost(): void {
     const g = this.ghostGfx;
     g.clear();
+    const tower = this.towerPlan;
+    if (tower) {
+      const color = tower.valid ? COLORS.ghostValid : COLORS.ghostInvalid;
+      const cx = (tower.tile.x + 0.5) * T;
+      const cy = (tower.tile.y + 0.5) * T;
+      g.fillStyle(color, 0.08).fillCircle(cx, cy, UNITS.tower.range);
+      g.lineStyle(2, color, 0.55).strokeCircle(cx, cy, UNITS.tower.range);
+      g.fillStyle(color, 0.3).fillRect(tower.tile.x * T, tower.tile.y * T, T, T);
+      g.lineStyle(3, color, 0.95).strokeRect(tower.tile.x * T + 1.5, tower.tile.y * T + 1.5, T - 3, T - 3);
+      return;
+    }
     const plan = this.plan;
     if (!plan) return;
     g.fillStyle(COLORS.path, 0.8);

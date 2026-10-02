@@ -1,13 +1,13 @@
-import { BLACKOUT, ECONOMY, FENCE, MAP, SCORING, type AnimalKind, type ExhibitKind, type MapConfig, type UnitKind } from '../config';
+import { BLACKOUT, ECONOMY, FENCE, MAP, SCORING, UNITS, type AnimalKind, type ExhibitKind, type MapConfig, type UnitKind } from '../config';
 import { containDino, evictFromPens, spawnAnimals, updateDinos, type Dino } from './dinos';
 import { buildSegments, inFootprint, reinforceCost, type Exhibit } from './exhibit';
 import { createGrid, Tile, type Grid, type Point } from './grid';
 import { distanceField } from './nav';
-import type { PlacementPlan } from './placement';
+import { planTower, type PlacementPlan, type TowerPlan } from './placement';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
-import { unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
-import { startFleeing, updateVisitors, type Visitor } from './visitors';
+import { createUnit, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
+import { updateVisitors, type Visitor } from './visitors';
 
 export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'ended';
 export type CasualtyCause = 'raptor' | 'trex' | 'stampede';
@@ -21,7 +21,9 @@ export type GameEvent =
   | { type: 'blackout' }
   | { type: 'powerRestored'; contained: number }
   | { type: 'trained'; unitId: number; kind: UnitKind }
+  | { type: 'towerBuilt'; unitId: number }
   | { type: 'unitLost'; unitId: number; kind: UnitKind; x: number; y: number }
+  | { type: 'charge'; dinoId: number; x: number; y: number }
   | { type: 'dart'; x0: number; y0: number; x1: number; y1: number; heavy: boolean }
   | { type: 'bite'; x: number; y: number }
   | { type: 'fenceHit'; exhibitId: number; x: number; y: number }
@@ -57,7 +59,7 @@ export class World {
   money: number;
   /** Earned from visitors (build phase only). */
   revenue = 0;
-  readonly spending = { exhibits: 0, paths: 0, reinforcement: 0, troops: 0 };
+  readonly spending = { exhibits: 0, paths: 0, reinforcement: 0, troops: 0, towers: 0 };
 
   readonly exhibits: Exhibit[] = [];
   visitors: Visitor[] = [];
@@ -66,9 +68,13 @@ export class World {
   readonly queue: QueueItem[] = [];
 
   readonly casualties: Record<CasualtyCause, number> = { raptor: 0, trex: 0, stampede: 0 };
+  /** Visitors in the park when the power went out, and how many of them walked out alive. */
+  visitorsAtBlackout = 0;
   visitorsSafe = 0;
   troopsTrained = 0;
   troopsLost = 0;
+  towersBuilt = 0;
+  towersLost = 0;
   dinosSecured = 0;
   dinosContained = 0;
   result: Result | null = null;
@@ -108,11 +114,11 @@ export class World {
     return t === Tile.Grass || t === Tile.Path || t === Tile.Gate;
   };
 
-  /** Dinosaurs go anywhere except rocks, water, HQ, and standing fence. */
+  /** Dinosaurs go anywhere except rocks, water, HQ, towers, and standing fence. */
   readonly dinoWalk = (x: number, y: number): boolean => {
     if (!this.grid.inBounds(x, y)) return false;
     const t = this.grid.get(x, y);
-    if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ) return false;
+    if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower) return false;
     if (t !== Tile.Exhibit) return true;
     const ref = this.fenceIndex[this.grid.index(x, y)];
     if (ref < 0) return true;
@@ -259,6 +265,23 @@ export class World {
     return exhibit;
   }
 
+  /** Builds a Tranq Tower on one grass tile. Before the blackout only. */
+  buildTower(plan: TowerPlan): Unit {
+    if (!this.canBuild) throw new Error('Towers can only be built before the blackout.');
+    const { x, y } = plan.tile;
+    const check = planTower(this.grid, x, y, this.money);
+    if (!check.valid) throw new Error(`Cannot build a tower there: ${check.reason}`);
+    const cost = UNITS.tower.cost;
+    this.money -= cost;
+    this.spending.towers += cost;
+    this.towersBuilt++;
+    this.grid.set(x, y, Tile.Tower);
+    const tower = createUnit(this, 'tower', { x: (x + 0.5) * this.T, y: (y + 0.5) * this.T });
+    unitsAfterBuild(this);
+    this.events.push({ type: 'towerBuilt', unitId: tower.id });
+    return tower;
+  }
+
   /** Upgrades an exhibit's whole fence to concrete. Build phase only, once per exhibit. */
   reinforce(exhibitId: number): boolean {
     const ex = this.exhibitById(exhibitId);
@@ -279,7 +302,8 @@ export class World {
     this.phase = 'blackout';
     this.phaseTime = 0;
     this.powerOn = false;
-    startFleeing(this);
+    // Visitors don't notice. They keep strolling until danger shows up near them.
+    this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
     for (const ex of this.exhibits) ex.version++;
     this.events.push({ type: 'blackout' });
   }

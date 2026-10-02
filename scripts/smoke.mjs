@@ -89,15 +89,17 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const world = (fn) => S(page, fn);
 
   check('opens on the briefing', await page.isVisible('.briefing'));
-  check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 10:00');
+  check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 5:00');
+  check('briefing offers a 2:00 quick test', (await page.textContent('label.check')).includes('Quick test: 2:00 build phase'));
   await page.tap('#opt-quick');
-  check('quick test changes the countdown', (await page.textContent('.brief-title')) === 'Lights out in 3:00');
+  check('quick test changes the countdown', (await page.textContent('.brief-title')) === 'Lights out in 2:00');
   await page.tap('.start');
   check('Start begins the build phase', (await world(() => window.__pb.world.phase)) === 'build' && !(await page.isVisible('.briefing')));
-  check('quick test sets a 3:00 build phase', (await world(() => window.__pb.world.buildPhaseSeconds)) === 180);
+  check('quick test sets a 2:00 build phase', (await world(() => window.__pb.world.buildPhaseSeconds)) === 120);
   await page.screenshot({ path: `${out}/1-start.png` });
 
   // Build a raptor pen with the UI.
+  const money0 = await world(() => window.__pb.world.money);
   await page.tap('.build-btn[data-kind="raptor"]');
   const spot = await cssOf(page, 9.5 * T, 8.5 * T);
   await page.touchscreen.tap(spot.x, spot.y);
@@ -105,7 +107,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('tapping the map places a valid ghost', plan?.valid === true, JSON.stringify(plan));
   await page.tap('.place-panel .primary');
   const afterBuild = await world(() => ({ money: window.__pb.world.money, exhibits: window.__pb.world.exhibits.length }));
-  check('Build spends exhibit plus path', afterBuild.exhibits === 1 && afterBuild.money === 15000 - plan.cost, JSON.stringify(afterBuild));
+  check('Build spends exhibit plus path', afterBuild.exhibits === 1 && afterBuild.money === money0 - plan.cost, JSON.stringify(afterBuild));
 
   // Visitors arrive and pay.
   await advance(page, 60);
@@ -114,8 +116,10 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('visitors pay at the exhibit', econ.visits > 3 && econ.revenue === econ.visits * 25, JSON.stringify(econ));
   check('HUD shows the money', await soon(async () => (await page.textContent('.stat.money .val')) === '$' + econ.money.toLocaleString('en-US')));
   check('HUD shows the revenue', await soon(async () => (await page.textContent('.stat.revenue .val')) === '$' + econ.revenue.toLocaleString('en-US')));
-  check('clock counts down', await soon(async () => (await page.textContent('.clock .val')) === '2:00'), await page.textContent('.clock .val'));
+  check('clock counts down', await soon(async () => (await page.textContent('.clock .val')) === '1:00'), await page.textContent('.clock .val'));
   await page.screenshot({ path: `${out}/2-visitors.png` });
+  // The page also runs in real time, so give the rest of this walkthrough room before the lights go out.
+  await S(page, () => (window.__pb.world.buildPhaseSeconds = 600));
 
   // Exhibit panel and Reinforce.
   const pen = await world(() => window.__pb.world.exhibits[0].footprint);
@@ -126,6 +130,21 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.exhibit-panel .reinforce');
   check('Reinforce upgrades the fence', await world(() => window.__pb.world.exhibits[0].segments.every((s) => s.hp === 600)));
   await page.tap('.exhibit-panel .close');
+
+  // Build a Tranq Tower with the UI.
+  await centerOn(page, 8 * T, 13 * T);
+  await S(page, () => (window.__pb.world.money += 3000));
+  await page.tap('.build-btn[data-kind="tower"]');
+  check('the Tower button opens placement', await soon(() => page.isVisible('.place-panel')));
+  const towerSpot = await cssOf(page, 9.5 * T, 17.5 * T);
+  await page.touchscreen.tap(towerSpot.x, towerSpot.y);
+  const towerPlan = await world(() => window.__pb.scene.towerPlan);
+  check('tapping grass places a valid tower ghost', towerPlan?.valid === true && towerPlan.tile.x === 9 && towerPlan.tile.y === 17, JSON.stringify(towerPlan));
+  await page.screenshot({ path: `${out}/2b-tower-ghost.png` });
+  await page.tap('.place-panel .primary');
+  const towers = await world(() => window.__pb.world.units.filter((u) => u.kind === 'tower').map((u) => ({ x: u.x, y: u.y })));
+  check('Build puts a tower on that tile', towers.length === 1 && towers[0].x === 9.5 * T && towers[0].y === 17.5 * T, JSON.stringify(towers));
+  check('the tower tile blocks troops', await world(() => !window.__pb.world.unitWalk(9, 17)));
 
   // Train at HQ.
   await centerOn(page, 8 * T, 13 * T);
@@ -143,28 +162,33 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.train-btn[data-kind="heavy"]');
   await advance(page, 32);
   await page.waitForTimeout(100);
-  check('troops appear beside HQ', (await world(() => window.__pb.world.units.length)) === 3);
+  check('troops appear beside HQ', (await world(() => window.__pb.world.units.filter((u) => u.kind !== 'tower').length)) === 3);
   await page.screenshot({ path: `${out}/3-training.png` });
   await page.tap('.train-panel .close');
 
   // Tap to select, tap to move.
-  const unit = await world(() => ({ id: window.__pb.world.units[0].id, x: window.__pb.world.units[0].x, y: window.__pb.world.units[0].y }));
+  const unit = await world(() => {
+    const u = window.__pb.world.units.find((u) => u.kind !== 'tower');
+    return { id: u.id, x: u.x, y: u.y };
+  });
   const unitCss = await cssOf(page, unit.x, unit.y);
   await page.touchscreen.tap(unitCss.x, unitCss.y);
   check('tapping a troop selects it', JSON.stringify(await world(() => [...window.__pb.scene.selected])) === JSON.stringify([unit.id]));
   check('Clear shows the selection count', await soon(async () => (await page.textContent('.sel-clear')) === 'Clear 1'));
   const dest = await cssOf(page, 12.5 * T, 15.5 * T);
   await page.touchscreen.tap(dest.x, dest.y);
-  check('tapping the ground orders a move', (await world(() => window.__pb.world.units[0].order)) === 'move');
+  const troop = (id) => S(page, (id) => window.__pb.world.unitById(id), id);
+  check('tapping the ground orders a move', (await troop(unit.id)).order === 'move');
   await advance(page, 8);
-  const moved = await world(() => window.__pb.world.units[0]);
+  const moved = await troop(unit.id);
   check('the troop walks there', Math.hypot(moved.x - 12.5 * T, moved.y - 15.5 * T) < 30, `${Math.round(moved.x)},${Math.round(moved.y)}`);
 
   // Select all and Clear.
   await page.tap('.sel-clear');
   check('Clear empties the selection', (await world(() => window.__pb.scene.selected.size)) === 0);
   await page.tap('.sel-all');
-  check('Select all picks every troop', (await world(() => window.__pb.scene.selected.size)) === 3);
+  check('Select all picks every troop but not the tower', (await world(() => window.__pb.scene.selected.size)) === 3);
+  check('Select all counts troops only', (await page.textContent('.sel-all')) === 'Select all 3');
   await page.tap('.sel-clear');
 
   // Long-press, then drag, draws a selection box.
@@ -191,25 +215,26 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('Blackout now cuts the power', (await world(() => window.__pb.world.phase)) === 'blackout');
   check('the blackout banner shows', await soon(async () => (await page.textContent('.banner')).includes('cut the power')));
   check('build buttons hide after the blackout', await soon(async () => !(await page.isVisible('.build-group'))));
-  await advance(page, 26);
-  const fence = await world(() => Math.min(...window.__pb.world.exhibits[0].segments.map((s) => s.hp)));
-  check('raptors are breaking the concrete fence after 20 s', fence < 600, `weakest ${fence}`);
-
-  // Attack order on a dinosaur.
+  check('the revenue slot counts visitors in the dark', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Visitors in park'));
+  // Run until the first raptor is through the concrete, then freeze it for the attack order below.
   const target = await world(() => {
-    const d = window.__pb.world.dinos.find((d) => d.state === 'loose' || d.state === 'penned');
+    const w = window.__pb.world;
+    for (let i = 0; i < 60 * 60 && !w.dinos.some((d) => d.state === 'loose'); i++) w.update(1 / 60);
+    const d = w.dinos.find((d) => d.state === 'loose');
+    if (!d) return null;
     d.pause = 999;
-    return { id: d.id, x: d.x, y: d.y };
+    return { id: d.id, x: d.x, y: d.y, after: w.phaseTime };
   });
+  check('raptors break through the concrete after the 20 s delay', target !== null && target.after > 20, JSON.stringify(target));
   await S(page, () => {
     const s = window.__pb.scene;
-    s.selected = new Set(window.__pb.world.units.map((u) => u.id));
+    s.selected = new Set(window.__pb.world.units.filter((u) => u.kind !== 'tower').map((u) => u.id));
   });
   await centerOn(page, target.x, target.y);
   const tc = await cssOf(page, target.x, target.y);
   await page.touchscreen.tap(tc.x, tc.y);
-  const orders = await world(() => window.__pb.world.units.map((u) => u.order + ':' + u.targetId));
-  check('tapping a dinosaur orders an attack', orders.every((o) => o === `attack:${target.id}`), orders.join(' '));
+  const orders = await world(() => window.__pb.world.units.filter((u) => u.kind !== 'tower').map((u) => u.order + ':' + u.targetId));
+  check('tapping a dinosaur orders an attack', orders.length > 0 && orders.every((o) => o === `attack:${target.id}`), orders.join(' '));
   await page.screenshot({ path: `${out}/5-attack.png` });
 
   // End screen and Retry.
@@ -217,6 +242,8 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await advance(page, 0.1);
   check('ten casualties show the end screen', await soon(() => page.isVisible('.end'), 8000));
   check('end screen names the loss', (await page.textContent('.end h1')) === 'The park has been shut down');
+  const endText = await page.textContent('.end');
+  check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && endText.includes('Towers$3,000'), endText.slice(0, 80));
   await page.screenshot({ path: `${out}/6-end.png` });
   await page.tap('.retry');
   await page.waitForTimeout(400);

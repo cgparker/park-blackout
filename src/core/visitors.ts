@@ -47,7 +47,24 @@ export function updateVisitors(w: World, dt: number): void {
       if (w.visitors.length < VISITORS.maxInPark) w.visitors.push(spawnVisitor(w));
     }
   }
+  panicNearLooseDinos(w);
   for (const v of w.visitors) if (!v.done) step(w, v, dt);
+}
+
+/** Visitors who see a loose dinosaur close by run for the gate. */
+function panicNearLooseDinos(w: World): void {
+  const r = VISITORS.panicDinoRadiusTiles * w.T;
+  const loose = w.dinos.filter((d) => d.state === 'loose');
+  if (!loose.length) return;
+  for (const v of w.visitors) {
+    if (v.done || v.mode === 'fleeing') continue;
+    for (const d of loose) {
+      if (Math.hypot(d.x - v.x, d.y - v.y) <= r) {
+        flee(w, v);
+        break;
+      }
+    }
+  }
 }
 
 export function spawnVisitor(w: World): Visitor {
@@ -78,15 +95,18 @@ export function spawnVisitor(w: World): Visitor {
   return v;
 }
 
-/** At the blackout everyone runs for the gate. */
-export function startFleeing(w: World): void {
+/** Everyone within a radius of something frightening runs for the gate. */
+export function panicNear(w: World, x: number, y: number, radius: number): void {
   for (const v of w.visitors) {
-    if (v.done) continue;
-    const wasStanding = v.mode === 'viewing' || (v.tx === v.cx && v.ty === v.cy);
-    v.mode = 'fleeing';
-    v.target = 0;
-    if (wasStanding) route(w, v);
+    if (!v.done && v.mode !== 'fleeing' && Math.hypot(v.x - x, v.y - y) <= radius) flee(w, v);
   }
+}
+
+function flee(w: World, v: Visitor): void {
+  const standing = v.mode === 'viewing' || (v.tx === v.cx && v.ty === v.cy);
+  v.mode = 'fleeing';
+  v.target = 0;
+  if (standing) route(w, v);
 }
 
 function step(w: World, v: Visitor, dt: number): void {
@@ -125,7 +145,8 @@ function arrive(w: World, v: Visitor): void {
   if (v.mode === 'leaving' || v.mode === 'fleeing') {
     if (w.grid.get(v.cx, v.cy) === Tile.Gate) {
       v.done = true;
-      if (v.mode === 'fleeing') w.visitorsSafe++;
+      // Running or strolling, anyone who walks out after the lights go out made it.
+      if (w.phase !== 'build') w.visitorsSafe++;
       return;
     }
   } else if (v.mode === 'walking') {

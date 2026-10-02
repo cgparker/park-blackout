@@ -164,6 +164,15 @@ body {
   background: var(--good);
 }
 
+/* During the blackout the revenue slot counts visitors still in the park. */
+.stat.revenue.people .meter {
+  visibility: hidden;
+}
+
+.stat.revenue.people .val {
+  color: #ffe2e2;
+}
+
 .stat.casualties.bad .val {
   color: var(--bad);
 }
@@ -923,15 +932,22 @@ body {
 
 /* ------------------------------------------------------------ small screens */
 
-@media (max-width: 760px) {
-  .topbar {
-    gap: 10px;
-  }
+/* Phones in landscape: four build buttons, HQ, and the selection buttons share one row. */
+@media (max-width: 960px) {
   .build-btn .swatch {
     display: none;
   }
   .hq-btn .label {
     display: none;
+  }
+  .build-btn .meta .left {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    gap: 10px;
   }
   .sel-btn {
     padding: 0 9px;

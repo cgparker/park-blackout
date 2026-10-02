@@ -1,6 +1,24 @@
-import { ECONOMY, EXHIBITS, type ExhibitKind } from '../config';
+import { ECONOMY, EXHIBITS, UNITS, type ExhibitKind } from '../config';
 import { Tile, type Grid, type Point, type Rect } from './grid';
 import { planRoute } from './pathing';
+
+export interface TowerPlan {
+  tile: Point;
+  valid: boolean;
+  /** Why the tower can't be built, or null when it can. */
+  reason: string | null;
+  cost: number;
+}
+
+/** A tower fits on any single grass tile. */
+export function planTower(grid: Grid, tileX: number, tileY: number, money: number): TowerPlan {
+  const tile = { x: clamp(tileX, 0, grid.cols - 1), y: clamp(tileY, 0, grid.rows - 1) };
+  const cost = UNITS.tower.cost;
+  const base: TowerPlan = { tile, valid: false, reason: null, cost };
+  if (grid.get(tile.x, tile.y) !== Tile.Grass) return { ...base, reason: 'Needs open grass' };
+  if (money < cost) return { ...base, reason: 'Not enough money' };
+  return { ...base, valid: true };
+}
 
 export interface PlacementPlan {
   kind: ExhibitKind;

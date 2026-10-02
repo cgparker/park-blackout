@@ -2,9 +2,10 @@
 
 export type ExhibitKind = 'pasture' | 'raptor' | 'trex';
 export type AnimalKind = 'triceratops' | 'raptor' | 'trex';
-export type UnitKind = 'tranq' | 'heavy';
+export type UnitKind = 'tranq' | 'heavy' | 'tower';
 
 export const EXHIBIT_KINDS: readonly ExhibitKind[] = ['pasture', 'raptor', 'trex'];
+/** Troops trained at HQ. Towers are built, not trained. */
 export const UNIT_KINDS: readonly UnitKind[] = ['tranq', 'heavy'];
 
 export interface ExhibitConfig {
@@ -36,7 +37,7 @@ export const EXHIBITS: Record<ExhibitKind, ExhibitConfig> = {
   },
   raptor: {
     name: 'Raptor Pen',
-    short: 'Raptor Pen',
+    short: 'Raptors',
     cost: 6000,
     pricePerVisit: 25,
     appeal: 2,
@@ -128,7 +129,8 @@ export const INPUT = {
 };
 
 export const ECONOMY = {
-  startingMoney: 15000,
+  /** Enough to open with a T. rex, or two raptor pens and a pasture. The build phase is short. */
+  startingMoney: 25000,
   pathCostPerTile: 50,
   /** 2-star target = this x build-phase minutes. */
   revenueTargetPerMinute: 4000,
@@ -144,7 +146,8 @@ export const VISITORS = {
   spawnBasePerSecond: 0.1,
   spawnPerAppealPerSecond: 0.12,
   maxInPark: 80,
-  timeBudgetSeconds: 60,
+  /** Short on purpose: a visitor who spends it walking between far-apart exhibits pays for fewer of them. */
+  timeBudgetSeconds: 35,
   viewSeconds: 4,
   distanceFalloffTiles: 8,
   /** Random bump added to each exhibit's score so crowds don't all pick the same one. */
@@ -154,6 +157,13 @@ export const VISITORS = {
   radius: 4,
   /** Visitors walk in loose lanes up to this far from the middle of the path. */
   laneJitterPx: 10,
+  // Visitors don't notice the blackout. They only run when danger shows up near them:
+  /** A fence breaks within this many tiles. */
+  panicBreachRadiusTiles: 8,
+  /** A loose dinosaur comes within this many tiles. */
+  panicDinoRadiusTiles: 5,
+  /** Someone is killed within this many tiles. */
+  panicCasualtyRadiusTiles: 6,
 };
 
 export interface UnitConfig {
@@ -191,6 +201,26 @@ export const UNITS: Record<UnitKind, UnitConfig> = {
     fireIntervalSeconds: 2,
     radius: 11,
   },
+  /** Built on grass before the blackout. Never moves. Its body fills its tile, so animals bite it from the next one. */
+  tower: {
+    name: 'Tranq Tower',
+    cost: 3000,
+    trainSeconds: 0,
+    hp: 200,
+    speed: 0,
+    range: 200,
+    dartSedation: 20,
+    fireIntervalSeconds: 1.5,
+    radius: 20,
+  },
+};
+
+export const COMBAT = {
+  /**
+   * Whether darts can hit animals still behind their own fence during the blackout.
+   * Off: a squad parked beside a pen would put every animal to sleep before it got out, and nothing would ever escape.
+   */
+  dartPennedAnimals: false,
 };
 
 export const SQUAD = {
@@ -258,7 +288,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
   trex: {
     name: 'T. rex',
     plural: 'T. rex',
-    sedation: 500,
+    sedation: 800,
     speed: 90,
     wanderSpeed: 16,
     wanderPauseSeconds: [1, 3],
@@ -276,9 +306,19 @@ export const DINO_AI = {
   /** How often loose dinosaurs rethink their target. */
   thinkSeconds: 0.5,
   repathSeconds: 0.5,
-  trexRetaliateSeconds: 5,
-  trexRetaliateRadiusTiles: 6,
+  /** The T. rex locks onto a troop (or tower) that darted it in the last few seconds within this range... */
+  trexLockSeconds: 5,
+  trexLockRadiusTiles: 8,
+  /** ...and keeps chasing it until it dies or gets this far away. */
+  trexLockBreakTiles: 12,
   trexVisitorRadiusTiles: 10,
+  /** Charge: a short wind-up, then a straight run at double speed. */
+  trexChargeCooldownSeconds: 4,
+  trexChargeWindupSeconds: 0.6,
+  trexChargeSeconds: 1.2,
+  trexChargeSpeedMultiplier: 2,
+  trexChargeMinTiles: 1.5,
+  trexChargeMaxTiles: 5,
   raptorHuntRadiusTiles: 8,
   triThreatRadiusTiles: 4,
   triStampedeSeconds: 5,
@@ -291,14 +331,14 @@ export const DINO_AI = {
 };
 
 export const BLACKOUT = {
-  buildPhaseSeconds: 600,
+  buildPhaseSeconds: 300,
   warningAtSecondsLeft: 60,
   powerRestoreSeconds: 300,
   overrunSeconds: 180,
   /** Time runs this much faster while nothing is loose and no predator is left to escape. */
   allClearSpeed: 8,
   /** The quick-test build phase offered on the briefing screen. */
-  quickBuildPhaseSeconds: 180,
+  quickBuildPhaseSeconds: 120,
   /** Placeholder: Mantah Corp is from Camp Cretaceous. Rename before sharing publicly. */
   villainName: 'Mantah Corp',
 };
@@ -352,5 +392,8 @@ export const COLORS = {
   attackMarker: 0xff4d4d,
   moveMarker: 0xffd84d,
   dim: 0x000814,
+  tower: 0x1d3a6b,
+  towerTrim: 0x9fc2ff,
+  charge: 0xff7a1a,
   money: 0xffd166,
 };

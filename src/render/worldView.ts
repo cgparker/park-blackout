@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, DINO_AI, DINOS, MAP, UNITS, VISITORS, type AnimalKind } from '../config';
+import type { Dino } from '../core/dinos';
 import type { Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
 import { isTargetable, type Unit } from '../core/units';
@@ -70,6 +71,8 @@ export class WorldView {
 
   private readonly exhibitGfx = new Map<number, { gfx: Phaser.GameObjects.Graphics; version: number; power: boolean }>();
   private readonly unitObjs = new Map<number, Phaser.GameObjects.Container>();
+  /** A tower's base stays square; only its turret turns. */
+  private readonly turrets = new Map<number, Phaser.GameObjects.Container>();
   private readonly dinoObjs = new Map<number, DinoObj>();
   private readonly floaters: Floater[] = [];
   private readonly floaterPool: Phaser.GameObjects.Text[] = [];
@@ -144,6 +147,9 @@ export class WorldView {
           break;
         case 'bite':
           this.markers.push({ x: e.x, y: e.y, life: 0.3, color: COLORS.casualty });
+          break;
+        case 'charge':
+          this.float('Charge!', e.x, e.y - DINOS.trex.radius - 16, '#ff9a4d', 1.2);
           break;
       }
     }
@@ -292,7 +298,7 @@ export class WorldView {
         this.dinoObjs.set(d.id, obj);
       }
       obj.setPosition(d.x, d.y);
-      obj.rotation = turnToward(obj.rotation, d.facing, (d.stampede > 0 ? 14 : 7) * dt);
+      obj.rotation = turnToward(obj.rotation, d.facing, (d.stampede > 0 || d.charge > 0 ? 14 : 7) * dt);
       obj.setAlpha(d.state === 'secured' ? clamp(d.fade / DINO_AI.secureFadeSeconds, 0, 1) : 1);
     }
     for (const [id, obj] of this.dinoObjs) {
@@ -305,12 +311,25 @@ export class WorldView {
 
   private makeUnit(u: Unit): Phaser.GameObjects.Container {
     const r = UNITS[u.kind].radius;
+    if (u.kind === 'tower') {
+      const side = T - 8;
+      const base = this.scene.add.rectangle(0, 0, side, side, COLORS.tower).setStrokeStyle(2.5, COLORS.towerTrim, 1);
+      const turret = this.scene.add.container(0, 0, [
+        this.scene.add.rectangle(13, 0, 12, 4, 0xe8f0ff),
+        this.scene.add.circle(0, 0, 8, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1),
+      ]);
+      turret.rotation = u.facing;
+      this.turrets.set(u.id, turret);
+      return this.scene.add.container(u.x, u.y, [base, turret]).setDepth(5.8);
+    }
     const body =
       u.kind === 'tranq'
         ? this.scene.add.circle(0, 0, r, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1)
         : this.scene.add.rectangle(0, 0, r * 2, r * 2, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1);
     const barrel = this.scene.add.rectangle(r + 3, 0, 8, 3, 0xe8f0ff);
-    return this.scene.add.container(u.x, u.y, [barrel, body]).setDepth(7);
+    const obj = this.scene.add.container(u.x, u.y, [barrel, body]).setDepth(7);
+    obj.rotation = u.facing;
+    return obj;
   }
 
   private syncUnits(dt: number, selected: ReadonlySet<number>): void {
@@ -321,8 +340,12 @@ export class WorldView {
       let obj = this.unitObjs.get(u.id);
       if (!obj) {
         obj = this.makeUnit(u);
-        obj.rotation = u.facing;
         this.unitObjs.set(u.id, obj);
+      }
+      const turret = this.turrets.get(u.id);
+      if (turret) {
+        turret.rotation = turnToward(turret.rotation, u.facing, 9 * dt);
+        continue;
       }
       obj.setPosition(u.x, u.y);
       obj.rotation = turnToward(obj.rotation, u.facing, 9 * dt);
@@ -332,6 +355,7 @@ export class WorldView {
       if (!seen.has(id)) {
         obj.destroy();
         this.unitObjs.delete(id);
+        this.turrets.delete(id);
       }
     }
   }
@@ -377,6 +401,7 @@ export class WorldView {
       if (d.state === 'loose' && isTargetable(w, d) && d.kind !== 'triceratops') {
         g.lineStyle(1.5, COLORS.attackMarker, 0.35).strokeCircle(d.x, d.y, cfg.radius + 3);
       }
+      if (d.kind === 'trex' && d.state === 'loose') this.drawTrexIntent(d);
     }
 
     for (let i = this.tracers.length - 1; i >= 0; i--) {
@@ -412,6 +437,28 @@ export class WorldView {
       g.beginPath();
       g.arc(p.x, p.y, 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(p.progress, 0, 1));
       g.strokePath();
+    }
+  }
+
+  /**
+   * An orange ring marks the troop or tower the T. rex has locked onto. Before a charge, an orange arc fills
+   * around the T. rex and a line points at its target; during the charge it gets an orange ring and a streak.
+   */
+  private drawTrexIntent(d: Dino): void {
+    const g = this.overlay;
+    const r = DINOS.trex.radius;
+    const lock = d.lockId ? this.world.unitById(d.lockId) : undefined;
+    if (lock && !lock.dead) g.lineStyle(2, COLORS.charge, 0.85).strokeCircle(lock.x, lock.y, UNITS[lock.kind].radius + 8);
+    if (d.windup > 0) {
+      const p = clamp(1 - d.windup / DINO_AI.trexChargeWindupSeconds, 0, 1);
+      if (lock && !lock.dead) g.lineStyle(3, COLORS.charge, 0.4).lineBetween(d.x, d.y, lock.x, lock.y);
+      g.lineStyle(4, COLORS.charge, 0.95);
+      g.beginPath();
+      g.arc(d.x, d.y, r + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+      g.strokePath();
+    } else if (d.charge > 0) {
+      g.lineStyle(3, COLORS.charge, 0.9).strokeCircle(d.x, d.y, r + 6);
+      g.lineStyle(7, COLORS.charge, 0.3).lineBetween(d.x - d.cdx * (r + 8), d.y - d.cdy * (r + 8), d.x - d.cdx * (r + 48), d.y - d.cdy * (r + 48));
     }
   }
 

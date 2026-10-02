@@ -3,8 +3,8 @@ import { damageUnit } from './combat';
 import { fenceRect, footprintCenter, inFootprint, type Exhibit, type FenceSegment } from './exhibit';
 import { Tile, type Point } from './grid';
 import { findPath, followPath, lineClear, nearestOpenTile, stepToward, toWaypoints, type PathFollower } from './nav';
-import type { Unit } from './units';
-import type { Visitor } from './visitors';
+import { isTroop, type Unit } from './units';
+import { panicNear, type Visitor } from './visitors';
 import type { CasualtyCause, World } from './world';
 
 /**
@@ -49,6 +49,16 @@ export interface Dino extends PathFollower {
   removed: boolean;
   /** Position in its pack, used to spread raptors along a fence. */
   slot: number;
+  /** T. rex only: the troop or tower it has locked onto, 0 for none. */
+  lockId: number;
+  /** T. rex only: seconds left in the wind-up before a charge, and in the charge itself. */
+  windup: number;
+  charge: number;
+  /** T. rex only: seconds until it can charge again. */
+  chargeCooldown: number;
+  /** T. rex only: direction of the current charge. */
+  cdx: number;
+  cdy: number;
 }
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -90,8 +100,26 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       fade: 0,
       removed: false,
       slot: i,
+      lockId: 0,
+      windup: 0,
+      charge: 0,
+      chargeCooldown: 0,
+      cdx: 0,
+      cdy: 0,
     });
   }
+}
+
+/** Drops whatever the animal was doing: target, route, lock, and any charge. */
+export function calm(d: Dino): void {
+  d.target = null;
+  d.path = [];
+  d.pathIndex = 0;
+  d.wander = null;
+  d.stampede = 0;
+  d.lockId = 0;
+  d.windup = 0;
+  d.charge = 0;
 }
 
 /** Where an animal can wander inside its pen (inside the fence line, minus its body). */
@@ -104,11 +132,7 @@ export function penBounds(w: World, ex: Exhibit, kind: AnimalKind): { x0: number
 /** Power came back while the animal was inside its own footprint. */
 export function containDino(w: World, d: Dino, home: Exhibit): void {
   d.state = 'contained';
-  d.target = null;
-  d.stampede = 0;
-  d.path = [];
-  d.pathIndex = 0;
-  d.wander = null;
+  calm(d);
   d.wait = 0.5;
   const b = penBounds(w, home, d.kind);
   d.x = clamp(d.x, b.x0, b.x1);
@@ -117,10 +141,7 @@ export function containDino(w: World, d: Dino, home: Exhibit): void {
 
 /** A loose animal caught inside someone else's pen when the fences reseal is moved just outside it. */
 export function evictFromPens(w: World, d: Dino): void {
-  d.target = null;
-  d.path = [];
-  d.pathIndex = 0;
-  d.wander = null;
+  calm(d);
   const tx = Math.floor(d.x / w.T);
   const ty = Math.floor(d.y / w.T);
   if (!w.grid.inBounds(tx, ty) || w.grid.get(tx, ty) !== Tile.Exhibit) return;
@@ -138,9 +159,15 @@ export function evictFromPens(w: World, d: Dino): void {
 
 // ------------------------------------------------------------------ fences
 
-/** A segment can be broken from inside when something walkable lies beyond it. */
+/**
+ * A segment can be broken from inside when something walkable lies beyond it.
+ * A tower counts as walkable here: animals break the fence and then knock the tower down.
+ */
 function opensOutward(w: World, s: FenceSegment): boolean {
-  return !s.corner && w.dinoWalk(s.x + s.nx, s.y + s.ny);
+  if (s.corner) return false;
+  const x = s.x + s.nx;
+  const y = s.y + s.ny;
+  return w.dinoWalk(x, y) || (w.grid.inBounds(x, y) && w.grid.get(x, y) === Tile.Tower);
 }
 
 /** True when a pen has a gap that leads somewhere. */
@@ -156,7 +183,10 @@ export function damageSegment(w: World, ex: Exhibit, index: number, amount: numb
   const x = (s.x + 0.5) * w.T;
   const y = (s.y + 0.5) * w.T;
   w.events.push({ type: 'fenceHit', exhibitId: ex.id, x, y });
-  if (s.hp === 0) w.events.push({ type: 'breach', exhibitId: ex.id, kind: ex.kind, x, y });
+  if (s.hp === 0) {
+    w.events.push({ type: 'breach', exhibitId: ex.id, kind: ex.kind, x, y });
+    panicNear(w, x, y, VISITORS.panicBreachRadiusTiles * w.T);
+  }
 }
 
 /** Where an animal stands to hit a segment, on the inside or the outside of the fence line. */
@@ -214,6 +244,7 @@ export function updateDinos(w: World, dt: number): void {
     d.cooldown = Math.max(0, d.cooldown - dt);
     d.pause = Math.max(0, d.pause - dt);
     d.recover = Math.max(0, d.recover - dt);
+    d.chargeCooldown = Math.max(0, d.chargeCooldown - dt);
 
     if (d.state === 'contained' || (w.powerOn && d.state === 'penned')) wanderInPen(w, d, dt);
     else if (d.kind === 'triceratops') updateTriceratops(w, d, dt);
@@ -273,6 +304,7 @@ function goLoose(w: World, d: Dino): void {
   d.path = [];
   d.pathIndex = 0;
   d.wander = null;
+  d.lockId = 0;
   w.events.push({ type: 'escaped', dinoId: d.id, kind: d.kind });
 }
 
@@ -379,6 +411,14 @@ function focusPoint(w: World, ex: Exhibit, includeExhibits: boolean): Point {
 function updateLoosePredator(w: World, d: Dino, dt: number): void {
   const cfg = DINOS[d.kind];
   if (d.pause > 0) return;
+  if (d.charge > 0) {
+    chargeStep(w, d, dt);
+    return;
+  }
+  if (d.windup > 0) {
+    windupStep(w, d, dt);
+    return;
+  }
 
   d.think -= dt;
   if (d.think <= 0 || (d.target && !targetAlive(w, d.target))) {
@@ -408,9 +448,109 @@ function updateLoosePredator(w: World, d: Dino, dt: number): void {
     if (v) chase(w, d, v.x, v.y, 0, cfg.speed, dt);
   } else {
     const u = w.unitById(t.id);
+    if (u && d.kind === 'trex' && startWindup(w, d, u)) return;
     if (u) chase(w, d, u.x, u.y, cfg.radius + UNITS[u.kind].radius, cfg.speed, dt);
   }
   biteTroops(w, d);
+}
+
+// ------------------------------------------------------------------ T. rex charge
+
+/**
+ * A locked-on T. rex at middle distance with a clear run stops, turns toward its target,
+ * and winds up. That pause is the warning: troops that move now can get out of the way.
+ */
+function startWindup(w: World, d: Dino, u: Unit): boolean {
+  if (d.lockId !== u.id || d.chargeCooldown > 0) return false;
+  const T = w.T;
+  const dd = dist(u, d);
+  if (dd < DINO_AI.trexChargeMinTiles * T || dd > DINO_AI.trexChargeMaxTiles * T) return false;
+  const stop = stopPoint(d, u.x, u.y, DINOS.trex.radius + UNITS[u.kind].radius);
+  if (!lineClear(w.dinoWalk, T, d.x, d.y, stop.x, stop.y, 0)) return false;
+  d.windup = DINO_AI.trexChargeWindupSeconds;
+  d.path = [];
+  d.pathIndex = 0;
+  d.facing = Math.atan2(u.y - d.y, u.x - d.x);
+  w.events.push({ type: 'charge', dinoId: d.id, x: d.x, y: d.y });
+  return true;
+}
+
+function windupStep(w: World, d: Dino, dt: number): void {
+  const u = w.unitById(d.lockId);
+  if (!u || u.dead) {
+    d.windup = 0;
+    d.think = 0;
+    return;
+  }
+  d.facing = Math.atan2(u.y - d.y, u.x - d.x);
+  d.windup -= dt;
+  if (d.windup > 0) return;
+  d.windup = 0;
+  d.charge = DINO_AI.trexChargeSeconds;
+  d.cdx = Math.cos(d.facing);
+  d.cdy = Math.sin(d.facing);
+}
+
+/** Runs straight at double speed. Stops at the first troop it hits (and bites it), or at anything solid. */
+function chargeStep(w: World, d: Dino, dt: number): void {
+  const cfg = DINOS.trex;
+  const step = cfg.speed * DINO_AI.trexChargeSpeedMultiplier * dt;
+  const nx = d.x + d.cdx * step;
+  const ny = d.y + d.cdy * step;
+
+  let hit: Unit | null = null;
+  let bestD = Infinity;
+  for (const u of w.units) {
+    if (u.dead) continue;
+    const dd = Math.hypot(u.x - nx, u.y - ny);
+    if (dd <= cfg.radius + UNITS[u.kind].radius + DINO_AI.biteReachPx && dd < bestD) {
+      bestD = dd;
+      hit = u;
+    }
+  }
+  if (hit) {
+    d.facing = Math.atan2(hit.y - d.y, hit.x - d.x);
+    d.cooldown = cfg.biteIntervalSeconds;
+    w.events.push({ type: 'bite', x: hit.x, y: hit.y });
+    damageUnit(w, hit, cfg.troopDamage);
+    endCharge(d);
+    return;
+  }
+
+  const T = w.T;
+  const tx = Math.floor(nx / T);
+  const ty = Math.floor(ny / T);
+  const newTile = tx !== Math.floor(d.x / T) || ty !== Math.floor(d.y / T);
+  if ((newTile && !w.dinoWalk(tx, ty)) || crossesIntactFence(w, d.x, d.y, nx, ny)) {
+    endCharge(d);
+    return;
+  }
+  d.x = nx;
+  d.y = ny;
+  // Anyone in the way is trampled, like a Triceratops stampede.
+  for (const v of w.visitors) {
+    if (!v.done && dist(v, d) <= cfg.radius + VISITORS.radius) killVisitor(w, v, 'trex');
+  }
+  d.charge -= dt;
+  if (d.charge <= 0) endCharge(d);
+}
+
+function endCharge(d: Dino): void {
+  d.windup = 0;
+  d.charge = 0;
+  d.chargeCooldown = DINO_AI.trexChargeCooldownSeconds;
+  d.path = [];
+  d.pathIndex = 0;
+  d.repath = 0;
+  d.think = 0;
+}
+
+/** The point `stopAt` short of (x, y) on the straight line from the animal. */
+function stopPoint(d: Point, x: number, y: number, stopAt: number): Point {
+  const dd = Math.hypot(x - d.x, y - d.y);
+  if (dd <= stopAt || dd < 1e-6) return { x: d.x, y: d.y };
+  const ratio = (dd - stopAt) / dd;
+  return { x: d.x + (x - d.x) * ratio, y: d.y + (y - d.y) * ratio };
 }
 
 function targetAlive(w: World, t: DinoTarget): boolean {
@@ -427,16 +567,22 @@ function targetAlive(w: World, t: DinoTarget): boolean {
 }
 
 /**
- * 1. A unit that darted it in the last 5 s, within 6 tiles.
- * 2. The nearest visitor within 10 tiles.
- * 3. Break into the nearest exhibit with animals still inside.
- * 4. The nearest visitor anywhere, then the nearest unit anywhere.
+ * 1. The troop or tower it is locked onto, until that dies or gets 12 tiles away.
+ * 2. Whoever darted it in the last 5 s, within 8 tiles. It locks on.
+ * 3. The nearest visitor within 10 tiles.
+ * 4. Break into the nearest exhibit with animals still inside.
+ * 5. The nearest visitor anywhere, then the nearest troop or tower anywhere (and lock on).
  */
 function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const T = w.T;
-  if (w.time - d.lastHitTime <= DINO_AI.trexRetaliateSeconds) {
+  if (d.lockId) {
+    const u = w.unitById(d.lockId);
+    if (u && !u.dead && dist(u, d) <= DINO_AI.trexLockBreakTiles * T) return { type: 'unit', id: u.id };
+    d.lockId = 0;
+  }
+  if (w.time - d.lastHitTime <= DINO_AI.trexLockSeconds) {
     const u = w.unitById(d.lastHitBy);
-    if (u && !u.dead && dist(u, d) <= DINO_AI.trexRetaliateRadiusTiles * T) return { type: 'unit', id: u.id };
+    if (u && !u.dead && dist(u, d) <= DINO_AI.trexLockRadiusTiles * T) return lockOn(d, u);
   }
   const near = nearestVisitor(w, d, DINO_AI.trexVisitorRadiusTiles * T);
   if (near) return { type: 'visitor', id: near.id };
@@ -448,7 +594,12 @@ function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const anyVisitor = nearestVisitor(w, d, Infinity);
   if (anyVisitor) return { type: 'visitor', id: anyVisitor.id };
   const anyUnit = nearestUnit(w, d, Infinity);
-  return anyUnit ? { type: 'unit', id: anyUnit.id } : null;
+  return anyUnit ? lockOn(d, anyUnit) : null;
+}
+
+function lockOn(d: Dino, u: Unit): DinoTarget {
+  d.lockId = u.id;
+  return { type: 'unit', id: u.id };
 }
 
 function chooseBreakIn(w: World, d: Dino): DinoTarget | null {
@@ -534,15 +685,18 @@ function approachFence(w: World, d: Dino, x: number, y: number, speed: number, d
   return false;
 }
 
-/** Runs at a moving target, stopping `stopAt` short of its center. */
+/**
+ * Runs at a moving target, stopping `stopAt` short of its center. The straight run only needs a clear
+ * line to that stopping point, so a tower (which fills its tile) can still be reached and bitten.
+ */
 function chase(w: World, d: Dino, x: number, y: number, stopAt: number, speed: number, dt: number): void {
   const dd = Math.hypot(x - d.x, y - d.y);
   if (dd <= stopAt) return;
-  if (dd < 4 * w.T && lineClear(w.dinoWalk, w.T, d.x, d.y, x, y, 0)) {
+  const stop = stopPoint(d, x, y, stopAt);
+  if (dd < 4 * w.T && lineClear(w.dinoWalk, w.T, d.x, d.y, stop.x, stop.y, 0)) {
     d.path = [];
     d.pathIndex = 0;
-    const ratio = (dd - stopAt) / dd;
-    stepToward(d, d.x + (x - d.x) * ratio, d.y + (y - d.y) * ratio, speed * dt);
+    stepToward(d, stop.x, stop.y, speed * dt);
     return;
   }
   navigate(w, d, x, y, speed, dt);
@@ -560,6 +714,7 @@ function navigate(w: World, d: Dino, x: number, y: number, speed: number, dt: nu
   if (followPath(d, speed, dt, w.dinoWalk, w.T, 0) === 'blocked') d.repath = 0;
 }
 
+/** Bites the troop or tower in reach: the locked-on one if it's there, otherwise the nearest. */
 function biteTroops(w: World, d: Dino): void {
   const cfg = DINOS[d.kind];
   if (cfg.troopDamage <= 0 || d.cooldown > 0 || d.pause > 0) return;
@@ -569,7 +724,12 @@ function biteTroops(w: World, d: Dino): void {
     if (u.dead) continue;
     const reach = cfg.radius + UNITS[u.kind].radius + DINO_AI.biteReachPx;
     const dd = dist(u, d);
-    if (dd <= reach && dd < bestD) {
+    if (dd > reach) continue;
+    if (u.id === d.lockId) {
+      victim = u;
+      break;
+    }
+    if (dd < bestD) {
       bestD = dd;
       victim = u;
     }
@@ -613,7 +773,7 @@ function updateTriceratops(w: World, d: Dino, dt: number): void {
   else wanderLoose(w, d, dt);
 }
 
-/** Predators (penned or loose) and troops scare Triceratops. Other Triceratops don't. */
+/** Predators (penned or loose) and troops scare Triceratops. Other Triceratops and towers don't. */
 function nearestThreat(w: World, d: Dino, radius: number): Point | null {
   let best: Point | null = null;
   let bestD = radius;
@@ -626,7 +786,7 @@ function nearestThreat(w: World, d: Dino, radius: number): Point | null {
     }
   }
   for (const u of w.units) {
-    if (u.dead) continue;
+    if (u.dead || !isTroop(u)) continue;
     const dd = dist(u, d);
     if (dd <= bestD) {
       bestD = dd;
@@ -651,7 +811,7 @@ function stampedeStep(w: World, d: Dino, dt: number): void {
   const lx = Math.floor((nx + d.sdx * cfg.radius) / w.T);
   const ly = Math.floor((ny + d.sdy * cfg.radius) / w.T);
   const t = w.grid.inBounds(lx, ly) ? w.grid.get(lx, ly) : Tile.Rock;
-  if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ) {
+  if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower) {
     endStampede(w, d);
     return;
   }
@@ -697,6 +857,7 @@ function checkVisitorContact(w: World, dt: number): void {
     v.contact += dt;
     if (v.contact >= DINO_AI.visitorContactSeconds) {
       killVisitor(w, v, by.kind === 'trex' ? 'trex' : 'raptor');
+      if (by.windup > 0 || by.charge > 0) endCharge(by);
       by.pause = DINOS[by.kind].killPauseSeconds;
       by.target = null;
       by.think = 0;
@@ -704,8 +865,10 @@ function checkVisitorContact(w: World, dt: number): void {
   }
 }
 
-function killVisitor(w: World, v: Visitor, cause: CasualtyCause): void {
+/** A visitor dies. Everyone who saw it runs. */
+export function killVisitor(w: World, v: Visitor, cause: CasualtyCause): void {
   v.done = true;
   w.casualties[cause]++;
   w.events.push({ type: 'casualty', x: v.x, y: v.y, cause });
+  panicNear(w, v.x, v.y, VISITORS.panicCasualtyRadiusTiles * w.T);
 }

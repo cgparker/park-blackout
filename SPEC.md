@@ -30,9 +30,9 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 ## 3. Game flow
 
-1. **Briefing screen:** "Mantah Corp will cut power to the electric fences in 10:00 to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out." Tap to start.
-2. **Act 1, Build (10:00):** Place exhibits, earn money from visitors, train troops, and reinforce fences. A large countdown is always visible. A warning banner appears at 1:00 left.
-3. **Act 2, Blackout:** Fences lose power, the gates close, visitors flee, and dinosaurs break out in a cascade. Power returns 5:00 later.
+1. **Briefing screen:** "Mantah Corp will cut power to the electric fences in 5:00 to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out." Tap to start.
+2. **Act 1, Build (5:00):** Place exhibits and towers, earn money from visitors, train troops, and reinforce fences. A large countdown is always visible. A warning banner appears at 1:00 left.
+3. **Act 2, Blackout:** Fences lose power and the gates close. Visitors don't notice until danger gets close. Dinosaurs break out in a cascade. Power returns 5:00 later.
 4. **End screen:** Stars and a breakdown of what happened.
 
 ## 4. Map
@@ -47,9 +47,9 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 ### Money
 
-- Starting money: $15,000.
+- Starting money: $25,000. Enough to open with a T. rex, or two raptor pens and a pasture, because the build phase is short.
 - Income comes only from visitors paying at exhibits. Park entry is free.
-- Revenue target for 2 stars: $4,000 per minute of build phase ($40,000 at 10:00). Revenue means total earned in Act 1, not money left in the bank.
+- Revenue target for 2 stars: $4,000 per minute of build phase ($20,000 at 5:00). Revenue means total earned in Act 1, not money left in the bank.
 - No income in Act 2. Banked money can still train troops.
 
 ### Exhibits
@@ -79,7 +79,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 ### Visitors
 
 - Spawn rate per second: 0.10 + 0.12 x total park appeal. Maximum 80 visitors in the park at once.
-- Each visitor has a 60-second time budget. Walking and viewing both use it up.
+- Each visitor has a 35-second time budget. Walking and viewing both use it up. It's short on purpose: a visitor who spends it walking between far-apart exhibits pays for fewer of them.
 - Choosing the next exhibit: highest score among exhibits they haven't visited, where score = appeal / (1 + path distance in tiles / 8), plus a little randomness.
 - At an exhibit: stand at the viewing spot for 4 seconds, then pay its price (show a floating "+$25").
 - When the budget runs out or every exhibit is visited, walk back to the gate and leave.
@@ -95,18 +95,26 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 
 ### Units
 
-| | Tranq Squad | Heavy Team |
-|---|---|---|
-| Cost | $1,500 | $4,000 |
-| Train time | 8 s | 15 s |
-| HP | 100 | 250 |
-| Speed | 100 px/s | 70 px/s |
-| Range | 160 px (4 tiles) | 200 px (5 tiles) |
-| Darts | 10 sedation, 1 per second | 50 sedation, 1 per 2 seconds |
+| | Tranq Squad | Heavy Team | Tranq Tower |
+|---|---|---|---|
+| Cost | $1,500 | $4,000 | $3,000 |
+| Train time | 8 s | 15 s | Built at once, before the blackout only |
+| HP | 100 | 250 | 200 |
+| Speed | 100 px/s | 70 px/s | Never moves |
+| Range | 160 px (4 tiles) | 200 px (5 tiles) | 200 px (5 tiles) |
+| Darts | 10 sedation, 1 per second | 50 sedation, 1 per 2 seconds | 20 sedation, 1 per 1.5 seconds |
 
 - Units walk on grass and paths. No healing in the prototype. A unit at 0 HP is lost.
-- Idle units automatically fire at the nearest dinosaur in range.
+- Idle units automatically fire at the nearest loose dinosaur in range.
+- Darts only reach dinosaurs that are out of their own pen. An animal still behind its fence can't be darted, so nothing can be put to sleep before it breaks out.
 - A **move** order moves without firing (for retreating and kiting). An **attack** order (tap a dinosaur) chases that target and fires at it.
+
+### Towers
+
+- Build a Tranq Tower from the bottom bar, like an exhibit: tap **Tower**, tap a grass tile, then **Build**. The ghost shows its range.
+- A tower fills its tile. Troops and animals go around it. It can't be selected or given orders, and it doesn't scare Triceratops.
+- Animals attack towers like troops. The T. rex can lock onto one. A destroyed tower leaves grass behind.
+- A tower right outside a pen doesn't seal it: animals break that segment and then knock the tower down.
 
 ## 7. Controls
 
@@ -122,6 +130,7 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 | Tap a dinosaur with units selected | Attack it |
 | Tap an exhibit with nothing selected | Exhibit panel: visits, revenue, fence HP, Reinforce button |
 | Tap HQ | Training panel |
+| Tap **Tower** in the bottom bar, then the map | Place a Tranq Tower |
 
 HUD buttons: **Select All Troops** and **Clear Selection**.
 
@@ -131,8 +140,8 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 
 ### HUD
 
-- **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/10). In Act 2 the countdown switches to time until power returns, and it adds loose and secured dinosaur counts.
-- **Bottom bar:** exhibit buttons (grayed out when unaffordable or at the limit) and selected-unit info.
+- **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/10). In Act 2 the countdown switches to time until power returns, the revenue slot shows how many visitors are still in the park, and it adds loose and secured dinosaur counts.
+- **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 
 ## 8. The blackout
 
@@ -140,7 +149,7 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 
 - Banner: "Mantah Corp has cut the power." The screen dims, and fences turn from cyan to gray.
 - Gates close. No new visitors arrive.
-- Every visitor flees to the gate at flee speed. A visitor who reaches the gate is safe.
+- Visitors don't notice. They keep strolling and viewing (without paying) until danger shows up near them: a fence breaking within 8 tiles, a loose dinosaur within 5 tiles, or someone killed within 6 tiles. Then they run for the gate at flee speed. Anyone who walks out, running or not, is safe.
 
 ### Breakouts
 
@@ -156,14 +165,15 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 | | Triceratops | Raptor | T. rex |
 |---|---|---|---|
-| Sedation | 120 | 60 | 500 |
-| Speed | 120 px/s (stampeding) | 160 px/s | 90 px/s |
+| Sedation | 120 | 60 | 800 |
+| Speed | 120 px/s (stampeding) | 160 px/s | 90 px/s (180 charging) |
 | Damage to troops | None | 10 per second | 50 per bite, 1 bite per 1.5 s |
 | Fence damage | 40 per collision while stampeding | 20 per second | 80 per hit, 1 hit per 1.5 s |
 
 ### Loose dinosaur behavior
 
-- **T. rex** target priority: (1) a unit that hit it in the last 5 s, within 6 tiles; (2) the nearest visitor within 10 tiles; (3) the nearest exhibit with animals still inside, which it walks to and breaks into; (4) the nearest visitor anywhere.
+- **T. rex** target priority: (1) the troop or tower it is locked onto, until that one dies or gets more than 12 tiles away; (2) whoever darted it in the last 5 s, within 8 tiles, and it locks on; (3) the nearest visitor within 10 tiles; (4) the nearest exhibit with animals still inside, which it walks to and breaks into; (5) the nearest visitor anywhere, then the nearest troop or tower, and it locks on.
+- **T. rex charge:** when it is locked on, 1.5 to 5 tiles away, with a clear run, it stops and winds up for 0.6 s (an orange arc fills around it and a line points at its target). Then it runs straight at double speed for up to 1.2 s. It bites the first troop or tower it hits, tramples visitors in its way, and stops at anything solid. It can charge again 4 s later. Troops that move during the wind-up can get out of the way.
 - **Raptors:** Hunt the nearest visitor or unit within 8 tiles. Otherwise head for the nearest visitor anywhere, and if there are none, the nearest unit.
 - **Triceratops:** If a dinosaur or unit is within 4 tiles, stampede directly away for 5 s, trampling anything in the way. Otherwise, graze in place. A stampede that hits a fence deals 40 damage to that segment and stops. Triceratops still inside their pen can stampede too, so a T. rex outside their fence can scare them into breaking it from the inside.
 - A visitor touched by a raptor or T. rex for 0.5 s, or hit by a stampeding Triceratops, is a casualty.
@@ -172,6 +182,7 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 ### Sedation and securing
 
 - Darts reduce sedation. It doesn't regenerate. At 0, the dinosaur is secured: it fades out over 2 s and counts toward Secured.
+- Only dinosaurs out of their own pen can be darted (section 6).
 
 ### Power returns
 
@@ -193,9 +204,10 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 - Stars and result.
 - Revenue by exhibit (visits and dollars).
-- Spending: exhibits, paths, reinforcement, troops.
+- Spending: exhibits, paths, reinforcement, troops, towers.
+- Visitors in the park at the blackout and how many got out.
 - Casualties by cause (raptor, T. rex, stampede).
-- Troops lost, and dinosaurs secured vs. contained.
+- Troops and towers lost, and dinosaurs secured vs. contained.
 - Retry button.
 
 ## 10. Placeholder visuals
@@ -204,8 +216,10 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 - Fences: cyan when powered, gray when unpowered, thicker and white when reinforced. They darken as HP drops; a gap is a missing segment.
 - Visitors: small white dots. A casualty leaves a small red mark.
 - Tranq Squad: small blue circle. Heavy Team: larger blue square. Selected units get a yellow ring.
+- Tranq Tower: navy square on its tile with a blue turret that turns to aim.
 - Triceratops: green oval. Raptor: small orange triangle pointing where it's moving. T. rex: large red circle with a notch showing its facing.
 - A sedation bar appears over a dinosaur once it's hit, and an HP bar over a unit once it's damaged.
+- The T. rex's locked-on target gets an orange ring. Before a charge, an orange arc fills around the T. rex and "Charge!" floats up; while charging it has an orange ring and streak.
 
 ## 11. Debug tools
 
@@ -216,7 +230,7 @@ Enabled with `?debug=1` in the URL:
 - **+$10,000** button.
 - Show fence HP numbers, the tile grid, and FPS.
 
-URL override: `?blackout=180` sets the build phase to 3:00 for quick playtests. The revenue target scales with it.
+URL override: `?blackout=120` sets the build phase to 2:00 for quick playtests. The revenue target scales with it.
 
 ## 12. Milestones
 
@@ -229,41 +243,59 @@ Each milestone ends with something playable on my phone.
 5. **Combat and scoring:** darts, dinosaur attacks, casualties, securing, win and lose, stars, end screen.
 6. **Tuning tools:** debug options, URL overrides, deploy to GitHub Pages.
 
+After the six milestones, a second round made the blackout matter more: visitors who don't notice the blackout, a T. rex that locks on and charges, Tranq Towers, and a 5:00 build phase. DECISIONS.md lists the calls made along the way.
+
 ## 13. Balance (measured)
 
-`npm run balance` plays these headlessly with the real rules: 3 seeds per build strategy, 5 per fight. Each exhibit goes in the open spot closest to the gate that keeps the stated gap, and building stops at 7:00. These are starting points for playtests, not truth. (The first draft of this table came from a rougher estimate; the numbers below replace it.)
+`npm run balance` plays these headlessly with the real rules. Each exhibit goes in the open spot closest to the gate that keeps the stated gap, and building stops at 70% of the build phase (3:30). These are starting points for playtests, not truth.
 
-Build phase (10:00, ★★ target $40,000):
+Build phase (5:00, ★★ target $20,000, 3 seeds each):
 
-| Strategy | Revenue | ★★? | Left for troops |
+| Strategy | Revenue | ★★? | Left for defense |
 |---|---|---|---|
-| Dense: 2 raptor pens, T. rex, 2 pastures | ~$54,000 | Yes | ~$38,000 |
-| Dense: 3 raptor pens, 3 pastures | ~$47,000 | Yes | ~$34,000 |
-| Medium spacing (3 tiles apart), same as the first row | ~$48,000 | Yes | ~$32,000 |
-| Spread out (7 tiles apart), same as the first row | ~$43,000 | Yes, barely | ~$30,000 |
-| Herbivores only | ~$29,000 | No | ~$12,000 |
+| Dense: 2 raptor pens, T. rex, 2 pastures | ~$36,500 | Yes | ~$30,500 |
+| Dense: 3 raptor pens, 3 pastures | ~$27,800 | Yes | ~$24,200 |
+| Medium spacing (3 tiles apart), same as the first row | ~$32,000 | Yes | ~$26,000 |
+| Spread out (7 tiles apart), same as the first row | ~$15,300 | No | ~$11,800 |
+| Herbivores only | ~$12,600 | No | ~$5,000 |
 
-Fights on open grass (troops in a block, dinosaurs released 6 tiles away):
+The visit length decides how much spacing costs. At 40 s the spread park still earned about $27,000; at 35 s it drops to about $15,000 while dense and medium parks barely change. The starting money went from $15,000 to $25,000 with the shorter build phase: at $15,000 no scripted build could afford the T. rex before 3:30, and none reached $20,000.
+
+Whole blackouts, dense T. rex park (5 seeds each). The bank is spent at 3:30, troops alternate Heavy and Tranq, towers go beside the predator pens, and a simple defender sends every troop at the nearest loose predator. About 52 visitors are in the park when the power goes out, and the first fence breaks at about 14 s.
+
+| Defense | Result | Visitors killed | Lost |
+|---|---|---|---|
+| Nothing | Overrun 5 of 5 | ~2 | |
+| 4 troops ($11,000) | Overrun 5 of 5 | ~4 | All 4 troops |
+| 6 troops ($16,500) | Won 5 of 5 (one ★★★) | ~1 | ~0.2 troops |
+| 10 troops ($27,500) | Won 5 of 5 | ~3 | None |
+| 4 towers ($12,000) | Overrun 4 of 5 | ~2 | All 4 towers |
+| 2 towers + 6 troops | Won 4 of 5 | ~2 | 2 towers, ~2.4 troops |
+
+Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles away, 5 seeds each):
 
 | Fight | Result |
 |---|---|
 | Raptor pack vs 2 Tranq Squads | Raptors win |
-| Raptor pack vs 3 Tranq Squads | Troops win, lose about 1 |
+| Raptor pack vs 3 Tranq Squads | Troops win, lose 1 |
 | Raptor pack vs 2 Heavy Teams | Troops win, no losses |
-| T. rex vs 4 Tranq Squads | T. rex wins |
-| T. rex vs 2 Heavy Teams + 2 Tranq Squads | Troops win, no losses |
-| T. rex vs 3 Heavy Teams | Troops win, no losses |
+| Raptor pack vs 1 Tranq Tower | Raptors win |
+| Raptor pack vs 2 Tranq Towers | Towers win, no losses |
+| T. rex vs 2 Heavy + 2 Tranq | Troops win, lose 2 |
+| T. rex vs 3 Heavy Teams | Troops win, lose 1 |
+| T. rex vs 4 Heavy Teams | Troops win, no losses |
+| T. rex vs 2 Towers + 2 Heavy Teams | Troops win, lose 1 |
 
-Blackout with a full dense park and no troops (5 seeds): about 78 visitors are in the park when the power goes out, the first fence breaks at about 14 s, and every visitor reaches the gate first. Zero casualties in all five.
+`npm run stress` plays 40 random games: 5 wins, 21 overruns, 14 shutdowns. Careless play now loses to casualties too.
 
 What to watch in playtests:
 
-- Visitors outrun the breakouts. Fleeing at 100 px/s, everyone is out before the T. rex breaks its fence, so casualties are rare, the 10-casualty loss almost never happens, and the third star comes free. If playtests agree, the levers are: visitors don't notice the blackout until a fence breaks or a dinosaur gets close, shorter breakout delays, or a slower flee speed.
-- Spacing costs less than the first estimate: even the spread-out park clears $40,000. If playtests agree, shorten the visitor time budget (`VISITORS.timeBudgetSeconds`) or raise the revenue target.
-- The dense T. rex build earns the most. It should also be the scariest blackout; if it isn't, the T. rex is too weak.
-- The T. rex goes down to 2 Heavy + 2 Tranq with no losses, easier than intended. It turns on whoever darted it last, which spreads its bites around. If it feels weak, make it stick with one target or raise its sedation.
-- Heavy Teams handle raptors with no losses. Tranq Squads are the cheap option that costs a unit.
-- Building extra cheap pastures can lower revenue, because visitors spend their time budget on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
+- Casualties happen in almost every blackout now (1 to 4 in the runs above), so the third star has to be earned. Most deaths are raptor kills. The 10-casualty shutdown still doesn't happen with a sensible defense. If it should, the levers are a lower limit (`SCORING.casualtyLimit`), a shorter raptor breakout delay, or a slower flee speed.
+- The T. rex is slower than a running visitor (90 vs 100 px/s), so it mostly kills troops, towers, and anyone who walks toward it. Its charges and lock-on make it the fight that costs troops.
+- The jump from 4 to 6 troops is the difference between losing and winning the dense park. The dense park leaves about $30,000, so a careful player can afford plenty. If that feels too safe, raise exhibit prices or the T. rex's sedation, or lower the starting money.
+- Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.
+- One tower can just beat a raptor pack when it sits beside their pen on the far side from where they break out: they run around the pen under fire, and the tower finished with 30 of 200 HP. On open grass one tower loses. Watch for players parking one tower per pen.
+- Building extra cheap pastures can lower revenue, because visitors spend their short visits on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
 
 ## 14. Later, not now
 

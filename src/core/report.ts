@@ -12,13 +12,16 @@ export interface Result {
   revenue: number;
   revenueTarget: number;
   exhibits: { id: number; kind: ExhibitKind; name: string; visits: number; revenue: number }[];
-  spending: { exhibits: number; paths: number; reinforcement: number; troops: number; total: number };
+  spending: { exhibits: number; paths: number; reinforcement: number; troops: number; towers: number; total: number };
   casualties: Record<CasualtyCause, number>;
   casualtyTotal: number;
   troopsTrained: number;
   troopsLost: number;
+  towersBuilt: number;
+  towersLost: number;
   dinosSecured: number;
   dinosContained: number;
+  visitorsAtBlackout: number;
   visitorsSafe: number;
 }
 
@@ -58,13 +61,16 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
     revenue: w.revenue,
     revenueTarget: w.revenueTarget,
     exhibits: w.exhibits.map((e) => ({ id: e.id, kind: e.kind, name: EXHIBITS[e.kind].name, visits: e.visits, revenue: e.revenue })),
-    spending: { ...s, total: s.exhibits + s.paths + s.reinforcement + s.troops },
+    spending: { ...s, total: s.exhibits + s.paths + s.reinforcement + s.troops + s.towers },
     casualties: { ...w.casualties },
     casualtyTotal,
     troopsTrained: w.troopsTrained,
     troopsLost: w.troopsLost,
+    towersBuilt: w.towersBuilt,
+    towersLost: w.towersLost,
     dinosSecured: w.dinosSecured,
     dinosContained: w.dinosContained,
+    visitorsAtBlackout: w.visitorsAtBlackout,
     visitorsSafe: w.visitorsSafe,
   };
 }

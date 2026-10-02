@@ -8,6 +8,8 @@ export const Tile = {
   Gate: 4,
   HQ: 5,
   Exhibit: 6,
+  /** A Tranq Tower. Blocks troops and animals. Goes back to grass if the tower is destroyed. */
+  Tower: 7,
 } as const;
 export type TileType = (typeof Tile)[keyof typeof Tile];
 
