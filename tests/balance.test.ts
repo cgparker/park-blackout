@@ -1,7 +1,8 @@
 // Headless balance checks. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { BLACKOUT, EXHIBITS, MAP, SCORING, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
+import { BLACKOUT, EXHIBITS, HUNTS, MAP, SCORING, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
+import type { Dino } from '../src/core/dinos';
 import { footprintCenter, inFootprint } from '../src/core/exhibit';
 import type { Point, Rect } from '../src/core/grid';
 import { nearestOpenTile } from '../src/core/nav';
@@ -346,3 +347,143 @@ describe.skipIf(!process.env.BALANCE)('combat', () => {
   });
 });
 
+
+// ---------------------------------------------------------------- levels 1 and 2
+
+const looseNow = (w: World) => w.dinos.filter((d) => d.state === 'loose');
+const nearestOf = (list: Dino[], x: number, y: number) => [...list].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/**
+ * Level 1 with N Tranq Squads queued at the start. Split: each squad takes the nearest Triceratops no other squad is on.
+ * Massed: every squad goes after the same one. Orders go out every half second, faster than a person taps.
+ */
+function roundup(seed: number, n: number, style: 'split' | 'massed') {
+  const w = new World({ seed, level: 1 });
+  w.start();
+  let next = 0;
+  while (w.phase !== 'ended') {
+    while (w.troopsTrained + w.queue.length < n && enqueueUnit(w, 'tranq'));
+    w.update(1 / 60);
+    w.events = [];
+    if (w.time < next) continue;
+    next = w.time + 0.5;
+    const squads = w.units.filter(isTroop);
+    const free = looseNow(w);
+    if (!free.length || !squads.length) continue;
+    if (style === 'massed') {
+      const cx = squads.reduce((a, u) => a + u.x, 0) / squads.length;
+      const cy = squads.reduce((a, u) => a + u.y, 0) / squads.length;
+      const t = nearestOf(free, cx, cy);
+      const idle = squads.filter((u) => !(u.order === 'attack' && u.targetId === t.id));
+      if (idle.length) orderAttack(w, idle.map((u) => u.id), t.id);
+      continue;
+    }
+    for (const u of squads) {
+      const cur = u.order === 'attack' ? w.dinoById(u.targetId) : undefined;
+      if (cur && cur.state === 'loose') continue;
+      const taken = new Set(squads.filter((o) => o !== u && o.order === 'attack').map((o) => o.targetId));
+      const t = nearestOf(free.filter((d) => !taken.has(d.id)), u.x, u.y) ?? nearestOf(free, u.x, u.y);
+      orderAttack(w, [u.id], t.id);
+    }
+  }
+  return w.result!;
+}
+
+/**
+ * Level 2 with a troop mix bought at the start. Trickle: each troop goes after the nearest raptor as soon as it is ready.
+ * Massed: every troop waits at a rally point outside the nest's leash, then they all go in together.
+ */
+function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
+  const w = new World({ seed, level: 2 });
+  w.start();
+  const rally = toTile(w, 21, 16);
+  let bought = 0;
+  let next = 0;
+  let go = false;
+  const sent = new Set<number>();
+  while (w.phase !== 'ended') {
+    while (bought < mix.length && enqueueUnit(w, mix[bought])) bought++;
+    w.update(1 / 60);
+    w.events = [];
+    if (w.time < next) continue;
+    next = w.time + 0.5;
+    const troops = w.units.filter(isTroop);
+    const free = looseNow(w);
+    if (!free.length || !troops.length) continue;
+    if (style === 'trickle') {
+      for (const u of troops) {
+        const cur = u.order === 'attack' ? w.dinoById(u.targetId) : undefined;
+        if (!cur || cur.state !== 'loose') orderAttack(w, [u.id], nearestOf(free, u.x, u.y).id);
+      }
+      continue;
+    }
+    for (const u of troops) {
+      if (sent.has(u.id)) continue;
+      sent.add(u.id);
+      orderMove(w, [u.id], rally.x, rally.y);
+    }
+    go ||= bought >= mix.length && !w.queue.length && troops.every((u) => Math.hypot(u.x - rally.x, u.y - rally.y) < 2.5 * T);
+    if (!go) continue;
+    const cx = troops.reduce((a, u) => a + u.x, 0) / troops.length;
+    const cy = troops.reduce((a, u) => a + u.y, 0) / troops.length;
+    const t = nearestOf(free, cx, cy);
+    const idle = troops.filter((u) => !(u.order === 'attack' && u.targetId === t.id));
+    if (idle.length) orderAttack(w, idle.map((u) => u.id), t.id);
+  }
+  return w.result!;
+}
+
+describe.skipIf(!process.env.BALANCE)('levels', () => {
+  it('prints level 1: squads against the clock', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = HUNTS[1];
+    const most = Math.floor(cfg.startingMoney / UNITS.tranq.cost);
+    const rows: string[] = [];
+    for (const style of ['split', 'massed'] as const) {
+      for (let n = 1; n <= most; n++) {
+        const runs = Array.from({ length: seeds }, (_, i) => roundup(i + 1, n, style));
+        const wins = runs.filter((r) => r.won);
+        const left = wins.map((r) => r.hunt!.timeLeft);
+        const stars = runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {});
+        rows.push(
+          `  ${style.padEnd(6)} ${n} ${n === 1 ? 'squad ' : 'squads'} ${money(n * UNITS.tranq.cost).padStart(7)}  won ${wins.length}/${seeds}  ` +
+            `time left ${left.length ? `${clockOf(Math.min(...left))} to ${clockOf(Math.max(...left))}` : '-'}  | ${Object.entries(stars).map(([k, v]) => `${v} ${k}`).join(', ')}`,
+        );
+      }
+    }
+    const third = cfg.thirdStar.type === 'timeLeft' ? `${clockOf(cfg.thirdStar.seconds)} left` : 'no troops lost';
+    console.log(`\nLevel 1: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and ${third}, ${seeds} seeds\n` + rows.join('\n'));
+  });
+
+  it('prints level 2: troop mixes against the nest', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = HUNTS[2];
+    const tranqs = (n: number): UnitKind[] => Array(n).fill('tranq');
+    const mixes: [string, UnitKind[]][] = [
+      ['4 Tranq', tranqs(4)],
+      ['5 Tranq', tranqs(5)],
+      ['6 Tranq', tranqs(6)],
+      ['2 Heavy', ['heavy', 'heavy']],
+      ['3 Heavy', ['heavy', 'heavy', 'heavy']],
+      ['1 Heavy + 3 Tranq', ['heavy', ...tranqs(3)]],
+      ['1 Heavy + 4 Tranq', ['heavy', ...tranqs(4)]],
+      ['2 Heavy + 2 Tranq', ['heavy', 'heavy', ...tranqs(2)]],
+    ];
+    const rows: string[] = [];
+    for (const style of ['massed', 'trickle'] as const) {
+      for (const [name, mix] of mixes) {
+        const cost = mix.reduce((a, k) => a + UNITS[k].cost, 0);
+        const runs = Array.from({ length: seeds }, (_, i) => nestFight(i + 1, mix, style));
+        const wins = runs.filter((r) => r.won).length;
+        const lost = runs.reduce((a, r) => a + r.troopsLost, 0) / seeds;
+        const stars = runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {});
+        rows.push(
+          `  ${style.padEnd(7)} ${name.padEnd(18)} ${money(cost).padStart(7)}  won ${wins}/${seeds}  troops lost ${lost.toFixed(1)} of ${mix.length}  | ` +
+            Object.entries(stars).map(([k, v]) => `${v} ${k}`).join(', '),
+        );
+      }
+    }
+    console.log(`\nLevel 2: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and no troops lost, ${seeds} seeds\n` + rows.join('\n'));
+  });
+});

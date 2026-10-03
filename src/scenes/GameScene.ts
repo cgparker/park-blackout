@@ -1,14 +1,31 @@
 import Phaser from 'phaser';
-import { BLACKOUT, CAMERA, COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, MAP, SCORING, SIM, UNITS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import {
+  BLACKOUT,
+  CAMERA,
+  COLORS,
+  DINOS,
+  EXHIBITS,
+  EXHIBIT_KINDS,
+  INPUT,
+  MAP,
+  SCORING,
+  SIM,
+  UNITS,
+  type AnimalKind,
+  type ExhibitKind,
+  type LevelId,
+  type UnitKind,
+} from '../config';
 import { breakoutSeconds, secondsToSedate } from '../core/estimates';
 import { reinforceCost } from '../core/exhibit';
+import { animalNoun } from '../core/report';
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
 import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
-import { afterBlackout, formatMoney, type ArrowView, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
+import { afterBlackout, formatClock, formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type ExhibitView, type Hud, type PlaceView, type TrainingView } from '../ui/hud';
 import { goalsNow } from '../ui/goals';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
@@ -38,6 +55,7 @@ function clampAxis(center: number, view: number, world: number, margin: number):
 
 /** Settings that survive a Retry. */
 interface Session {
+  level: LevelId;
   quick: boolean;
   debug: boolean;
   tips: boolean;
@@ -94,12 +112,16 @@ export class GameScene extends Phaser.Scene {
     this.hud = hud;
     this.dpr = dpr;
     this.params = params;
-    this.session = { quick: false, debug: params.debug, tips: loadTipsOn() };
+    this.session = { level: params.level ?? 1, quick: false, debug: params.debug, tips: loadTipsOn() };
   }
 
   create(): void {
     // Everything per-game is set up here, because Retry restarts the scene on the same instance.
-    this.world = new World({ seed: this.params.seed ?? undefined, buildPhaseSeconds: this.params.buildPhaseSeconds ?? undefined });
+    this.world = new World({
+      seed: this.params.seed ?? undefined,
+      buildPhaseSeconds: this.params.buildPhaseSeconds ?? undefined,
+      level: this.session.level,
+    });
     this.view = new WorldView(this, this.world, this.dpr);
     this.view.create();
     this.ghostGfx = this.add.graphics().setDepth(10);
@@ -128,6 +150,7 @@ export class GameScene extends Phaser.Scene {
     this.view.setGridVisible((document.getElementById('dbg-grid') as HTMLInputElement | null)?.checked ?? false);
     this.view.setHpVisible((document.getElementById('dbg-hp') as HTMLInputElement | null)?.checked ?? false);
     this.hud.showBriefing({
+      level: this.session.level,
       buildSeconds: this.world.buildPhaseSeconds,
       quickSeconds: BLACKOUT.quickBuildPhaseSeconds,
       revenueTarget: this.world.revenueTarget,
@@ -185,7 +208,17 @@ export class GameScene extends Phaser.Scene {
       confirmPlacement: () => this.confirmPlacement(),
       cancelPlacement: () => this.endPlacement(),
       start: (o) => this.startGame(o.quick, o.debug, o.tips),
+      selectLevel: (level, o) => {
+        // Each level has its own park, so picking one sets up a fresh world behind the briefing.
+        this.keepOptions(o);
+        this.session.level = level;
+        this.scene.restart();
+      },
       retry: () => this.scene.restart(),
+      nextLevel: () => {
+        this.session.level = Math.min(3, this.session.level + 1) as LevelId;
+        this.scene.restart();
+      },
       openTraining: () => this.openTraining(),
       train: (kind) => this.train(kind),
       cancelQueued: (id) => cancelQueued(this.world, id),
@@ -234,11 +267,16 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  /** The briefing's checkboxes, kept for the next game. */
+  private keepOptions(o: BriefingOptions): void {
+    this.session.quick = o.quick;
+    this.session.debug = o.debug;
+    if (o.tips !== this.session.tips) saveTipsOn(o.tips);
+    this.session.tips = o.tips;
+  }
+
   private startGame(quick: boolean, debug: boolean, tips: boolean): void {
-    this.session.quick = quick;
-    this.session.debug = debug;
-    if (tips !== this.session.tips) saveTipsOn(tips);
-    this.session.tips = tips;
+    this.keepOptions({ quick, debug, tips });
     this.world.setBuildPhase(quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
     this.hud.showDebug(debug);
     this.hud.hideBriefing();
@@ -257,7 +295,11 @@ export class GameScene extends Phaser.Scene {
     }
     this.hud.setTop({
       phase: w.phase,
+      level: w.level,
       money: w.money,
+      spent: w.troopSpending,
+      returned: w.returned,
+      troopsLost: w.troopsLost,
       revenue: w.revenue,
       revenueTarget: w.revenueTarget,
       clockSeconds: w.clockSeconds,
@@ -317,6 +359,19 @@ export class GameScene extends Phaser.Scene {
     const evacuation = events.some((e) => e.type === 'evacuation');
     for (const e of events) {
       switch (e.type) {
+        case 'started':
+          if (w.hunt) {
+            const loose = w.dinos.filter((d) => d.state === 'loose');
+            const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
+            const what = `${loose.length} ${animalNoun(kind, loose.length)}`;
+            this.hud.showBanner(
+              `${what} ${w.nest ? 'are guarding a nest' : 'are loose'}. The park opens in ${formatClock(w.clockSeconds)}.`,
+              'warn',
+              4,
+            );
+            this.frame([...loose, ...(w.nest ? [w.nest] : [])], true);
+          }
+          break;
         case 'warning':
           this.hud.showBanner(`${BLACKOUT.villainName} cuts the power in 1:00`, 'warn');
           break;
@@ -352,9 +407,13 @@ export class GameScene extends Phaser.Scene {
         case 'unitLost':
           this.hud.toast(`${UNITS[e.kind].name} lost`);
           break;
-        case 'secured':
-          this.hud.toast(`${DINOS[e.kind].name} secured`);
+        case 'secured': {
+          // In levels 1 and 2 the count left is what matters. The last one ends the level, so it needs no toast.
+          const left = w.looseCount;
+          if (!w.hunt) this.hud.toast(`${DINOS[e.kind].name} secured`);
+          else if (left) this.hud.toast(`${DINOS[e.kind].name} darted. ${left} to go.`);
           break;
+        }
         case 'powerRestored':
           this.hud.showBanner(
             e.contained ? `Power restored. ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : 'Power restored.',
@@ -388,7 +447,19 @@ export class GameScene extends Phaser.Scene {
     const w = this.world;
     if (w.phase === 'briefing' || w.phase === 'ended') return;
     if (this.placingKind) this.endPlacement();
-    this.hud.showMenu(goalsNow({ phase: w.phase, loose: w.looseCount, revenue: w.revenue, target: w.revenueTarget, casualties: w.casualtyTotal }));
+    this.hud.showMenu(
+      goalsNow({
+        phase: w.phase,
+        loose: w.looseCount,
+        revenue: w.revenue,
+        target: w.revenueTarget,
+        casualties: w.casualtyTotal,
+        level: w.level,
+        spent: w.troopSpending,
+        timeLeft: w.clockSeconds,
+        troopsLost: w.troopsLost,
+      }),
+    );
   }
 
   // ---------------------------------------------------------------- camera moves and edge arrows
@@ -413,28 +484,34 @@ export class GameScene extends Phaser.Scene {
   /** At the blackout, frame every exhibit so the first escape happens on screen. */
   private frameParkForBlackout(): void {
     const exs = this.world.exhibits;
-    if (!exs.length || this.gesture !== 'idle') return;
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const e of exs) {
-      x0 = Math.min(x0, e.footprint.x);
-      y0 = Math.min(y0, e.footprint.y);
-      x1 = Math.max(x1, e.footprint.x + e.footprint.w);
-      y1 = Math.max(y1, e.footprint.y + e.footprint.h);
-    }
-    const m = CAMERA.frameMarginTiles;
+    if (!exs.length) return;
+    const corners: Point[] = [];
+    for (const e of exs) corners.push({ x: e.footprint.x * T, y: e.footprint.y * T }, { x: (e.footprint.x + e.footprint.w) * T, y: (e.footprint.y + e.footprint.h) * T });
+    this.frame(corners, false);
+  }
+
+  /**
+   * Eases the camera to show every point, plus a margin, never closer than the default zoom.
+   * With `hq`, HQ is kept in the picture too: levels 1 and 2 start there.
+   */
+  private frame(points: readonly Point[], hq: boolean): void {
+    if (!points.length || this.gesture !== 'idle') return;
+    const all = hq ? [...points, { x: MAP.hq.x * T, y: MAP.hq.y * T }, { x: (MAP.hq.x + MAP.hq.w) * T, y: (MAP.hq.y + MAP.hq.h) * T }] : points;
+    const x0 = Math.min(...all.map((p) => p.x));
+    const y0 = Math.min(...all.map((p) => p.y));
+    const x1 = Math.max(...all.map((p) => p.x));
+    const y1 = Math.max(...all.map((p) => p.y));
+    const m = CAMERA.frameMarginTiles * T;
     const cam = this.cameras.main;
-    const fit = Math.min(cam.width / this.dpr / ((x1 - x0 + 2 * m) * T), cam.height / this.dpr / ((y1 - y0 + 2 * m) * T));
-    this.moveCamera(((x0 + x1) / 2) * T, ((y0 + y1) / 2) * T, clamp(fit, this.minZoom(), CAMERA.defaultZoom));
+    const fit = Math.min(cam.width / this.dpr / (x1 - x0 + 2 * m), cam.height / this.dpr / (y1 - y0 + 2 * m));
+    this.moveCamera((x0 + x1) / 2, (y0 + y1) / 2, clamp(fit, this.minZoom(), CAMERA.defaultZoom));
   }
 
   /** Arrows at the map edge for loose animals and fresh fence breaks that are off screen. Tap one to look there. */
   private updateArrows(): void {
     const w = this.world;
     this.arrowTargets.clear();
-    if (w.phase !== 'blackout' && w.phase !== 'restored') {
+    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'hunt') {
       this.hud.setArrows([]);
       return;
     }
@@ -512,6 +589,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Puts a world point in the middle of the map area the tip card leaves uncovered. */
   private focusAboveTip(wx: number, wy: number): void {
+    // The tip's subject wins over any camera move still easing.
+    this.camMove = null;
     const cam = this.cameras.main;
     const top = cam.y / this.dpr;
     const bottom = (cam.y + cam.height) / this.dpr;
@@ -529,20 +608,28 @@ export class GameScene extends Phaser.Scene {
     this.hud.closePanels();
   }
 
-  private trainingView() {
+  private trainingView(): TrainingView {
     const w = this.world;
     // Troops alive plus the queue: what the player will have.
     const team = [...w.units.filter(isTroop).map((u) => u.kind), ...w.queue.map((q) => q.kind)];
     const packSize = EXHIBITS.raptor.animalCount;
+    // What the team will be darting: in levels 1 and 2 the animals that started loose, one at a time.
+    const kinds: { kind: AnimalKind; count: number }[] = w.hunt
+      ? (Object.keys(w.startedLoose) as AnimalKind[]).map((kind) => ({ kind, count: 1 }))
+      : [
+          { kind: 'trex', count: 1 },
+          { kind: 'raptor', count: packSize },
+        ];
     return {
       money: w.money,
       canTrain: canTrainNow(w),
+      kinds: w.trainable,
       queue: w.queue.map((q, i) => ({
         id: q.id,
         kind: q.kind,
         progress: i === 0 ? 1 - q.left / UNITS[q.kind].trainSeconds : 0,
       })),
-      team: { troops: team.length, trexSeconds: secondsToSedate(team, 'trex'), packSeconds: secondsToSedate(team, 'raptor', packSize), packSize },
+      team: { troops: team.length, targets: kinds.map((k) => ({ ...k, seconds: secondsToSedate(team, k.kind, k.count) })) },
     };
   }
 
@@ -567,7 +654,7 @@ export class GameScene extends Phaser.Scene {
     const max = segs[0].maxHp;
     const material = ex.reinforced ? 'Concrete' : 'Chain-link';
     let fence: string;
-    if (w.powerOn) fence = `${material}, powered`;
+    if (w.powerOn) fence = gaps ? `${material}, ${gaps} ${gaps === 1 ? 'segment' : 'segments'} down` : `${material}, powered`;
     else if (gaps) fence = `${gaps} ${gaps === 1 ? 'gap' : 'gaps'}, weakest ${Number.isFinite(weakest) ? weakest : 0}/${max}`;
     else fence = `${material}, weakest ${weakest}/${max}`;
     const kind = EXHIBITS[ex.kind].animal;
@@ -587,6 +674,7 @@ export class GameScene extends Phaser.Scene {
       reinforceCost: w.canBuild && !ex.reinforced ? reinforceCost(ex.footprint) : null,
       reinforced: ex.reinforced,
       money: w.money,
+      closed: !!w.hunt,
       breakout: w.canBuild ? { now: breakoutSeconds(ex.kind, ex.reinforced), concrete: ex.reinforced ? null : breakoutSeconds(ex.kind, true) } : null,
     };
   }

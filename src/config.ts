@@ -377,6 +377,89 @@ export const SCORING = {
   casualtyLimit: 8,
 };
 
+// ------------------------------------------------------------ levels
+
+/** 1 and 2 start in a park that is already built, before it opens, with animals out. 3 is the blackout. */
+export type LevelId = 1 | 2 | 3;
+export const LEVEL_IDS: readonly LevelId[] = [1, 2, 3];
+export type HuntLevelId = 1 | 2;
+
+export type Side = 'top' | 'right' | 'bottom' | 'left';
+
+/** An exhibit standing when a level starts. */
+export interface ParkExhibit {
+  kind: ExhibitKind;
+  /** The tile it is centered on, as if tapped to build it. Built in order, so each path joins the ones before. */
+  x: number;
+  y: number;
+  /** The side whose fence is down. Its animals start loose. */
+  open?: Side;
+  /** Where its loose animals start, in tiles. Raptors guarding a nest start around the nest instead. */
+  out?: readonly (readonly [number, number])[];
+}
+
+export interface HuntConfig {
+  /** Seconds until the park opens. Anything still loose then loses the level. */
+  timeLimitSeconds: number;
+  startingMoney: number;
+  /** What HQ can train in this level. */
+  units: readonly UnitKind[];
+  park: readonly ParkExhibit[];
+  /** Raptors from the open pens guard a nest on this tile. */
+  nest: readonly [number, number] | null;
+  /** Second star: spend no more than this. */
+  spendStar: number;
+  /** Third star: finish with this much time left, or lose no troops. */
+  thirdStar: { type: 'timeLeft'; seconds: number } | { type: 'noLosses' };
+}
+
+export const HUNTS: Record<HuntLevelId, HuntConfig> = {
+  // Roundup: three pastures are open and their Triceratops are out. Tranq Squads only.
+  1: {
+    timeLimitSeconds: 150,
+    startingMoney: 9000,
+    units: ['tranq'],
+    park: [
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'pasture', x: 16, y: 14, open: 'right', out: [[22, 13], [24, 16]] },
+      { kind: 'pasture', x: 27, y: 8, open: 'top', out: [[25, 3], [31, 2]] },
+      { kind: 'pasture', x: 22, y: 20, open: 'right', out: [[30, 19], [35, 21]] },
+    ],
+    nest: null,
+    spendStar: 4500,
+    thirdStar: { type: 'timeLeft', seconds: 60 },
+  },
+  // Raptor Nest: both raptor pens are open, and all six raptors guard a nest at the east edge.
+  2: {
+    timeLimitSeconds: 240,
+    startingMoney: 21000,
+    units: ['tranq', 'heavy'],
+    park: [
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'raptor', x: 16, y: 14, open: 'right' },
+      { kind: 'raptor', x: 27, y: 8, open: 'right' },
+      { kind: 'pasture', x: 22, y: 20 },
+    ],
+    nest: [35, 16],
+    spendStar: 13500,
+    thirdStar: { type: 'noLosses' },
+  },
+};
+
+export const HUNT = {
+  /** Loose animals start up to this many tiles from their listed spot, so games differ a little. */
+  jitterTiles: 0.4,
+};
+
+export const NEST = {
+  /** Raptors at a nest wander within this many tiles of it. */
+  roamTiles: 2,
+  /** They go after troops within DINO_AI.raptorHuntRadiusTiles of themselves, but not past this many tiles from the nest. */
+  leashTiles: 10,
+  /** How big the nest is drawn, in tiles. */
+  drawRadiusTiles: 1.1,
+};
+
 export const SIM = {
   /** Fixed simulation step in seconds. */
   step: 1 / 60,
@@ -426,4 +509,7 @@ export const COLORS = {
   towerTrim: 0x9fc2ff,
   charge: 0xff7a1a,
   money: 0xffd166,
+  nest: 0x6b4a2b,
+  nestRim: 0x3d2a17,
+  egg: 0xefe4c8,
 };

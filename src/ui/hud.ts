@@ -1,8 +1,24 @@
-import { COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, FENCE, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import {
+  COLORS,
+  DINOS,
+  EXHIBITS,
+  EXHIBIT_KINDS,
+  FENCE,
+  HUNTS,
+  LEVEL_IDS,
+  SQUAD,
+  UNITS,
+  UNIT_KINDS,
+  type AnimalKind,
+  type ExhibitKind,
+  type LevelId,
+  type UnitKind,
+} from '../config';
 import { sedationPerSecond } from '../core/estimates';
-import type { Result } from '../core/report';
+import { animalNoun, type Result } from '../core/report';
 import type { Phase } from '../core/world';
 import { goalRules, goalsAtEnd, STAR_RULE, type GoalLine } from './goals';
+import { briefingFor, LEVEL_INFO } from './levels';
 import { nextTime, timelineLines } from './timeline';
 
 /** Things placed from the build bar. */
@@ -16,12 +32,22 @@ export interface ScreenRect {
   bottom: number;
 }
 
+export interface BriefingOptions {
+  quick: boolean;
+  debug: boolean;
+  tips: boolean;
+}
+
 export interface HudHandlers {
   selectBuild(kind: BuildKind): void;
   confirmPlacement(): void;
   cancelPlacement(): void;
-  start(options: { quick: boolean; debug: boolean; tips: boolean }): void;
+  start(options: BriefingOptions): void;
+  /** A level was picked on the briefing. The options carry over to it. */
+  selectLevel(level: LevelId, options: BriefingOptions): void;
   retry(): void;
+  /** After a win: the briefing for the next level. */
+  nextLevel(): void;
   openTraining(): void;
   train(kind: UnitKind): void;
   cancelQueued(queueId: number): void;
@@ -47,7 +73,12 @@ export interface HudHandlers {
 
 export interface TopView {
   phase: Phase;
+  level: LevelId;
   money: number;
+  /** Levels 1 and 2: spent on troops, and how many animals are back in a pen. */
+  spent: number;
+  returned: number;
+  troopsLost: number;
   revenue: number;
   revenueTarget: number;
   clockSeconds: number;
@@ -77,9 +108,11 @@ export interface PlaceView {
 export interface TrainingView {
   money: number;
   canTrain: boolean;
+  /** What HQ can train in this level. */
+  kinds: readonly UnitKind[];
   queue: { id: number; kind: UnitKind; progress: number }[];
-  /** Troops alive or queued, and how long they take darting together. */
-  team: { troops: number; trexSeconds: number; packSeconds: number; packSize: number };
+  /** Troops alive or queued, and how long they take darting together to sedate each kind of target. */
+  team: { troops: number; targets: { kind: AnimalKind; count: number; seconds: number }[] };
 }
 
 export interface ExhibitView {
@@ -96,6 +129,8 @@ export interface ExhibitView {
   money: number;
   /** Before the blackout: seconds until these animals get out (null: never on their own), and the same behind concrete. */
   breakout: { now: number | null; concrete: number | null } | null;
+  /** Levels 1 and 2: the park hasn't opened, so visits and revenue mean nothing yet. */
+  closed: boolean;
 }
 
 /** An arrow at the edge of the map pointing at something off screen. Position in CSS pixels. */
@@ -110,6 +145,7 @@ export interface ArrowView {
 }
 
 export interface BriefingView {
+  level: LevelId;
   buildSeconds: number;
   quickSeconds: number;
   revenueTarget: number;
@@ -125,6 +161,9 @@ export type Panel = 'place' | 'train' | 'exhibit';
 export const afterBlackout = (s: number | null) => (s === null ? 'Never on its own' : `${Math.round(s)} s after blackout`);
 
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+/** A queue key no real queue has, so the chips get redrawn. */
+const STALE = 'stale';
 export const formatMoney = (n: number) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
 export const formatClock = (s: number) => {
   const t = Math.max(0, Math.ceil(s));
@@ -204,6 +243,7 @@ export class Hud {
   private readonly clockCap: HTMLElement;
   private readonly clockVal: HTMLElement;
   private readonly dinoVal: HTMLElement;
+  private readonly casualtyCap: HTMLElement;
   private readonly casualtyVal: HTMLElement;
   private readonly casualtyStat: HTMLElement;
 
@@ -246,9 +286,11 @@ export class Hud {
   private toastTimer = 0;
 
   private readonly briefing: HTMLElement;
+  private readonly levelButtons = new Map<LevelId, HTMLButtonElement>();
   private readonly briefTitle: HTMLElement;
   private readonly briefIntro: HTMLElement;
   private readonly briefGoals: HTMLElement[] = [];
+  private readonly howto: HTMLElement;
   private readonly quickBox: HTMLInputElement;
   private readonly quickLabel: HTMLElement;
   private readonly debugBox: HTMLInputElement;
@@ -261,6 +303,8 @@ export class Hud {
 
   private readonly endScreen: HTMLElement;
   private readonly endBody: HTMLElement;
+  private readonly retryBtn: HTMLButtonElement;
+  private readonly nextBtn: HTMLButtonElement;
 
   private readonly menu: HTMLElement;
   private readonly menuGoals: HTMLElement;
@@ -305,6 +349,7 @@ export class Hud {
     this.revenueCap = revenue.cap;
     this.revenueStat = revenue.box;
     this.dinoVal = dinos.val;
+    this.casualtyCap = casualties.cap;
     this.casualtyVal = casualties.val;
     this.casualtyStat = casualties.box;
 
@@ -449,10 +494,25 @@ export class Hud {
     this.debugBox = check('opt-debug', 'Debug tools');
     this.quickBox.addEventListener('change', () => this.renderBriefing());
     const start = button('primary start', 'Start');
-    start.addEventListener('click', () =>
-      this.handlers?.start({ quick: this.quickBox.checked, debug: this.debugBox.checked, tips: this.tipsBox.checked }),
-    );
-    left.append(el('div', 'eyebrow', 'Park Blackout'), this.briefTitle, this.briefIntro, options, start);
+    start.addEventListener('click', () => this.handlers?.start(this.briefOptions()));
+
+    // Every level is open. Picking one sets up its park behind the briefing.
+    const levels = el('div', 'levels');
+    levels.setAttribute('role', 'group');
+    levels.setAttribute('aria-label', 'Level');
+    for (const level of LEVEL_IDS) {
+      const info = LEVEL_INFO[level];
+      const b = button('level-btn');
+      b.dataset.level = String(level);
+      b.setAttribute('aria-pressed', 'false');
+      b.append(el('span', 'level-num', String(level)), el('span', 'level-name', info.name), el('span', 'level-teaches', info.teaches));
+      b.addEventListener('click', () => {
+        if (this.briefView?.level !== level) this.handlers?.selectLevel(level, this.briefOptions());
+      });
+      this.levelButtons.set(level, b);
+      levels.append(b);
+    }
+    left.append(el('div', 'eyebrow', 'Park Blackout'), levels, this.briefTitle, this.briefIntro, options, start);
 
     const right = el('div', 'brief-side');
     const goals = el('ul', 'goals');
@@ -463,17 +523,8 @@ export class Hud {
       goals.append(li);
       this.briefGoals.push(t);
     }
-    const howto = el('ul', 'howto');
-    for (const line of [
-      'Tap an exhibit or a tower below, then tap the map to place it.',
-      'Tap HQ to train troops. Towers guard a spot on their own.',
-      'Tap a troop, then tap the map to move or a dinosaur to attack.',
-      'Hold, then drag, to select a group.',
-      'Drag to pan. Pinch to zoom.',
-    ]) {
-      howto.append(el('li', '', line));
-    }
-    right.append(el('h2', '', 'Stars'), goals, el('p', 'star-rule', `One star for each goal. ${STAR_RULE}`), el('h2', '', 'Controls'), howto);
+    this.howto = el('ul', 'howto');
+    right.append(el('h2', '', 'Stars'), goals, el('p', 'star-rule', `One star for each goal. ${STAR_RULE}`), el('h2', '', 'Controls'), this.howto);
     card.append(left, right);
     this.briefing.append(card);
 
@@ -481,11 +532,13 @@ export class Hud {
     this.endScreen = el('div', 'overlay end hidden');
     const endCard = el('div', 'card end-card');
     this.endBody = el('div', 'end-body');
-    const retry = button('primary retry', 'Retry');
-    retry.addEventListener('click', () => this.handlers?.retry());
+    this.retryBtn = button('primary retry', 'Retry');
+    this.retryBtn.addEventListener('click', () => this.handlers?.retry());
+    this.nextBtn = button('primary next-level hidden', 'Next level');
+    this.nextBtn.addEventListener('click', () => this.handlers?.nextLevel());
     // The end screen can be taller than a phone: its body scrolls, and Retry stays in view below it.
     const foot = el('div', 'end-foot');
-    foot.append(retry);
+    foot.append(this.retryBtn, this.nextBtn);
     endCard.append(this.endBody, foot);
     this.endScreen.append(endCard);
 
@@ -596,26 +649,38 @@ export class Hud {
     this.endScreen.classList.add('hidden');
     this.banner.classList.remove('show');
     this.toastEl.classList.remove('show');
-    this.queueKey = '';
+    this.queueKey = STALE;
   }
 
   // ------------------------------------------------ bars
 
   setTop(v: TopView): void {
     setText(this.moneyVal, formatMoney(v.money));
-    // Guests keep paying in the dark. Once the park evacuates, this slot shows who is still inside.
-    this.revenueStat.classList.toggle('people', v.evacuating);
-    if (v.evacuating) {
-      setText(this.revenueCap, 'Visitors in park');
-      setText(this.revenueVal, v.inPark ? String(v.inPark) : 'Everyone is out');
+    const hunt = v.level !== 3 ? HUNTS[v.level] : null;
+    let pct: number;
+    if (hunt) {
+      // Levels 1 and 2 have no visitors. This slot tracks the second star: spending.
+      setText(this.revenueCap, `Spent · ★ up to ${formatMoney(hunt.spendStar)}`);
+      setText(this.revenueVal, formatMoney(v.spent));
+      pct = (v.spent / Math.max(1, hunt.spendStar)) * 100;
+      this.revenueStat.classList.toggle('over', v.spent > hunt.spendStar);
+      this.revenueStat.classList.remove('met', 'people');
     } else {
-      setText(this.revenueCap, `Revenue · ★ at ${formatMoney(v.revenueTarget)}`);
-      setText(this.revenueVal, formatMoney(v.revenue));
+      // Guests keep paying in the dark. Once the park evacuates, this slot shows who is still in the park.
+      this.revenueStat.classList.toggle('people', v.evacuating);
+      if (v.evacuating) {
+        setText(this.revenueCap, 'Visitors in park');
+        setText(this.revenueVal, v.inPark ? String(v.inPark) : 'Everyone is out');
+      } else {
+        setText(this.revenueCap, `Revenue · ★ at ${formatMoney(v.revenueTarget)}`);
+        setText(this.revenueVal, formatMoney(v.revenue));
+      }
+      pct = (v.revenue / Math.max(1, v.revenueTarget)) * 100;
+      this.revenueStat.classList.toggle('met', v.revenue >= v.revenueTarget);
+      this.revenueStat.classList.remove('over');
     }
-    const pct = Math.min(100, (v.revenue / Math.max(1, v.revenueTarget)) * 100);
-    const width = `${pct.toFixed(1)}%`;
+    const width = `${Math.min(100, pct).toFixed(1)}%`;
     if (this.revenueMeter.style.width !== width) this.revenueMeter.style.width = width;
-    this.revenueStat.classList.toggle('met', v.revenue >= v.revenueTarget);
 
     const caption =
       v.phase === 'blackout'
@@ -626,25 +691,34 @@ export class Hud {
           ? 'Secure them within'
           : v.phase === 'ended'
             ? 'Game over'
-            : 'Until blackout';
+            : hunt
+              ? 'Park opens in'
+              : 'Until blackout';
     setText(this.clockCap, caption);
     setText(this.clockVal, v.phase === 'ended' ? '' : formatClock(v.clockSeconds));
     this.clock.classList.toggle('danger', v.phase === 'blackout' || v.phase === 'restored');
-    this.clock.classList.toggle('urgent', v.phase === 'build' && v.clockSeconds <= 60);
+    this.clock.classList.toggle('urgent', (v.phase === 'build' || v.phase === 'hunt') && v.clockSeconds <= 60);
 
     let dinos: string;
-    if (v.phase === 'briefing' || v.phase === 'build') dinos = v.penned ? `${v.penned} penned` : 'None yet';
+    if (hunt) dinos = v.phase === 'briefing' ? `${v.loose} loose` : `${v.loose} loose · ${v.returned} back`;
+    else if (v.phase === 'briefing' || v.phase === 'build') dinos = v.penned ? `${v.penned} penned` : 'None yet';
     else if (v.loose) dinos = `${v.loose} loose · ${v.secured} secured`;
     else if (v.phase === 'blackout' && v.penned) dinos = `None loose · ${v.penned} penned`;
     else dinos = v.secured ? `None loose · ${v.secured} secured` : 'None loose';
     setText(this.dinoVal, dinos);
 
-    setText(this.casualtyVal, `${v.casualties} / ${v.casualtyLimit}`);
-    this.casualtyStat.classList.toggle('bad', v.casualties > 0);
+    // Level 2's third star is about troops, so this slot counts them. Level 1 has nothing to show here.
+    const losses = hunt?.thirdStar.type === 'noLosses';
+    this.casualtyStat.classList.toggle('off', !!hunt && !losses);
+    setText(this.casualtyCap, losses ? 'Troops lost' : 'Casualties');
+    setText(this.casualtyVal, losses ? String(v.troopsLost) : `${v.casualties} / ${v.casualtyLimit}`);
+    this.casualtyStat.classList.toggle('bad', losses ? v.troopsLost > 0 : v.casualties > 0);
   }
 
   setBuildBar(visible: boolean, cash: number, counts: Record<ExhibitKind, number>, placing: BuildKind | null): void {
     this.buildGroup.classList.toggle('hidden', !visible);
+    // With nothing to build, HQ has room for its label.
+    this.bottomBar.classList.toggle('no-build', !visible);
     if (!visible) return;
     for (const kind of BUILD_KINDS) {
       const b = this.buildButtons.get(kind)!;
@@ -711,7 +785,8 @@ export class Hud {
   }
 
   showTraining(v: TrainingView): void {
-    this.queueKey = '';
+    // The queue may have changed while the panel was closed. Redraw the chips.
+    this.queueKey = STALE;
     this.updateTraining(v);
     this.show('train');
   }
@@ -719,16 +794,23 @@ export class Hud {
   updateTraining(v: TrainingView): void {
     for (const kind of UNIT_KINDS) {
       const b = this.trainButtons.get(kind)!;
-      const disabled = !v.canTrain || v.queue.length >= SQUAD.queueMax || v.money < UNITS[kind].cost;
+      const offered = v.kinds.includes(kind);
+      if (b.classList.contains('hidden') === offered) b.classList.toggle('hidden', !offered);
+      const disabled = !offered || !v.canTrain || v.queue.length >= SQUAD.queueMax || v.money < UNITS[kind].cost;
       if (b.disabled !== disabled) b.disabled = disabled;
     }
     setText(this.queueLabel, v.queue.length ? `Queue ${v.queue.length}/${SQUAD.queueMax}` : 'Queue empty');
     const t = v.team;
+    const one = (k: AnimalKind) => (k === 'trex' ? 'a T. rex' : `a ${animalNoun(k, 1)}`);
+    // "A T. rex takes 800 sedation, a raptor 60."
+    const needs = t.targets.map((x, i) => (i ? `${one(x.kind)} ${DINOS[x.kind].sedation}` : `${one(x.kind)} takes ${DINOS[x.kind].sedation} sedation`)).join(', ');
     setText(
       this.teamNote,
       t.troops
-        ? `Your ${t.troops} ${t.troops === 1 ? 'troop' : 'troops'}, darting together: a T. rex in ${Math.ceil(t.trexSeconds)} s, a pack of ${t.packSize} raptors in ${Math.ceil(t.packSeconds)} s.`
-        : `No troops yet. A T. rex takes ${DINOS.trex.sedation} sedation, a raptor ${DINOS.raptor.sedation}.`,
+        ? `Your ${t.troops} ${t.troops === 1 ? 'troop' : 'troops'}, darting together: ${t.targets
+            .map((x) => `${x.count === 1 ? one(x.kind) : `a pack of ${x.count} ${animalNoun(x.kind, x.count)}`} in ${Math.ceil(x.seconds)} s`)
+            .join(', ')}.`
+        : `No troops yet. ${needs[0].toUpperCase()}${needs.slice(1)}.`,
     );
     const key = v.queue.map((q) => q.id).join(',');
     if (key !== this.queueKey) {
@@ -761,6 +843,8 @@ export class Hud {
     setText(this.exTitle, v.name);
     setText(this.exVisits, String(v.visits));
     setText(this.exRevenue, formatMoney(v.revenue));
+    this.exVisits.parentElement!.classList.toggle('hidden', v.closed);
+    this.exRevenue.parentElement!.classList.toggle('hidden', v.closed);
     setText(this.exFence, v.fence);
     setText(this.exAnimals, v.animals);
     const row = this.exBreakout.parentElement!;
@@ -780,7 +864,9 @@ export class Hud {
         ? `Concrete fence: ${FENCE.concreteHp} HP per segment.`
         : canReinforce
           ? `Concrete: ${FENCE.concreteHp} HP per segment instead of ${FENCE.chainLinkHp}.${holds}`
-          : 'Fences can only be reinforced before the blackout.',
+          : v.closed
+            ? 'The fence is on. Animals inside stay inside.'
+            : 'Fences can only be reinforced before the blackout.',
     );
   }
 
@@ -922,18 +1008,28 @@ export class Hud {
     this.briefing.classList.remove('hidden');
   }
 
+  private briefOptions(): BriefingOptions {
+    return { quick: this.quickBox.checked, debug: this.debugBox.checked, tips: this.tipsBox.checked };
+  }
+
   private renderBriefing(): void {
     const v = this.briefView;
     if (!v) return;
+    for (const [level, b] of this.levelButtons) {
+      const pressed = level === v.level ? 'true' : 'false';
+      if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
+    }
+    // The quick test only shortens level 3's build phase.
+    this.quickLabel.parentElement!.classList.toggle('hidden', v.level !== 3);
     const seconds = this.quickBox.checked ? v.quickSeconds : v.buildSeconds;
     const target = Math.round((v.revenueTarget * seconds) / v.buildSeconds);
     setText(this.quickLabel, `Quick test: ${formatClock(v.quickSeconds)} build phase`);
-    setText(this.briefTitle, `Lights out in ${formatClock(seconds)}`);
-    setText(
-      this.briefIntro,
-      `${v.villain} will cut power to the electric fences in ${formatClock(seconds)} to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out.`,
-    );
-    goalRules(target).forEach((text, i) => setText(this.briefGoals[i], text));
+    const brief = briefingFor(v.level, seconds, v.villain);
+    setText(this.briefTitle, brief.title);
+    setText(this.briefIntro, brief.intro);
+    goalRules(target, v.level).forEach((text, i) => setText(this.briefGoals[i], text));
+    this.howto.innerHTML = '';
+    for (const line of brief.controls) this.howto.append(el('li', '', line));
   }
 
   hideBriefing(): void {
@@ -999,42 +1095,61 @@ export class Hud {
       return s;
     };
 
-    const revenueRows: [string, string][] = r.exhibits.length
-      ? r.exhibits.map((e) => [`${e.name} · ${e.visits} visits`, formatMoney(e.revenue)])
-      : [['No exhibits built', '$0']];
-    const hit = r.revenue >= r.revenueTarget;
-    const s = r.spending;
-    // The first animal out is what started the evacuation.
-    const firstOut: Record<AnimalKind, string> = { raptor: 'Raptors', trex: 'T. rex', triceratops: 'Triceratops' };
-    const blackoutRows: [string, string][] = [
-      ['In the park at blackout', String(r.visitorsAtBlackout)],
-      ['Earned in the dark', formatMoney(r.blackoutRevenue)],
-      ['First animal out', r.evacuatedBy ? firstOut[r.evacuatedBy] : 'None'],
-      ['Got out safely', String(r.visitorsSafe)],
-      ['Killed by raptors', String(r.casualties.raptor)],
-      ['Killed by the T. rex', String(r.casualties.trex)],
-      ['Trampled', String(r.casualties.stampede)],
-      ['Troops lost', `${r.troopsLost} of ${r.troopsTrained}`],
-    ];
-    if (r.towersBuilt) blackoutRows.push(['Towers lost', `${r.towersLost} of ${r.towersBuilt}`]);
-    blackoutRows.push(['Dinosaurs secured', String(r.dinosSecured)], ['Dinosaurs contained', String(r.dinosContained)]);
     const grid = el('div', 'end-grid');
-    grid.append(
-      section('Revenue', revenueRows, [`Total (★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
-      section(
-        'Spending',
-        [
-          ['Exhibits', formatMoney(s.exhibits)],
-          ['Paths', formatMoney(s.paths)],
-          ['Reinforcement', formatMoney(s.reinforcement)],
-          ['Troops', formatMoney(s.troops)],
-          ['Towers', formatMoney(s.towers)],
-        ],
-        ['Total', formatMoney(s.total)],
-      ),
-      section('Blackout', blackoutRows, ['Visitors killed', String(r.casualtyTotal)]),
-    );
+    const s = r.spending;
+    if (r.hunt && r.level !== 3) {
+      const cfg = HUNTS[r.level];
+      const h = r.hunt;
+      const darted = r.log.filter((e) => e.type === 'back' && e.how === 'darted').length;
+      const walked = h.returned - darted;
+      const back: [string, string][] = [[`${cap(animalNoun(h.kind, 2))} darted`, String(darted)]];
+      if (walked) back.push(['Walked back on their own', String(walked)]);
+      back.push(['Still loose', String(h.loose - h.returned)], ['Troops trained', String(r.troopsTrained)], ['Troops lost', String(r.troopsLost)]);
+      grid.append(
+        section('Spending', [['Troops', formatMoney(s.troops)]], [`Total (★ up to ${formatMoney(cfg.spendStar)})${s.troops <= cfg.spendStar ? ' ✓' : ''}`, formatMoney(s.troops)]),
+        section(cfg.nest ? 'The nest' : 'The roundup', back, ['Time left', r.won ? formatClock(h.timeLeft) : '0:00']),
+      );
+    } else {
+      const revenueRows: [string, string][] = r.exhibits.length
+        ? r.exhibits.map((e) => [`${e.name} · ${e.visits} visits`, formatMoney(e.revenue)])
+        : [['No exhibits built', '$0']];
+      const hit = r.revenue >= r.revenueTarget;
+      // The first animal out is what started the evacuation.
+      const firstOut: Record<AnimalKind, string> = { raptor: 'Raptors', trex: 'T. rex', triceratops: 'Triceratops' };
+      const blackoutRows: [string, string][] = [
+        ['In the park at blackout', String(r.visitorsAtBlackout)],
+        ['Earned in the dark', formatMoney(r.blackoutRevenue)],
+        ['First animal out', r.evacuatedBy ? firstOut[r.evacuatedBy] : 'None'],
+        ['Got out safely', String(r.visitorsSafe)],
+        ['Killed by raptors', String(r.casualties.raptor)],
+        ['Killed by the T. rex', String(r.casualties.trex)],
+        ['Trampled', String(r.casualties.stampede)],
+        ['Troops lost', `${r.troopsLost} of ${r.troopsTrained}`],
+      ];
+      if (r.towersBuilt) blackoutRows.push(['Towers lost', `${r.towersLost} of ${r.towersBuilt}`]);
+      blackoutRows.push(['Dinosaurs secured', String(r.dinosSecured)], ['Dinosaurs contained', String(r.dinosContained)]);
+      grid.append(
+        section('Revenue', revenueRows, [`Total (★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
+        section(
+          'Spending',
+          [
+            ['Exhibits', formatMoney(s.exhibits)],
+            ['Paths', formatMoney(s.paths)],
+            ['Reinforcement', formatMoney(s.reinforcement)],
+            ['Troops', formatMoney(s.troops)],
+            ['Towers', formatMoney(s.towers)],
+          ],
+          ['Total', formatMoney(s.total)],
+        ),
+        section('Blackout', blackoutRows, ['Visitors killed', String(r.casualtyTotal)]),
+      );
+    }
     b.append(...parts, grid);
+    // After a win in level 1 or 2, the next level is the obvious step. Retry stays beside it.
+    const next = r.won && r.level !== 3;
+    this.nextBtn.classList.toggle('hidden', !next);
+    this.retryBtn.classList.toggle('primary', !next);
+    this.retryBtn.classList.toggle('secondary', next);
     this.endScreen.classList.remove('hidden');
     this.endBody.scrollTop = 0;
   }

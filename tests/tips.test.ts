@@ -96,3 +96,37 @@ describe('tips', () => {
     for (const t of all) expect(`${t.title} ${t.body}`).not.toMatch(/[\u2013\u2014]|\s--\s/);
   });
 });
+
+describe('tips in levels 1 and 2', () => {
+  const DASH = new RegExp('[' + String.fromCharCode(0x2013, 0x2014) + ']|\\s--\\s');
+
+  it('level 1 teaches training, sending a squad, and why Triceratops run', () => {
+    const w = new World({ seed: 1, level: 1 });
+    w.start();
+    const start = tipsFor(w, w.events);
+    expect(ids(start)).toEqual(['train']);
+    expect(start[0].focus!.x).toBeLessThan(MAP.cols * T * 0.25);
+    w.events = [];
+    const u = spawnUnit(w, 'tranq', { x: 6.5 * T, y: 14.5 * T });
+    expect(ids(tipsFor(w, w.events))).toEqual(['dart']);
+    expect(tipsFor(w, w.events)[0].focus).toEqual({ x: u.x, y: u.y });
+    expect(ids(tipsFor(w, [{ type: 'stampede', dinoId: 1, x: 0, y: 0, byTroop: true }]))).toEqual(['spooked']);
+    expect(tipsFor(w, [{ type: 'stampede', dinoId: 1, x: 0, y: 0, byTroop: false }])).toEqual([]);
+    // Level 3's tips stay out of it.
+    expect(tipsFor(w, [{ type: 'warning', secondsLeft: 60 }])).toEqual([]);
+  });
+
+  it('level 2 explains the nest, and what raptors do to troops', () => {
+    const w = new World({ seed: 1, level: 2 });
+    w.start();
+    const start = tipsFor(w, w.events);
+    expect(ids(start)).toEqual(['nest']);
+    expect(start[0].focus).toEqual(w.nest);
+    expect(tipsFor(w, [{ type: 'trained', unitId: 1, kind: 'tranq' }])).toEqual([]);
+    const lost = (by: 'raptor' | 'trex') => [{ type: 'unitLost' as const, unitId: 9, kind: 'tranq' as const, x: 30 * T, y: 16 * T, by }];
+    const bites = tipsFor(w, lost('raptor'));
+    expect(ids(bites)).toEqual(['raptorBites']);
+    expect(bites[0].body).toContain('Heavy Teams have 250 HP, so they last 25 bites.');
+    for (const t of [...start, ...bites]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+  });
+});

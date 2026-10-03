@@ -1,10 +1,10 @@
 # Park Blackout
 
-A single-player RTS prototype for phones. Build a dinosaur park, earn money from exhibits, and train a containment team before a rival company cuts the fence power. Then contain the cascade. The full design is in [SPEC.md](SPEC.md).
+A single-player RTS prototype for phones in three levels. Round up loose Triceratops, clear a raptor nest, then build a dinosaur park, earn money from exhibits, and train a containment team before a rival company cuts the fence power. The full design is in [SPEC.md](SPEC.md).
 
 ## Status
 
-All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Then the park stopped warning its guests: they keep touring and paying in the dark until the first animal gets out, and only then does the park evacuate. A design audit added a pause menu (Restart, End game), breakout times and team strength in the panels, an end-screen timeline with one "next time" suggestion, and edge arrows during the blackout. Stars are one per goal: get every dinosaur back, earn the revenue target, keep every guest alive. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
+All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Then the park stopped warning its guests: they keep touring and paying in the dark until the first animal gets out, and only then does the park evacuate. A design audit added a pause menu (Restart, End game), breakout times and team strength in the panels, an end-screen timeline with one "next time" suggestion, and edge arrows during the blackout. Stars are one per goal: get every dinosaur back, earn the revenue target, keep every guest alive. Two levels now come before that game, each in a park that's already built: level 1, Roundup, teaches training and moving troops by darting 6 loose Triceratops before the park opens; level 2, Raptor Nest, teaches fighting against 6 raptors guarding a nest. The blackout is level 3. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
 
 ## Run it
 
@@ -33,21 +33,23 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 | **Got it** or **Hide tips** on a tip | Same, or Esc to close it | Tips pause the game; turn them off here or on the briefing |
 | The pause button, top right | Same, or Esc with nothing selected, or P | Pause menu: Resume, Restart, End game |
 | An arrow at the edge of the map | Click it | Look at the off-screen animal or broken fence |
+| A level on the briefing | Click it | Pick level 1, 2, or 3 |
+| **Next level** after a win | Click it | The next level's briefing |
 
 ## Tuning
 
 - Every number is in `src/config.ts`.
-- `npm run balance` plays five build strategies, two dense parks against nine defenses, and ten fights headlessly and prints the results. SPEC.md section 13 has the latest numbers. Add `SEEDS=16` for steadier numbers, or `UNCAPPED=1` to lift the casualty limit and see every game's deaths.
+- `npm run balance` plays five build strategies, two dense parks against nine defenses, ten fights, level 1 with one to four squads, and level 2 against eight troop mixes, headlessly, and prints the results. SPEC.md section 13 has the latest numbers. Add `SEEDS=16` for steadier numbers, or `UNCAPPED=1` to lift the casualty limit and see every game's deaths.
 - Debug tools: tick **Debug tools** on the briefing screen, or add `?debug=1`. You get game speed (1x, 2x, 4x), **Blackout now**, **+$10,000**, fence HP numbers, the tile grid, and FPS.
 - Short games: tick **Quick test** on the briefing screen for a 2:00 build phase, or add `?blackout=120` for any length in seconds.
-- `?seed=7` makes a game repeatable.
-- Inside a Claude artifact, query strings don't reach the page. Use the briefing checkboxes, or a hash such as `#debug.blackout-120.seed-7`.
+- `?seed=7` makes a game repeatable, and `?level=2` opens the briefing on that level.
+- Inside a Claude artifact, query strings don't reach the page. Use the briefing checkboxes, or a hash such as `#debug.blackout-120.seed-7.level-3`.
 
 ## Checks
 
-- `npm test` runs 87 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, breakout times against the simulation, the blackout log, the end-screen timeline and its advice, the star goals, when each tip fires, and a full scripted game.
-- `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a guest keeps touring after the evacuation, the revenue doesn't add up, the blackout log is out of order, a number goes bad, or a game never ends.
-- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (87 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `npm test` runs 113 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, breakout times against the simulation, the blackout log, the end-screen timeline and its advice, the star goals, when each tip fires, a full scripted game, and for levels 1 and 2 the built parks, animals carried home, the nest raptors, how a level is won or lost, and their goals, timeline, tips, and briefings.
+- `npm run stress` plays 40 randomized blackout games (towers included) and 40 of levels 1 and 2, and fails if anyone walks through a rock, pen, or tower, a tower moves, a guest keeps touring after the evacuation, the revenue doesn't add up, the log is out of order, a number goes bad, or a game never ends.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches, including the level picker and both new levels (123 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
 - `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
 - `npm run typecheck` checks types.
 
@@ -57,14 +59,15 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 |---|---|
 | `src/config.ts` | Every tuning number, plus the map layout as a text grid |
 | `src/core/world.ts` | The game state, phases, and rules that tie the systems together |
+| `src/core/levels.ts` | Builds the park levels 1 and 2 start with and lets their animals out |
 | `src/core/visitors.ts`, `units.ts`, `dinos.ts`, `combat.ts` | The systems. No Phaser in `src/core`, so it all runs in tests |
 | `src/core/nav.ts` | A* paths, distance maps, and line-of-sight |
 | `src/core/estimates.ts` | Breakout times and team sedation speed, worked out from the rules |
-| `src/core/log.ts` | What the world records during the blackout for the end screen |
+| `src/core/log.ts` | What the world records for the end screen, during the blackout or a level 1 or 2 game |
 | `src/render/worldView.ts` | Draws the world |
 | `src/scenes/GameScene.ts` | Camera, touch and mouse input, wiring to the HUD |
 | `src/ui/hud.ts` | The HTML layer: bars, panels, briefing, pause menu, edge arrows, end screen, debug |
-| `src/ui/tips.ts`, `src/ui/timeline.ts`, `src/ui/goals.ts` | When tips fire, the end-screen timeline and next-time line, and the star goals (no DOM, so they're tested) |
+| `src/ui/tips.ts`, `src/ui/timeline.ts`, `src/ui/goals.ts`, `src/ui/levels.ts` | When tips fire, the end-screen timeline and next-time line, the star goals, and each level's briefing (no DOM, so they're tested) |
 
 ## Deploy
 

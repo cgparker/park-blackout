@@ -2,6 +2,25 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Levels 1 and 2
+
+Chosen by Chris: two levels before the blackout. Level 1 introduces training troops and moving them, by rounding up loose herbivores on a short clock. Level 2 introduces fighting, by clearing a nest of about six escaped raptors. Both start in a park that is already built. The blackout becomes level 3, which introduces building.
+
+50. **Built, but not open yet.** No visitors in levels 1 and 2, so they are about troops alone and nothing in them can kill a guest. The clock runs until the park opens.
+51. **The loose animals are the park's own.** In level 1, three of four pastures have one whole side down, corners standing, and their 6 Triceratops start near them. The fourth is whole, so the player sees what a full pasture looks like. In level 2, both raptor pens stand open and empty.
+52. **Collecting means darting,** the game's one way to catch an animal. A darted animal fades as in level 3, then wakes up in its own pen, so the pens fill up as you go. One that walks back in through the gap counts too, since a powered fence keeps it in. Walking back is rare: about 0.3 per game with one squad, none with more.
+53. **Each level adds tools.** Level 1 trains Tranq Squads only. A Heavy Team darts from 5 tiles, past the 4 tiles that make a Triceratops run. Measured over 8 games, one caught a Triceratops in about 11 s without making it run once, where a Tranq Squad took about 19 s and set off 92 runs. With Heavy Teams the chase, and the level, would go away. Level 2 adds Heavy Teams. Level 3 adds building.
+54. **Level 2's raptors guard a nest.** With no visitors, today's raptors hunt the nearest troop anywhere, so each troop would be chased down as it left HQ. A nest raptor only goes for a troop within 8 tiles of itself (the usual hunt radius) and within 10 tiles of the nest, and runs home when nothing is in reach. There's no pack alarm. They wander within 2 tiles of the nest, so a troop that comes close is seen by most of them anyway.
+55. **Stars follow the same pattern as level 3: the win, money, and a clean run.** Level 1: all six back before the park opens, $4,500 or less on troops (two squads), and 1:00 or more left. Level 2: the nest clear before the park opens, $13,500 or less, and no troops lost. The money goal is about spending, since nothing earns money before the park opens. Time left counts the way the clock shows it, rounded up, and only on a win.
+56. **The numbers come from scripted players** (`npm run balance`, 16 seeds; SPEC section 13). Level 1 at 2:30 and $9,000: one squad clears it with 0:35 to 1:02 left, and two squads earn three stars in every seed. The script gives orders twice a second, much faster than anyone taps, so expect people to need two or three squads. Level 2 at 4:00 and $21,000: Tranq Squads sent in as soon as they're trained all die, five together win but lose about two, and two Heavy Teams together win every time, without a loss in 9 of 16, for $12,000. The clock rarely matters there; the fight does.
+57. **A level also ends when no troops are left,** none are training, and there isn't money for one. A lost fight shouldn't leave the player watching the clock run out.
+58. **A level picker on the briefing, every level open, starting on level 1.** Picking one sets up its park behind the briefing. A win in level 1 or 2 offers Next level. Nothing is saved between visits, as before. `?level=N` opens on a level.
+59. **The top bar follows the level.** Revenue becomes spending against the star's cap, red past it. Casualties become troops lost in level 2 and are hidden in level 1. The dinosaur count reads "loose · back". With nothing to build, HQ's button shows its label on phones.
+60. **The camera shows HQ and every loose animal** when level 1 or 2 starts, like the blackout framing. A tip's camera move wins over it.
+61. **Tips for the new levels** follow the old rules: once per session, and the game pauses. Level 1: how to train a squad, how to send it, and why Triceratops run. Level 2: the nest, and what raptors do to troops. Level 3's tips don't fire in levels 1 and 2.
+62. **The timeline counts animals back.** Darts within 2 seconds of each other share a line, and the last line says how the level ended. Next time advice comes from the balance runs: train more squads, or corner them, in level 1; go in as one group, bring more, or lead with Heavy Teams in level 2.
+63. Also fixed: the training panel could show queued troops left over from an earlier game, or from before the queue emptied while the panel was closed.
+
 ## Stars: one per goal
 
 Chosen by Chris: one star for getting every dinosaur back without losing 8 guests, one for the revenue target, one for no guests lost.

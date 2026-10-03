@@ -1,17 +1,34 @@
-import { BLACKOUT, ECONOMY, FENCE, MAP, SCORING, TIPS, UNITS, type AnimalKind, type ExhibitKind, type MapConfig, type UnitKind } from '../config';
+import {
+  BLACKOUT,
+  ECONOMY,
+  FENCE,
+  MAP,
+  SCORING,
+  TIPS,
+  UNIT_KINDS,
+  UNITS,
+  type AnimalKind,
+  type ExhibitKind,
+  type HuntConfig,
+  type LevelId,
+  type MapConfig,
+  type UnitKind,
+} from '../config';
 import { containDino, evictFromPens, spawnAnimals, updateDinos, type Dino } from './dinos';
 import { buildSegments, inFootprint, reinforceCost, type Exhibit } from './exhibit';
 import { createGrid, Tile, type Grid, type Point } from './grid';
 import { guarded, nearestExhibit, troopsNear } from './guard';
+import { huntConfig, setupHunt } from './levels';
 import type { LogEntry } from './log';
 import { distanceField } from './nav';
 import { planTower, type PlacementPlan, type TowerPlan } from './placement';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
-import { createUnit, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
+import { createUnit, isTroop, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
 import { evacuate, updateVisitors, type Visitor } from './visitors';
 
-export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'ended';
+/** `hunt` is levels 1 and 2: the park is built and closed, and the clock runs until it opens. */
+export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'hunt' | 'ended';
 export type CasualtyCause = 'raptor' | 'trex' | 'stampede';
 
 export type GameEvent =
@@ -29,6 +46,8 @@ export type GameEvent =
   | { type: 'charge'; dinoId: number; x: number; y: number }
   | { type: 'dart'; x0: number; y0: number; x1: number; y1: number; heavy: boolean }
   | { type: 'bite'; x: number; y: number }
+  /** A Triceratops starts to run. `byTroop`: a troop scared it, not a predator. */
+  | { type: 'stampede'; dinoId: number; x: number; y: number; byTroop: boolean }
   | { type: 'fenceHit'; exhibitId: number; x: number; y: number }
   | { type: 'breach'; exhibitId: number; kind: ExhibitKind; x: number; y: number }
   | { type: 'escaped'; dinoId: number; kind: AnimalKind }
@@ -41,6 +60,8 @@ export interface WorldOptions {
   seed?: number;
   buildPhaseSeconds?: number;
   startingMoney?: number;
+  /** 1 and 2 start in a built park with animals out. 3, the default, is the blackout. */
+  level?: LevelId;
 }
 
 /** The whole game state and rules. No Phaser in here, so it runs in tests and headless simulations. */
@@ -50,6 +71,17 @@ export class World {
   readonly grid: Grid;
   readonly rng: Rng;
   buildPhaseSeconds: number;
+  readonly level: LevelId;
+  /** Levels 1 and 2: the level's rules. null in the blackout level. */
+  readonly hunt: HuntConfig | null;
+  /** Level 2: where the raptors guard their nest, in world pixels. */
+  readonly nest: Point | null;
+  /** Troops HQ can train in this level. */
+  readonly trainable: readonly UnitKind[];
+  /** Levels 1 and 2: animals back in a pen, darted and carried there or walked in. */
+  returned = 0;
+  /** Levels 1 and 2: what is loose when the level starts, by kind. Empty in the blackout level. */
+  readonly startedLoose: Partial<Record<AnimalKind, number>> = {};
 
   phase: Phase = 'briefing';
   powerOn = true;
@@ -90,10 +122,10 @@ export class World {
   dinosContained = 0;
   result: Result | null = null;
 
-  /** What happened after the lights went out, for the end screen. */
+  /** What happened after the lights went out (or, in levels 1 and 2, after the start), for the end screen. */
   readonly log: LogEntry[] = [];
-  /** World time when the power went out, or -1. */
-  private blackoutAt = -1;
+  /** World time when the log's clock started (the power cut, or the start of levels 1 and 2), or -1. */
+  private logStart = -1;
   private readonly escapedFrom = new Set<number>();
   private loggedEmpty = false;
   private loggedClear = false;
@@ -116,9 +148,18 @@ export class World {
     this.grid = createGrid(this.map);
     this.rng = createRng(options.seed ?? Math.floor(Math.random() * 2 ** 31));
     this.buildPhaseSeconds = options.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds;
-    this.money = options.startingMoney ?? ECONOMY.startingMoney;
+    this.level = options.level ?? 3;
+    this.hunt = huntConfig(this.level);
+    const n = this.hunt?.nest;
+    this.nest = n ? { x: (n[0] + 0.5) * this.T, y: (n[1] + 0.5) * this.T } : null;
+    this.trainable = this.hunt?.units ?? UNIT_KINDS;
+    this.money = options.startingMoney ?? this.hunt?.startingMoney ?? ECONOMY.startingMoney;
     this.fenceIndex = new Int32Array(this.grid.cols * this.grid.rows).fill(-1);
     this.gateField = this.pathField(this.map.gate);
+    if (this.hunt) {
+      setupHunt(this, this.hunt);
+      for (const d of this.dinos) if (d.state === 'loose') this.startedLoose[d.kind] = (this.startedLoose[d.kind] ?? 0) + 1;
+    }
   }
 
   // ------------------------------------------------------------ walkability
@@ -158,29 +199,43 @@ export class World {
     return this.casualties.raptor + this.casualties.trex + this.casualties.stampede;
   }
 
+  /** Exhibits, towers, and concrete: before the blackout, and never in levels 1 and 2, where the park is already built. */
   get canBuild(): boolean {
-    return this.phase === 'briefing' || this.phase === 'build';
+    return !this.hunt && (this.phase === 'briefing' || this.phase === 'build');
   }
 
-  /** Seconds on the big clock: until the blackout, until power returns, or until the park is overrun. */
+  /** Seconds on the big clock: until the blackout, until power returns, until the park is overrun, or until it opens. */
   get clockSeconds(): number {
     switch (this.phase) {
       case 'briefing':
-        return this.buildPhaseSeconds;
+        return this.hunt ? this.hunt.timeLimitSeconds : this.buildPhaseSeconds;
       case 'build':
         return Math.max(0, this.buildPhaseSeconds - this.phaseTime);
       case 'blackout':
         return Math.max(0, BLACKOUT.powerRestoreSeconds - this.phaseTime);
       case 'restored':
         return Math.max(0, BLACKOUT.overrunSeconds - this.phaseTime);
+      case 'hunt':
+        return Math.max(0, this.hunt!.timeLimitSeconds - this.phaseTime);
       default:
         return 0;
     }
   }
 
-  /** Seconds since the power went out (0 before the blackout). */
-  get blackoutTime(): number {
-    return this.blackoutAt < 0 ? 0 : this.time - this.blackoutAt;
+  /** Seconds since the log's clock started: the power cut, or the start of levels 1 and 2. 0 before that. */
+  get logTime(): number {
+    return this.logStart < 0 ? 0 : this.time - this.logStart;
+  }
+
+  /** Levels 1 and 2: no troops left, none on the way, and not enough money to train one. */
+  get outOfTroops(): boolean {
+    if (this.units.some((u) => !u.dead && isTroop(u)) || this.queue.length) return false;
+    return this.trainable.every((k) => this.money < UNITS[k].cost);
+  }
+
+  /** Spent on troops, the second star's measure in levels 1 and 2. */
+  get troopSpending(): number {
+    return this.spending.troops;
   }
 
   get looseCount(): number {
@@ -243,8 +298,15 @@ export class World {
 
   start(): void {
     if (this.phase !== 'briefing') return;
-    this.phase = 'build';
     this.phaseTime = 0;
+    if (this.hunt) {
+      // The park is built and closed. The clock runs until it opens.
+      this.phase = 'hunt';
+      this.logStart = this.time;
+      this.log.push({ t: 0, type: 'start', loose: { ...this.startedLoose }, nest: !!this.nest });
+    } else {
+      this.phase = 'build';
+    }
     this.events.push({ type: 'started' });
   }
 
@@ -256,7 +318,17 @@ export class World {
     this.money -= plan.totalCost;
     this.spending.exhibits += plan.exhibitCost;
     this.spending.paths += plan.pathCost;
+    const exhibit = this.addExhibit(plan);
+    this.events.push({ type: 'built', exhibitId: exhibit.id });
+    return exhibit;
+  }
 
+  /**
+   * Puts an exhibit, its path, and its animals down without charging for them.
+   * `build` uses it after paying; levels 1 and 2 use it for the park they start with.
+   */
+  addExhibit(plan: PlacementPlan): Exhibit {
+    if (!plan.viewingSpot) throw new Error('Cannot build an invalid placement.');
     const id = this.newId();
     this.grid.forEachInRect(plan.footprint, (x, y) => {
       this.grid.set(x, y, Tile.Exhibit);
@@ -285,7 +357,6 @@ export class World {
     this.recomputeVisitorFields();
     unitsAfterBuild(this);
     spawnAnimals(this, exhibit);
-    this.events.push({ type: 'built', exhibitId: id });
     return exhibit;
   }
 
@@ -329,7 +400,7 @@ export class World {
     // Nobody tells the guests. They keep touring and paying until the first animal gets out.
     this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
     for (const ex of this.exhibits) ex.version++;
-    this.blackoutAt = this.time;
+    this.logStart = this.time;
     this.log.push({ t: 0, type: 'blackout', inPark: this.visitorsAtBlackout });
     this.events.push({ type: 'blackout' });
   }
@@ -356,22 +427,29 @@ export class World {
 
   /** An animal left its pen. Only the first one out of each exhibit is logged. */
   noteEscape(d: Dino): void {
-    if (this.blackoutAt < 0 || this.escapedFrom.has(d.home)) return;
+    if (this.logStart < 0 || this.escapedFrom.has(d.home)) return;
     this.escapedFrom.add(d.home);
-    this.log.push({ t: this.blackoutTime, type: 'escape', kind: d.kind, inPark: this.inPark, evacuation: false });
+    this.log.push({ t: this.logTime, type: 'escape', kind: d.kind, inPark: this.inPark, evacuation: false });
   }
 
   noteDeath(cause: CasualtyCause, x: number, y: number): void {
-    if (this.blackoutAt < 0) return;
+    if (this.logStart < 0) return;
     const near = nearestExhibit(this, x, y, TIPS.killNearPenTiles);
     const pen = nearestExhibit(this, x, y, TIPS.killNearPenTiles, 'raptor');
-    this.log.push({ t: this.blackoutTime, type: 'death', cause, near: near?.kind ?? null, unguardedPen: !!pen && !guarded(this, pen) });
+    this.log.push({ t: this.logTime, type: 'death', cause, near: near?.kind ?? null, unguardedPen: !!pen && !guarded(this, pen) });
   }
 
   noteLoss(kind: UnitKind, x: number, y: number, by: AnimalKind | null): void {
-    if (this.blackoutAt < 0) return;
+    if (this.logStart < 0) return;
     const alone = kind !== 'tower' && troopsNear(this, x, y, TIPS.lonerRadiusTiles) <= TIPS.lonerMaxFriends;
-    this.log.push({ t: this.blackoutTime, type: 'lost', kind, by, alone });
+    this.log.push({ t: this.logTime, type: 'lost', kind, by, alone });
+  }
+
+  /** Levels 1 and 2: an animal is back in a pen, darted or on its own. */
+  noteBack(d: Dino, how: 'darted' | 'walked'): void {
+    if (!this.hunt || this.logStart < 0) return;
+    this.returned++;
+    this.log.push({ t: this.logTime, type: 'back', kind: d.kind, how, left: this.looseCount });
   }
 
   /** Visitors still in the park. */
@@ -406,7 +484,7 @@ export class World {
       }
     }
     this.dinosContained += contained;
-    this.log.push({ t: this.blackoutTime, type: 'power', contained });
+    this.log.push({ t: this.logTime, type: 'power', contained });
     this.events.push({ type: 'powerRestored', contained });
   }
 
@@ -435,7 +513,7 @@ export class World {
       if (first) this.startEvacuation(first.kind);
     }
     this.cleanup();
-    if (this.blackoutAt >= 0) this.logMilestones();
+    if (this.logStart >= 0 && !this.hunt) this.logMilestones();
     this.checkEnd();
   }
 
@@ -443,17 +521,24 @@ export class World {
   private logMilestones(): void {
     if (!this.loggedEmpty && this.visitorsAtBlackout > 0 && this.inPark === 0) {
       this.loggedEmpty = true;
-      this.log.push({ t: this.blackoutTime, type: 'parkEmpty' });
+      this.log.push({ t: this.logTime, type: 'parkEmpty' });
     }
     if (!this.loggedClear && this.allClear && this.exhibits.some((e) => e.kind !== 'pasture')) {
       this.loggedClear = true;
-      this.log.push({ t: this.blackoutTime, type: 'allClear' });
+      this.log.push({ t: this.logTime, type: 'allClear' });
     }
   }
 
   // ------------------------------------------------------------ internals
 
   private checkEnd(): void {
+    if (this.hunt) {
+      if (this.phase !== 'hunt') return;
+      if (this.looseCount === 0) this.end(true, 'secured');
+      else if (this.phaseTime >= this.hunt.timeLimitSeconds) this.end(false, 'timeUp');
+      else if (this.outOfTroops) this.end(false, 'noTroops');
+      return;
+    }
     if (this.casualtyTotal >= SCORING.casualtyLimit) {
       this.end(false, 'shutdown');
     } else if (this.phase === 'restored') {
@@ -464,10 +549,10 @@ export class World {
 
   private end(won: boolean, reason: EndReason): void {
     if (this.phase === 'ended') return;
-    if (this.blackoutAt >= 0) {
+    if (this.logStart >= 0) {
       const loose: Partial<Record<AnimalKind, number>> = {};
       for (const d of this.dinos) if (d.state === 'loose') loose[d.kind] = (loose[d.kind] ?? 0) + 1;
-      this.log.push({ t: this.blackoutTime, type: 'end', reason, loose });
+      this.log.push({ t: this.logTime, type: 'end', reason, loose });
     }
     this.phase = 'ended';
     this.result = buildResult(this, won, reason);

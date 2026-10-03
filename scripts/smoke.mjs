@@ -92,6 +92,16 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
 
   check('opens on the briefing', await page.isVisible('.briefing'));
   check('tips are on by default', await page.isChecked('#opt-tips'));
+  // Every level is open. The briefing starts on level 1, and picking a level sets up its park behind the briefing.
+  const pressed = () => S(page, () => [...document.querySelectorAll('.level-btn')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.level).join(','));
+  check('the briefing offers three levels and starts on level 1', (await page.locator('.level-btn').count()) === 3 && (await pressed()) === '1' && (await world(() => window.__pb.world.level)) === 1);
+  check('level 1 is a roundup on a short clock', (await page.textContent('.brief-title')) === 'Round them up in 2:30' && (await page.textContent('.brief-side')).includes('Get all 6 Triceratops back before the park opens in 2:30.'));
+  check('the quick test is for level 3 only', !(await page.isVisible('#opt-quick')));
+  await page.tap('.level-btn[data-level="2"]');
+  check('picking level 2 sets up its park', await soon(async () => (await world(() => window.__pb.world.level)) === 2 && (await pressed()) === '2'));
+  check('level 2 is the raptor nest', (await page.textContent('.brief-title')) === 'Clear the nest in 4:00' && (await page.textContent('.brief-side')).includes('Lose no troops.'));
+  await page.tap('.level-btn[data-level="3"]');
+  check('picking level 3 brings back the blackout', await soon(async () => (await world(() => window.__pb.world.level)) === 3 && (await pressed()) === '3'));
   check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 5:00');
   check('briefing offers a 2:00 quick test', (await page.textContent('label.check')).includes('Quick test: 2:00 build phase'));
   const stars = await page.textContent('.brief-side');
@@ -346,14 +356,18 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.screenshot({ path: `${out}/6-end.png` });
   await page.tap('.retry');
   await page.waitForTimeout(400);
-  const fresh = await world(() => ({ phase: window.__pb.world.phase, exhibits: window.__pb.world.exhibits.length }));
-  check('Retry starts a fresh game', fresh.phase === 'briefing' && fresh.exhibits === 0 && (await soon(() => page.isVisible('.briefing'))), JSON.stringify(fresh));
+  const fresh = await world(() => ({ phase: window.__pb.world.phase, exhibits: window.__pb.world.exhibits.length, level: window.__pb.world.level }));
+  check('Retry starts a fresh game of the same level', fresh.phase === 'briefing' && fresh.exhibits === 0 && fresh.level === 3 && (await soon(() => page.isVisible('.briefing'))), JSON.stringify(fresh));
+  check('the end screen offers no next level after a loss', !(await page.isVisible('.next-level')));
   check('Retry keeps the quick-test choice', await page.isChecked('#opt-quick'));
   check('no tips showed after they were turned off', !(await page.isVisible('.tip')));
   check('Retry keeps tips off', !(await page.isChecked('#opt-tips')));
   await page.reload();
   await page.waitForFunction(() => window.__pb?.world, null, { timeout: 15000 });
   check('tips stay off after a reload', !(await page.isChecked('#opt-tips')));
+  check('a reload opens on level 1 again', (await world(() => window.__pb.world.level)) === 1);
+  await page.tap('.level-btn[data-level="3"]');
+  await soon(async () => (await world(() => window.__pb.world.level)) === 3);
 
   // Restart and End game from the pause menu.
   await page.tap('.start');
@@ -371,6 +385,112 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await ctx.close();
 }
 
+// ---------------------------------------------------------------- phone, levels 1 and 2
+{
+  const { ctx, page, errors } = await open({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  const world = (fn) => S(page, fn);
+  await page.tap('.start');
+  check('level 1 starts with the park built and Triceratops out', (await world(() => {
+    const w = window.__pb.world;
+    return w.phase === 'hunt' && w.exhibits.length === 4 && w.dinos.filter((d) => d.state === 'loose').length === 6;
+  })) === true);
+  check('the clock counts down to opening', (await page.textContent('.clock .cap')) === 'Park opens in' && (await page.textContent('.clock .val')).startsWith('2:'));
+  check('the top bar tracks spending for the second star', await soon(async () => (await page.textContent('.stat.revenue .cap')).startsWith('Spent') && (await page.textContent('.stat.revenue .cap')).includes('$4,500')));
+  check('nothing to build in level 1', !(await page.isVisible('.build-group')));
+  check('level 1 opens with a tip on training', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Train a Tranq Squad'));
+  await page.tap('.tip-ok');
+  await centerOn(page, 8 * T, 14 * T);
+  const hq = await cssOf(page, 3.5 * T, 15.5 * T);
+  await page.touchscreen.tap(hq.x, hq.y);
+  check('HQ trains only Tranq Squads in level 1', (await soon(() => page.isVisible('.train-btn[data-kind="tranq"]'))) && !(await page.isVisible('.train-btn[data-kind="heavy"]')));
+  await page.tap('.train-btn[data-kind="tranq"]');
+  await page.tap('.train-btn[data-kind="tranq"]');
+  check('the team note counts in Triceratops', await soon(async () => /a Triceratops in \d+ s\.$/.test(await page.textContent('.team-note'))), await page.textContent('.team-note'));
+  await page.tap('.train-panel .close');
+  await advance(page, 17);
+  check('a trained squad brings up the tip on darting', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Send it after a Triceratops'));
+  await page.tap('.tip-ok');
+  check('both squads are out', (await world(() => window.__pb.world.units.length)) === 2);
+  check('edge arrows point at Triceratops off screen', await soon(async () => (await page.locator('.edge-arrow[data-kind="triceratops"]:not(.hidden)').count()) > 0));
+  // Select a squad by tapping it, then tap a Triceratops held still beside it.
+  const sq = await world(() => {
+    const w = window.__pb.world;
+    const u = w.units[0];
+    const d = w.dinos.find((d) => d.state === 'loose');
+    d.x = u.x + 6 * 40;
+    d.y = u.y;
+    d.recover = 999;
+    d.wait = 999;
+    return { u: { id: u.id, x: u.x, y: u.y }, d: { id: d.id, x: d.x, y: d.y } };
+  });
+  await centerOn(page, sq.u.x + 3 * T, sq.u.y);
+  const uc = await cssOf(page, sq.u.x, sq.u.y);
+  await page.touchscreen.tap(uc.x, uc.y);
+  const dc = await cssOf(page, sq.d.x, sq.d.y);
+  await page.touchscreen.tap(dc.x, dc.y);
+  const order = await world(() => window.__pb.world.units.map((u) => `${u.order}:${u.targetId}`));
+  check('tap a squad, then a Triceratops, to dart it', order.includes(`attack:${sq.d.id}`), order.join(' '));
+  await page.tap('.pause-btn');
+  check('the pause menu shows level 1 goals', await soon(async () => (await page.textContent('.menu .goal-rows')).includes('Spend $4,500 or less') && (await page.textContent('.menu .goal-rows')).includes('Finish with 1:00 left')));
+  await page.tap('.menu-resume');
+  // One dart each finishes them: put a squad beside every Triceratops left.
+  await world(() => {
+    const w = window.__pb.world;
+    const u = w.units[0];
+    for (const d of w.dinos.filter((d) => d.state === 'loose')) {
+      d.sedation = 1;
+      u.x = d.x - 60;
+      u.y = d.y;
+      u.cooldown = 0;
+      for (let i = 0; i < 3 && w.phase !== 'ended'; i++) w.update(1 / 60);
+    }
+  });
+  check('darting the last Triceratops wins level 1', await soon(() => page.isVisible('.end'), 8000));
+  check('the end screen says every Triceratops is back', (await page.textContent('.end h1')) === 'Every Triceratops is back');
+  check('the end screen marks the level 1 goals', /Spend \$4,500 or less\$4,500 spent/.test(await page.textContent('.end-goals')), await page.textContent('.end-goals'));
+  check('the timeline counts them back', /Triceratops are loose in the park\..*darted\./.test(await page.textContent('.timeline')), await page.textContent('.timeline'));
+  check('a win offers the next level', await page.isVisible('.next-level'));
+  await page.screenshot({ path: `${out}/8-level1-end.png` });
+  await page.tap('.next-level');
+  check('Next level opens the level 2 briefing', await soon(async () => (await world(() => window.__pb.world.level)) === 2 && (await page.isVisible('.briefing'))));
+
+  await page.tap('.start');
+  check('level 2 opens with a tip about the nest', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Raptors guard their nest'));
+  await page.tap('.tip-ok');
+  check('six raptors guard the nest', (await world(() => window.__pb.world.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose' && d.nest).length)) === 6);
+  check('the top bar counts troops lost in level 2', await soon(async () => (await page.textContent('.stat.casualties .cap')) === 'Troops lost'));
+  await centerOn(page, 8 * T, 14 * T);
+  const hq2 = await cssOf(page, 3.5 * T, 15.5 * T);
+  await page.touchscreen.tap(hq2.x, hq2.y);
+  check('HQ trains Tranq Squads and Heavy Teams in level 2', (await soon(() => page.isVisible('.train-btn[data-kind="heavy"]'))) && (await page.isVisible('.train-btn[data-kind="tranq"]')));
+  await page.tap('.train-panel .close');
+  // A troop at HQ is safe; one walking up to the nest is not.
+  await world(() => {
+    const w = window.__pb.world;
+    w.money += 0;
+    window.__pb.scene.hud.handlers.train('tranq');
+    for (let i = 0; i < 60 * 9; i++) w.update(1 / 60);
+  });
+  await advance(page, 10);
+  check('raptors leave a troop at HQ alone', (await world(() => window.__pb.world.troopsLost)) === 0 && (await world(() => window.__pb.world.units.length)) === 1);
+  await world(() => {
+    const w = window.__pb.world;
+    const u = w.units[0];
+    u.x = w.nest.x - 5 * 40;
+    u.y = w.nest.y;
+    for (let i = 0; i < 60 * 8 && !w.units.every((u) => u.dead); i++) w.update(1 / 60);
+  });
+  check('a lone troop at the nest is bitten down', (await world(() => window.__pb.world.troopsLost)) === 1);
+  check('losing a troop to raptors brings up a tip', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Raptors pile on'));
+  await page.tap('.tip-ok');
+  await page.tap('.pause-btn');
+  await page.tap('.menu-end');
+  check('ending level 2 early says the nest was not clear', await soon(async () => (await page.isVisible('.end')) && (await page.textContent('.end .detail')) === 'You ended the game before the nest was clear.'));
+  await page.screenshot({ path: `${out}/9-level2-end.png` });
+  check('no console errors in levels 1 and 2', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- phone, portrait
 {
   const { ctx, page } = await open({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
@@ -380,7 +500,9 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
 
 // ---------------------------------------------------------------- desktop, mouse
 {
-  const { ctx, page, errors } = await open({ viewport: { width: 1280, height: 720 } });
+  // The level can be picked in the address too, for testing.
+  const { ctx, page, errors } = await open({ viewport: { width: 1280, height: 720 } }, 'debug=1&seed=3&level=3');
+  check('?level=3 opens on the blackout level', (await S(page, () => window.__pb.world.level)) === 3);
   await page.click('.start');
   await S(page, () => {
     const w = window.__pb.world;

@@ -1,7 +1,7 @@
 // Randomized whole games that check the rules never break. Skipped in normal runs.
 // Run with: STRESS=1 npx vitest run tests/stress.test.ts --silent=false
 import { describe, expect, it } from 'vitest';
-import { EXHIBIT_KINDS, MAP, UNIT_KINDS } from '../src/config';
+import { EXHIBIT_KINDS, MAP, type LevelId } from '../src/config';
 import { Tile } from '../src/core/grid';
 import { planPlacement, planTower } from '../src/core/placement';
 import { createRng } from '../src/core/rng';
@@ -14,10 +14,10 @@ declare const process: { env: Record<string, string | undefined> };
 const T = MAP.tileSize;
 const STEP = 1 / 60;
 
-function playRandom(seed: number) {
+function playRandom(seed: number, level: LevelId = 3) {
   const r = createRng(seed * 7919);
   const pick = <V>(xs: readonly V[]) => xs[Math.floor(r() * xs.length)];
-  const w = new World({ seed, buildPhaseSeconds: 120 + Math.floor(r() * 300) });
+  const w = new World({ seed, buildPhaseSeconds: 120 + Math.floor(r() * 300), level });
   w.start();
   let nextOrder = 0;
   for (let i = 0; i < (60 * 60) / STEP && w.phase !== 'ended'; i++) {
@@ -35,13 +35,13 @@ function playRandom(seed: number) {
       if (tower.valid) w.buildTower(tower);
     }
     if (w.phase !== 'build' || w.phaseTime > w.buildPhaseSeconds * 0.6) {
-      if (r() < 0.3) enqueueUnit(w, pick(UNIT_KINDS));
+      if (r() < 0.3) enqueueUnit(w, pick(w.trainable));
     }
     if (w.time >= nextOrder && w.units.length) {
       nextOrder = w.time + 3 + r() * 10;
       // Towers are in the list on purpose: orders to them must be ignored.
       const ids = w.units.filter(() => r() < 0.7).map((u) => u.id);
-      const target = w.dinos.filter((d) => d.state === 'loose' || (w.phase === 'blackout' && d.state === 'penned'));
+      const target = w.dinos.filter((d) => d.state === 'loose' || ((w.phase === 'blackout' || w.phase === 'hunt') && d.state === 'penned'));
       if (target.length && r() < 0.6) orderAttack(w, ids, pick(target).id);
       else orderMove(w, ids, r() * MAP.cols * T, r() * MAP.rows * T);
     }
@@ -83,7 +83,7 @@ function playRandom(seed: number) {
   // The blackout log reads in order, from the power cut to the end, and the end screen can always say it.
   const log = w.result!.log;
   if (log.length) {
-    expect(log[0].type).toBe('blackout');
+    expect(log[0].type).toBe(level === 3 ? 'blackout' : 'start');
     expect(log[log.length - 1].type).toBe('end');
     for (let i = 1; i < log.length; i++) expect(log[i].t).toBeGreaterThanOrEqual(log[i - 1].t);
   }
@@ -93,6 +93,20 @@ function playRandom(seed: number) {
 }
 
 describe.skipIf(!process.env.STRESS)('stress', () => {
+  it('random games of levels 1 and 2 always end with the rules intact', { timeout: 900_000 }, () => {
+    const tally: Record<string, number> = {};
+    for (const level of [1, 2] as const) {
+      for (let seed = 1; seed <= 20; seed++) {
+        const res = playRandom(seed, level);
+        // A darted animal is back in its pen, never removed, so the count always adds up.
+        expect(res.hunt!.returned).toBeLessThanOrEqual(res.hunt!.loose);
+        const key = `level ${level}: ${res.reason} (${res.stars} stars)`;
+        tally[key] = (tally[key] ?? 0) + 1;
+      }
+    }
+    console.log(`\n40 random games of levels 1 and 2:\n` + Object.entries(tally).map(([k, n]) => `  ${k}: ${n}`).join('\n'));
+  });
+
   it('random games always end with the rules intact', { timeout: 900_000 }, () => {
     const tally: Record<string, number> = {};
     let towers = 0;

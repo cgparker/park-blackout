@@ -13,7 +13,8 @@ const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-await page.goto(url + '?debug=1&seed=5');
+// Level 3, the blackout: the states below are its build phase and blackout.
+await page.goto(url + '?debug=1&seed=5&level=3');
 await page.waitForFunction(() => window.__pb?.world, null, { timeout: 15000 });
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${out}/01-briefing.png` });

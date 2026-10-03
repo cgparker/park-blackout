@@ -1,4 +1,4 @@
-import { DINO_AI, DINOS, EXHIBITS, UNITS, VISITORS, type AnimalKind } from '../config';
+import { DINO_AI, DINOS, EXHIBITS, NEST, UNITS, VISITORS, type AnimalKind } from '../config';
 import { damageUnit } from './combat';
 import { fenceRect, footprintCenter, inFootprint, type Exhibit, type FenceSegment } from './exhibit';
 import { Tile, type Point } from './grid';
@@ -59,6 +59,8 @@ export interface Dino extends PathFollower {
   /** T. rex only: direction of the current charge. */
   cdx: number;
   cdy: number;
+  /** Raptors in level 2: the nest they guard, in world pixels. They stay near it instead of hunting the whole park. */
+  nest: Point | null;
 }
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -106,6 +108,7 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       chargeCooldown: 0,
       cdx: 0,
       cdy: 0,
+      nest: null,
     });
   }
 }
@@ -137,6 +140,43 @@ export function containDino(w: World, d: Dino, home: Exhibit): void {
   const b = penBounds(w, home, d.kind);
   d.x = clamp(d.x, b.x0, b.x1);
   d.y = clamp(d.y, b.y0, b.y1);
+}
+
+/** True when the animal's center is inside its own pen's fence line. */
+function insideOwnFence(w: World, d: Dino): boolean {
+  const home = w.exhibitById(d.home);
+  if (!home) return false;
+  const r = fenceRect(home.footprint, w.T);
+  return d.x > r.left && d.x < r.right && d.y > r.top && d.y < r.bottom;
+}
+
+/** Puts an animal somewhere inside its own pen, calm. */
+function settleInPen(w: World, d: Dino, home: Exhibit, anywhere: boolean): void {
+  d.state = 'penned';
+  calm(d);
+  d.nest = null;
+  d.wait = 0.5;
+  const b = penBounds(w, home, d.kind);
+  d.x = anywhere ? rand(w, b.x0, b.x1) : clamp(d.x, b.x0, b.x1);
+  d.y = anywhere ? rand(w, b.y0, b.y1) : clamp(d.y, b.y0, b.y1);
+}
+
+/** Levels 1 and 2: a loose animal walked (or ran) back into its own pen. The fences are on, so it stays. */
+function cameHome(w: World, d: Dino): void {
+  const home = w.exhibitById(d.home);
+  if (!home) return;
+  settleInPen(w, d, home, false);
+  w.noteBack(d, 'walked');
+}
+
+/** Levels 1 and 2: a darted animal, done fading, wakes up back in its pen. Returns false if it has no pen. */
+function carryHome(w: World, d: Dino): boolean {
+  const home = w.exhibitById(d.home);
+  if (!home) return false;
+  settleInPen(w, d, home, true);
+  d.sedation = DINOS[d.kind].sedation;
+  d.fade = 0;
+  return true;
 }
 
 /** A loose animal caught inside someone else's pen when the fences reseal is moved just outside it. */
@@ -238,7 +278,8 @@ export function updateDinos(w: World, dt: number): void {
     if (d.removed) continue;
     if (d.state === 'secured') {
       d.fade -= dt;
-      if (d.fade <= 0) d.removed = true;
+      // In levels 1 and 2 the fences are on, so the crew carries a darted animal back to its pen.
+      if (d.fade <= 0 && !(w.hunt && carryHome(w, d))) d.removed = true;
       continue;
     }
     d.cooldown = Math.max(0, d.cooldown - dt);
@@ -246,6 +287,7 @@ export function updateDinos(w: World, dt: number): void {
     d.recover = Math.max(0, d.recover - dt);
     d.chargeCooldown = Math.max(0, d.chargeCooldown - dt);
 
+    if (w.hunt && d.state === 'loose' && insideOwnFence(w, d)) cameHome(w, d);
     if (d.state === 'contained' || (w.powerOn && d.state === 'penned')) wanderInPen(w, d, dt);
     else if (d.kind === 'triceratops') updateTriceratops(w, d, dt);
     else if (d.state === 'penned') updatePennedPredator(w, d, dt);
@@ -429,7 +471,8 @@ function updateLoosePredator(w: World, d: Dino, dt: number): void {
 
   const t = d.target;
   if (!t) {
-    wanderLoose(w, d, dt);
+    if (d.nest) roamNest(w, d, d.nest, dt);
+    else wanderLoose(w, d, dt);
   } else if (t.type === 'segment') {
     const ex = w.exhibitById(t.exhibitId);
     if (ex && approachFence(w, d, t.x, t.y, cfg.speed, dt)) {
@@ -632,9 +675,13 @@ function chooseBreakIn(w: World, d: Dino): DinoTarget | null {
   return { type: 'segment', exhibitId: target.id, index, x: spot.x, y: spot.y };
 }
 
-/** The nearest visitor or troop within 8 tiles, else the nearest visitor anywhere, else the nearest troop. */
+/**
+ * The nearest visitor or troop within 8 tiles, else the nearest visitor anywhere, else the nearest troop.
+ * A raptor guarding a nest only takes the first step, and only for someone within the leash of its nest.
+ */
 function chooseRaptorTarget(w: World, d: Dino): DinoTarget | null {
   const R = DINO_AI.raptorHuntRadiusTiles * w.T;
+  if (d.nest) return guardNest(w, d, d.nest, R);
   const v = nearestVisitor(w, d, R);
   const u = nearestUnit(w, d, R);
   if (v && (!u || dist(v, d) <= dist(u, d))) return { type: 'visitor', id: v.id };
@@ -643,6 +690,59 @@ function chooseRaptorTarget(w: World, d: Dino): DinoTarget | null {
   if (anyVisitor) return { type: 'visitor', id: anyVisitor.id };
   const anyUnit = nearestUnit(w, d, Infinity);
   return anyUnit ? { type: 'unit', id: anyUnit.id } : null;
+}
+
+function guardNest(w: World, d: Dino, nest: Point, radius: number): DinoTarget | null {
+  const leash = NEST.leashTiles * w.T;
+  let best: DinoTarget | null = null;
+  let bestD = radius;
+  for (const v of w.visitors) {
+    if (v.done || dist(v, nest) > leash) continue;
+    const dd = dist(v, d);
+    if (dd <= bestD) {
+      bestD = dd;
+      best = { type: 'visitor', id: v.id };
+    }
+  }
+  for (const u of w.units) {
+    if (u.dead || dist(u, nest) > leash) continue;
+    const dd = dist(u, d);
+    if (dd <= bestD) {
+      bestD = dd;
+      best = { type: 'unit', id: u.id };
+    }
+  }
+  return best;
+}
+
+/** With nobody to chase, a nest raptor runs back to its nest, then wanders close to it. */
+function roamNest(w: World, d: Dino, nest: Point, dt: number): void {
+  const roam = NEST.roamTiles * w.T;
+  if (dist(d, nest) > roam + w.T) {
+    d.wander = null;
+    navigate(w, d, nest.x, nest.y, DINOS[d.kind].speed, dt);
+    return;
+  }
+  if (d.wait > 0) {
+    d.wait -= dt;
+    return;
+  }
+  if (!d.wander) {
+    const a = rand(w, 0, Math.PI * 2);
+    const r = rand(w, 0, roam);
+    const x = nest.x + Math.cos(a) * r;
+    const y = nest.y + Math.sin(a) * r;
+    if (!lineClear(w.dinoWalk, w.T, d.x, d.y, x, y, 0)) {
+      d.wait = 0.5;
+      return;
+    }
+    d.wander = { x, y };
+  }
+  if (stepToward(d, d.wander.x, d.wander.y, DINOS[d.kind].wanderSpeed * dt)) {
+    d.wander = null;
+    const [lo, hi] = DINOS[d.kind].wanderPauseSeconds;
+    d.wait = rand(w, lo, hi);
+  }
 }
 
 function nearestVisitor(w: World, p: Point, radius: number): Visitor | null {
@@ -767,6 +867,7 @@ function updateTriceratops(w: World, d: Dino, dt: number): void {
       d.facing = Math.atan2(dy, dx);
       d.stampede = DINO_AI.triStampedeSeconds;
       d.wander = null;
+      w.events.push({ type: 'stampede', dinoId: d.id, x: d.x, y: d.y, byTroop: w.units.some((u) => u === threat) });
       return;
     }
   }
@@ -833,7 +934,8 @@ function endStampede(w: World, d: Dino): void {
   d.wait = 0.3;
   const home = w.exhibitById(d.home);
   const inside = !!home && inFootprint(home.footprint, Math.floor(d.x / w.T), Math.floor(d.y / w.T));
-  if (inside) d.state = 'penned';
+  if (inside && w.hunt && d.state === 'loose') cameHome(w, d);
+  else if (inside) d.state = 'penned';
   else goLoose(w, d);
 }
 

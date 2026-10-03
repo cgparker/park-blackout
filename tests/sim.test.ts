@@ -800,7 +800,7 @@ describe('planning numbers and the blackout log', () => {
     run(w, 40, () => w.evacuating);
     const escape = w.log.find((e) => e.type === 'escape');
     expect(escape).toMatchObject({ type: 'escape', kind: 'raptor', inPark: 1, evacuation: true });
-    expect(escape!.t).toBeCloseTo(w.blackoutTime, 1);
+    expect(escape!.t).toBeCloseTo(w.logTime, 1);
     // One line per pen, not per raptor.
     run(w, 2);
     expect(w.log.filter((e) => e.type === 'escape')).toHaveLength(1);

@@ -34,13 +34,13 @@ export interface QueueItem {
 }
 
 export function canTrainNow(w: World): boolean {
-  return w.phase === 'build' || w.phase === 'blackout' || w.phase === 'restored';
+  return w.phase === 'build' || w.phase === 'blackout' || w.phase === 'restored' || w.phase === 'hunt';
 }
 
-/** Pays up front and adds a unit to the HQ queue. */
+/** Pays up front and adds a unit to the HQ queue. Each level says which troops HQ can train. */
 export function enqueueUnit(w: World, kind: UnitKind): boolean {
   const cost = UNITS[kind].cost;
-  if (!canTrainNow(w) || w.queue.length >= SQUAD.queueMax || w.money < cost) return false;
+  if (!canTrainNow(w) || !w.trainable.includes(kind) || w.queue.length >= SQUAD.queueMax || w.money < cost) return false;
   w.money -= cost;
   w.spending.troops += cost;
   w.queue.push({ id: w.newId(), kind, left: UNITS[kind].trainSeconds });
@@ -131,9 +131,9 @@ function spawnPoint(w: World): Point {
   return { x: best.x + (w.rng() - 0.5) * 8, y: best.y + (w.rng() - 0.5) * 8 };
 }
 
-/** Darts only fly during the blackout and after. Animals still behind their own fence are out of reach. */
+/** Darts only fly once animals are out: in the blackout and after, and in levels 1 and 2. Animals behind their own fence are out of reach. */
 export function isTargetable(w: World, d: Dino): boolean {
-  if (w.phase !== 'blackout' && w.phase !== 'restored') return false;
+  if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'hunt') return false;
   return d.state === 'loose' || (COMBAT.dartPennedAnimals && d.state === 'penned');
 }
 

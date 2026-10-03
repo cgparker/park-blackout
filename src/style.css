@@ -194,6 +194,20 @@ body {
   color: var(--bad);
 }
 
+/* Levels 1 and 2: the revenue slot tracks spending, and turns red past the star's cap. */
+.stat.revenue.over .meter i {
+  background: var(--bad);
+}
+
+.stat.revenue.over .val {
+  color: var(--bad);
+}
+
+/* A slot a level has no use for keeps its place in the grid. */
+.stat.off {
+  visibility: hidden;
+}
+
 .clock {
   display: flex;
   flex-direction: column;
@@ -833,6 +847,56 @@ body {
   color: var(--accent);
 }
 
+/* Level picker on the briefing. */
+.levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.level-btn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 7px;
+  align-items: baseline;
+  padding: 6px 9px;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  text-align: left;
+}
+
+.level-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: rgba(63, 224, 255, 0.16);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.level-num {
+  grid-row: span 2;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.level-name {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.level-teaches {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .brief-title {
   margin: 0;
   font-size: 27px;
@@ -1077,12 +1141,17 @@ body {
   flex: none;
   display: flex;
   justify-content: center;
+  gap: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
 
-.end-foot .retry {
+.end-foot .retry,
+.end-foot .next-level {
   flex: none;
+  min-width: 170px;
+  min-height: 50px;
+  font-size: 17px;
 }
 
 .next-time {
@@ -1278,6 +1347,9 @@ body {
   .hq-btn .label {
     display: none;
   }
+  .bottombar.no-build .hq-btn .label {
+    display: flex;
+  }
   .build-btn .meta .left {
     display: none;
   }
@@ -1330,6 +1402,25 @@ body {
   }
   .brief-title {
     font-size: 22px;
+  }
+  /* The level picker names the game well enough; the room goes to the Start button. */
+  .brief-main > .eyebrow,
+  .level-teaches {
+    display: none;
+  }
+  .level-btn {
+    grid-template-rows: auto;
+    align-items: center;
+    min-height: 40px;
+    padding: 4px 8px;
+    column-gap: 6px;
+  }
+  .level-num {
+    grid-row: auto;
+    font-size: 18px;
+  }
+  .level-name {
+    font-size: 13px;
   }
   .brief-intro {
     font-size: 14px;

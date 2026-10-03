@@ -6,6 +6,7 @@ import { nextTime, timelineLines } from '../src/ui/timeline';
 /** A finished game with nothing notable in it. Each test overrides what it needs. */
 function result(over: Partial<Result> = {}): Result {
   return {
+    level: 3,
     won: true,
     reason: 'secured',
     stars: 3,
@@ -27,6 +28,7 @@ function result(over: Partial<Result> = {}): Result {
     visitorsAtBlackout: 0,
     evacuatedBy: null,
     visitorsSafe: 0,
+    hunt: null,
     log: [],
     ...over,
   };
@@ -154,5 +156,78 @@ describe('next time', () => {
 
   it('a clean game needs no advice', () => {
     expect(nextTime(result())).toBeNull();
+  });
+});
+
+describe('levels 1 and 2: timeline and next time', () => {
+  const DASH = new RegExp('[' + String.fromCharCode(0x2013, 0x2014) + ']|\\s--\\s');
+  const back = (t: number, left: number, how: 'darted' | 'walked' = 'darted', kind: 'triceratops' | 'raptor' = 'triceratops'): LogEntry => ({ t, type: 'back', kind, how, left });
+  const spent = (troops: number) => ({ exhibits: 0, paths: 0, reinforcement: 0, troops, towers: 0, total: troops });
+  const hunt = (level: 1 | 2, over: Partial<Result> & { timeLeft?: number }): Result => {
+    const { timeLeft = 90, ...rest } = over;
+    return result({ level, revenue: 0, revenueTarget: 0, hunt: { kind: level === 1 ? 'triceratops' : 'raptor', loose: 6, returned: 6, timeLeft }, ...rest });
+  };
+
+  it('tells a roundup: what was loose, each one back, and the end', () => {
+    const log: LogEntry[] = [
+      { t: 0, type: 'start', loose: { triceratops: 6 }, nest: false },
+      back(21.5, 5),
+      back(22.8, 4),
+      back(40, 3, 'walked'),
+      back(55, 2),
+      back(70, 1),
+      back(81, 0),
+      { t: 81, type: 'end', reason: 'secured', loose: {} },
+    ];
+    expect(timelineLines(log).map((l) => `${l.time} ${l.text}`)).toEqual([
+      '0:00 6 Triceratops are loose in the park.',
+      '0:21 2 Triceratops darted. 4 to go.',
+      '0:40 A Triceratops walked back into its pasture. 3 to go.',
+      '0:55 Triceratops darted. 2 to go.',
+      '1:10 Triceratops darted. 1 to go.',
+      '1:21 Triceratops darted.',
+      '1:21 Every Triceratops is back.',
+    ]);
+  });
+
+  it('tells a nest fight, and how a level ends without a win', () => {
+    const start: LogEntry = { t: 0, type: 'start', loose: { raptor: 6 }, nest: true };
+    const lines = timelineLines([
+      start,
+      { t: 30, type: 'lost', kind: 'tranq', by: 'raptor', alone: true },
+      back(33, 5, 'darted', 'raptor'),
+      { t: 60, type: 'end', reason: 'secured', loose: {} },
+    ]);
+    expect(lines.map((l) => l.text)).toEqual(['6 raptors are guarding a nest.', 'Tranq Squad lost to raptors.', 'Raptor darted. 5 to go.', 'The nest is clear.']);
+    expect(timelineLines([start, { t: 240, type: 'end', reason: 'timeUp', loose: { raptor: 2 } }])[1].text).toBe('The park opens. Still loose: 2 raptors.');
+    expect(timelineLines([start, { t: 90, type: 'end', reason: 'noTroops', loose: { raptor: 3 } }])[1].text).toBe('No troops left, and no money for more. Still loose: 3 raptors.');
+  });
+
+  it('level 1 advice: more squads, cornering, or spending less', () => {
+    expect(nextTime(hunt(1, { won: false, reason: 'timeUp', troopsTrained: 1, timeLeft: 0 }))).toMatch(/^One squad is too slow\./);
+    expect(nextTime(hunt(1, { won: false, reason: 'timeUp', troopsTrained: 3, timeLeft: 0 }))).toMatch(/^Triceratops run straight away from the nearest troop\./);
+    expect(nextTime(hunt(1, { spending: spent(6750) }))).toBe('Two squads are enough if each one goes after a different Triceratops.');
+    expect(nextTime(hunt(1, { spending: spent(4500), timeLeft: 40 }))).toBe('Train your squads at the start, and send each one after a different Triceratops.');
+    expect(nextTime(hunt(1, { spending: spent(4500), timeLeft: 70 }))).toBeNull();
+    expect(nextTime(hunt(1, { won: false, reason: 'abandoned' }))).toBeNull();
+  });
+
+  it('level 2 advice: go in together, bring more, or lead with Heavy Teams', () => {
+    const lost = (alone: boolean): LogEntry => ({ t: 30, type: 'lost', kind: 'tranq', by: 'raptor', alone });
+    expect(nextTime(hunt(2, { won: false, reason: 'noTroops', log: [lost(true), lost(true)] }))).toMatch(/^Raptors attack together, so troops that go in a few at a time get bitten down\./);
+    expect(nextTime(hunt(2, { won: false, reason: 'timeUp', log: [lost(false), lost(false), lost(true)] }))).toMatch(/^Bring more troops\./);
+    expect(nextTime(hunt(2, { won: false, reason: 'timeUp', log: [] }))).toMatch(/^Train your team right away/);
+    expect(nextTime(hunt(2, { troopsLost: 2, log: [lost(false)] }))).toBe('Heavy Teams take 25 raptor bites. Two of them together often clear the nest without a loss.');
+    expect(nextTime(hunt(2, { spending: spent(16500) }))).toBe('Two Heavy Teams together can clear the nest for $12,000.');
+    expect(nextTime(hunt(2, { spending: spent(12000) }))).toBeNull();
+  });
+
+  it('uses no dashes as punctuation', () => {
+    const texts = [
+      ...timelineLines([{ t: 0, type: 'start', loose: { raptor: 6 }, nest: true }, back(5, 5, 'walked', 'raptor'), { t: 9, type: 'end', reason: 'abandoned', loose: { raptor: 5 } }]).map((l) => l.text),
+      nextTime(hunt(1, { won: false, reason: 'timeUp', troopsTrained: 1 })) ?? '',
+      nextTime(hunt(2, { won: false, reason: 'noTroops', log: [{ t: 1, type: 'lost', kind: 'heavy', by: 'raptor', alone: true }] })) ?? '',
+    ];
+    for (const t of texts) expect(t).not.toMatch(DASH);
   });
 });

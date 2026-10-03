@@ -23,7 +23,10 @@ export function damageUnit(w: World, u: Unit, amount: number, by: AnimalKind | n
   w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y, by });
 }
 
-/** A dart lands. At zero sedation the dinosaur is secured: it fades out and stops counting as loose. */
+/**
+ * A dart lands. At zero sedation the dinosaur is secured: it fades out and stops counting as loose.
+ * In levels 1 and 2 it then wakes up back in its pen (see updateDinos).
+ */
 export function sedate(w: World, d: Dino, amount: number, unitId: number): void {
   if (d.state === 'secured' || d.state === 'contained') return;
   d.sedation -= amount;
@@ -41,5 +44,6 @@ export function sedate(w: World, d: Dino, amount: number, unitId: number): void 
   d.windup = 0;
   d.charge = 0;
   w.dinosSecured++;
+  w.noteBack(d, 'darted');
   w.events.push({ type: 'secured', dinoId: d.id, kind: d.kind, x: d.x, y: d.y });
 }

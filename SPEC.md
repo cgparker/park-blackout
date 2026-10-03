@@ -15,7 +15,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 2. Does the cascade feel dramatic and fair ("I should have spaced those pens out") rather than random?
 3. Do I want to replay it with a different build order?
 
-**Out of scope:** real art, sound, saving, menus beyond the pause menu and Retry, multiple levels, lethal weapons, fence repair, and Mantah troops.
+**Out of scope:** real art, sound, saving, menus beyond the briefing, the pause menu, and Retry, levels beyond the three in section 3, lethal weapons, fence repair, and Mantah troops.
 
 ## 2. Platform and tech
 
@@ -28,12 +28,50 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 - Pathfinding: grid A* (a small custom one or EasyStar.js).
 - Performance target: 60 fps on a recent iPhone with 80 visitors, 20 troops, and 20 dinosaurs.
 
-## 3. Game flow
+## 3. Game flow and levels
+
+There are three levels. Each one teaches one part of the game, and all three are open from the briefing.
+
+| Level | Name | Teaches | The park |
+|---|---|---|---|
+| 1 | Roundup | Training troops and moving them | Already built, not open yet |
+| 2 | Raptor Nest | Fighting | Already built, not open yet |
+| 3 | Blackout | Building | You build it |
+
+- The briefing has a level picker. It opens on level 1. Picking a level sets up that level's park behind the briefing. `?level=2` in the address (or `#level-2` in the artifact) opens on that level.
+- After a win in level 1 or 2, the end screen offers **Next level** beside **Retry**.
+
+### Level 3: Blackout
 
 1. **Briefing screen:** "Mantah Corp will cut power to the electric fences in 5:00 to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out." Tap to start.
 2. **Act 1, Build (5:00):** Place exhibits and towers, earn money from visitors, train troops, and reinforce fences. A large countdown is always visible. A warning banner appears at 1:00 left.
 3. **Act 2, Blackout:** Fences lose power and the gates close. Nobody tells the visitors: they keep touring and paying until the first animal gets out, and then the park evacuates. Dinosaurs break out in a cascade. Power returns 5:00 later.
 4. **End screen:** Stars and a breakdown of what happened.
+
+### Levels 1 and 2: the park is already built
+
+- The park has a few exhibits and their paths. It hasn't opened, so there are no visitors. The power is on, so fences hold, and animals in their pens stay there.
+- Some fences are down: one whole side, corners left standing. Their animals start loose.
+- A countdown runs until the park opens. Anything still loose then loses the level.
+- Nothing can be built or reinforced. HQ trains only the level's troops, from the level's starting money. There's no income.
+- A darted animal fades out as in level 3, then wakes up back in its own pen: the crew carries it home. An animal that walks back into its own pen through the gap stays there too. Both count as back.
+- **Win:** every animal is back before the park opens.
+- **Lose:** the park opens with an animal loose, or there are no troops left, none in training, and not enough money to train one. Ending the game from the pause menu is a loss too.
+- **Stars:** one per goal, and the first star is needed for the other two, as in level 3. Win; spend no more than the level's cap on troops; and the level's third goal.
+
+| | Level 1: Roundup | Level 2: Raptor Nest |
+|---|---|---|
+| The park | 4 pastures. 3 are open. | 2 pastures and 2 raptor pens. Both pens are open. |
+| Loose at the start | 6 Triceratops, scattered near their pastures | 6 raptors, guarding a nest at the east end |
+| Clock | 2:30 | 4:00 |
+| Starting money | $9,000 | $21,000 |
+| HQ trains | Tranq Squads | Tranq Squads and Heavy Teams |
+| ★ Spend no more than | $4,500 | $13,500 |
+| ★ Third goal | Finish with 1:00 or more left | Lose no troops |
+
+**Level 1.** Triceratops run from troops that come within 4 tiles, and a Tranq Squad's range is 4 tiles, so they run as soon as a squad can dart them (section 8). A Triceratops that runs into rocks, water, a fence, or the edge of the map stops. Cornering them is the skill.
+
+**Level 2: the nest.** Raptors at a nest wander within 2 tiles of it. They go after the nearest troop within 8 tiles of themselves, as long as that troop is within 10 tiles of the nest. Past that they give up and run back. So they never come for HQ, and a group that pulls back can regroup. Because they wander close together, a troop that comes near brings most of them at once.
 
 ## 4. Map
 
@@ -143,17 +181,19 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 ### HUD
 
 - **Top bar:** money, revenue vs. target, the countdown (large, centered), casualties (x/8), and the pause button. In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
+- **Top bar in levels 1 and 2:** money, spent vs. the star's cap (red past it), the countdown until the park opens, loose and back counts, and in level 2 troops lost. The bottom bar has no build buttons.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 - **Pause menu:** stops the clock and shows how each star goal is going. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
-- **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors.
-- **When the power goes out** the camera moves to show every exhibit.
-- **Edge arrows:** in Act 2, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
+- **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors. In levels 1 and 2 it says how long the team takes to sedate one of the loose animals.
+- **When the power goes out** the camera moves to show every exhibit. At the start of levels 1 and 2 it shows HQ and every loose animal.
+- **Edge arrows:** in Act 2, and all through levels 1 and 2, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
 
 ### Tips
 
 Short tips teach the two defense lessons from section 13: guard each raptor pen, and keep troops together against the T. rex. One more explains the evacuation.
 
 - A tip appears when it's useful, once per session: when you build your first raptor pen, when you build the T. rex paddock, at the 1:00 warning (first how the evacuation works, if the park has an animal that breaks out on its own, then whether a raptor pen has no troops nearby), when raptors kill visitors beside an unguarded pen, and when the T. rex kills a troop that was on its own.
+- Level 1 has its own: at the start (how to train a squad), when the first squad is ready (how to send it after a Triceratops), and the first time a troop makes a Triceratops run (come at it from the open side). Level 2: at the start (raptors guard the nest; go in as one group, and pull back if it goes badly), and when raptors kill a troop (a group darts them down first; Heavy Teams last 25 bites).
 - The game pauses while a tip is open, and the camera moves to what the tip is about. Orders still work while paused.
 - **Got it** closes the tip. **Hide tips** turns tips off. The briefing has a **Show tips** checkbox, and the choice is remembered on that device.
 
@@ -208,6 +248,8 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 ## 9. Winning and losing
 
+This section is level 3. Levels 1 and 2 are in section 3.
+
 - **Lose:** 8 casualties at any point ("The park has been shut down"), or any dinosaur still loose 3:00 after power returns ("The park is overrun"). Ending the game from the pause menu also counts as a loss ("Game ended early").
 - **Win:** Power has returned and no dinosaurs are loose.
 
@@ -231,7 +273,9 @@ The briefing lists the three goals, the pause menu shows how each one is going, 
 - Visitors in the park at the blackout, money earned in the dark, the first animal out, and how many visitors got out.
 - Casualties by cause (raptor, T. rex, stampede).
 - Troops and towers lost, and dinosaurs secured vs. contained.
-- Retry button.
+- Retry button, and after a win in level 1 or 2, **Next level**.
+
+In levels 1 and 2 the end screen has the same stars, goals, Next time line, and timeline (what was loose, each animal back with how many were left, troops lost, and the end). Its numbers are troop spending against the cap, animals darted, any that walked back on their own, any still loose, troops trained and lost, and the time left.
 
 ## 10. Placeholder visuals
 
@@ -243,6 +287,7 @@ The briefing lists the three goals, the pause menu shows how each one is going, 
 - Triceratops: green oval. Raptor: small orange triangle pointing where it's moving. T. rex: large red circle with a notch showing its facing.
 - A sedation bar appears over a dinosaur once it's hit, and an HP bar over a unit once it's damaged.
 - The T. rex's locked-on target gets an orange ring. Before a charge, an orange arc fills around the T. rex and "Charge!" floats up; while charging it has an orange ring and streak.
+- Level 2's nest: a brown disc ringed with twigs, with three pale eggs.
 
 ## 11. Debug tools
 
@@ -253,7 +298,7 @@ Enabled with `?debug=1` in the URL:
 - **+$10,000** button.
 - Show fence HP numbers, the tile grid, and FPS.
 
-URL override: `?blackout=120` sets the build phase to 2:00 for quick playtests. The revenue target scales with it.
+URL overrides: `?blackout=120` sets the build phase to 2:00 for quick playtests, and the revenue target scales with it. `?level=2` opens the briefing on that level.
 
 ## 12. Milestones
 
@@ -266,7 +311,7 @@ Each milestone ends with something playable on my phone.
 5. **Combat and scoring:** darts, dinosaur attacks, casualties, securing, win and lose, stars, end screen.
 6. **Tuning tools:** debug options, URL overrides, deploy to GitHub Pages.
 
-After the six milestones, a second round made the blackout matter more: visitors who don't notice the blackout, a T. rex that locks on and charges, Tranq Towers, and a 5:00 build phase. DECISIONS.md lists the calls made along the way.
+After the six milestones, a second round made the blackout matter more: visitors who don't notice the blackout, a T. rex that locks on and charges, Tranq Towers, and a 5:00 build phase. Later rounds added the evacuation, the pause menu and end-screen story, one star per goal, and levels 1 and 2 in front of the blackout. DECISIONS.md lists the calls made along the way.
 
 ## 13. Balance (measured)
 
@@ -330,7 +375,33 @@ Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles a
 | T. rex vs 4 Heavy Teams | Troops win, no losses |
 | T. rex vs 2 Towers + 2 Heavy Teams | Troops win, lose 1 |
 
-`npm run stress` plays 40 random games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses.
+Levels 1 and 2 (16 seeds each). The scripted players give orders twice a second, which is much faster than anyone taps, so these are best cases.
+
+Level 1, 2:30 on the clock and $9,000. Stars at $4,500 or less and 1:00 or more left. **Split:** each squad goes after the nearest Triceratops no other squad is on. **Massed:** every squad goes after the same one.
+
+| Squads | Cost | Split: time left | Massed: time left | Stars |
+|---|---|---|---|---|
+| 1 | $2,250 | 0:35 to 1:02 | 0:39 to 1:00 | Won 16 of 16, mostly ★★ |
+| 2 | $4,500 | 1:18 to 1:30 | 1:03 to 1:25 | ★★★ in all 16, both ways |
+| 3 | $6,750 | 1:34 to 1:39 | 1:21 to 1:31 | ★★ (over the cap) |
+| 4 | $9,000 | 1:35 to 1:41 | 1:25 to 1:34 | ★★ (over the cap) |
+
+A third squad saves about 10 seconds and a fourth almost nothing, because HQ trains one at a time and the later ones arrive late. A Heavy Team would catch a Triceratops in about 11 s without making it run once, since it darts from outside the 4 tiles that set one off. That's why level 1 has none.
+
+Level 2, 4:00 on the clock and $21,000. Stars at $13,500 or less and no troops lost. **Massed:** every troop waits outside the nest's reach until all are trained, then they go in together. **Trickle:** each troop goes in as soon as it's ready.
+
+| Troops | Cost | Massed | Trickle |
+|---|---|---|---|
+| 4 Tranq Squads | $9,000 | Won 4 of 16, lost 3.6 | Lost all 16 |
+| 5 Tranq Squads | $11,250 | Won 16 of 16, lost 2.0 | Lost all 16 |
+| 6 Tranq Squads | $13,500 | Won 16 of 16, lost 0.9 | Lost all 16 |
+| 2 Heavy Teams | $12,000 | Won 16 of 16, lost 0.4 (no losses in 9) | Lost all 16 |
+| 3 Heavy Teams | $18,000 | Won 16 of 16, no losses | Won 16 of 16, lost 2.0 |
+| 1 Heavy + 3 Tranq | $12,750 | Won 16 of 16, lost 1.4 | Lost all 16 |
+| 1 Heavy + 4 Tranq | $15,000 | Won 16 of 16, lost 0.6 | Won 2 of 16 |
+| 2 Heavy + 2 Tranq | $16,500 | Won 16 of 16, lost 0.6 | Won 15 of 16, lost 1.9 |
+
+`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each new level: level 1 is won once in 20 (random orders don't corner anything in time), and level 2 is won 14 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together.
 
 What to watch in playtests:
 
@@ -344,12 +415,14 @@ What to watch in playtests:
 - Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.
 - One tower can just beat a raptor pack when it sits beside their pen on the far side from where they break out: they run around the pen under fire, and the tower finished with 30 of 200 HP. On open grass one tower loses. Watch for players parking one tower per pen.
 - Building extra cheap pastures can lower revenue, because visitors spend their short visits on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
+- Level 1's clock is the lever for how hard it feels. At 2:30 one squad wins with time to spare in the scripted runs, but a person tapping orders is much slower, so two or three squads should be the norm. If it's too easy, try 2:00; the time star then needs 1:00 left from a 2:00 clock.
+- Level 2 is easy to win once troops go in together, and the stars carry the challenge. If it feels too easy, lower the starting money: at $15,000, five Tranq Squads or two Heavy Teams still fit, with less room to recover from a bad first fight.
 
 ## 14. Later, not now
 
 - Mantah mercenaries raiding a genetics lab as a second objective.
-- Nest missions: escaped dinosaurs build a nest that spawns more.
+- A nest that hatches more raptors the longer it's left (level 2's nest holds six that never grow).
 - Freestanding walls, fence repair, more units (jeep, helicopter), and a lethal option with a cost.
-- More levels with different maps, exhibit limits, and timers.
+- More levels with different maps, exhibit limits, and timers. Saving which levels are done, and their stars.
 - Real art (for example, PixelLab sprites) and sound.
 - Rename Mantah Corp before sharing publicly. It's the villain company from Camp Cretaceous.

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS, DINO_AI, DINOS, MAP, UNITS, VISITORS, type AnimalKind } from '../config';
+import { COLORS, DINO_AI, DINOS, MAP, NEST, UNITS, VISITORS, type AnimalKind } from '../config';
 import type { Dino } from '../core/dinos';
 import type { Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
@@ -99,6 +99,7 @@ export class WorldView {
       .setVisible(false);
     this.marks = this.scene.add.graphics().setDepth(3);
     this.drawHQ();
+    this.drawNest();
     this.visitorGfx = this.scene.add.graphics().setDepth(5);
     this.overlay = this.scene.add.graphics().setDepth(9);
     this.gridGfx = this.scene.add.graphics().setDepth(1.2).setVisible(false);
@@ -519,6 +520,32 @@ export class WorldView {
     g.fillRect(gx + 2, gy - 4, 7, T + 8);
     g.fillRect(gx + 2, gy - 8, 14, 7);
     g.fillRect(gx + 2, gy + T + 1, 14, 7);
+  }
+
+  /** Level 2: a ring of twigs with eggs in it, where the raptors gather. */
+  private drawNest(): void {
+    const n = this.world.nest;
+    if (!n) return;
+    const r = NEST.drawRadiusTiles * T;
+    const g = this.scene.add.graphics().setDepth(1.1);
+    g.fillStyle(COLORS.nest, 0.95).fillCircle(n.x, n.y, r);
+    g.lineStyle(6, COLORS.nestRim, 1).strokeCircle(n.x, n.y, r - 3);
+    g.lineStyle(3, COLORS.nestRim, 0.7);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + hash(i) * 0.5;
+      const len = r * (0.35 + hash(i + 20) * 0.3);
+      const x = n.x + Math.cos(a) * (r - len * 0.6);
+      const y = n.y + Math.sin(a) * (r - len * 0.6);
+      g.lineBetween(x - Math.sin(a) * len * 0.5, y + Math.cos(a) * len * 0.5, x + Math.sin(a) * len * 0.5, y - Math.cos(a) * len * 0.5);
+    }
+    g.fillStyle(COLORS.egg, 1);
+    for (const [dx, dy] of [
+      [-7, -4],
+      [6, -5],
+      [0, 6],
+    ]) {
+      g.fillEllipse(n.x + dx, n.y + dy, 11, 14);
+    }
   }
 
   private drawHQ(): void {
