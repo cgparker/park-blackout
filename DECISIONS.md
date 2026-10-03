@@ -10,6 +10,11 @@ Chosen by Chris: one star for getting every dinosaur back without losing 8 guest
 46. **A loss earns no stars,** even for goals it met. A shut-down or overrun park showing stars would read as a reward. The end screen still marks those goals met and says why their stars stay dark. This part wasn't specified.
 47. **The goals are spelled out in three places:** the briefing (the full rules), the pause menu (how each one is going), and the end screen (met or missed, star lit or not). The top bar's revenue caption reads "★ at $20,000".
 
+## Not chosen: the T. rex breaking pens open
+
+48. **The audit's fix for the fixed breakout schedule, tested and dropped.** Measured with 16 seeds per defense and the scripted defenders. With raptors chewing slowly (0.6 per hit, about 1:15 to get out through chain-link) and the T. rex chasing only guests within 3 tiles, the dense T. rex park got much easier. 5 massed troops won all 16 games with three stars (they lose all 16 today), and every troop defense without concrete on every pen did the same. Spacing stopped mattering too: no deaths at 0, 3, or 7 tiles apart. The evacuation starts when the T. rex gets out at about 0:14, the raptors don't get out until the park is empty, and troops darting the T. rex keep it busy, so it rarely reaches a pen. With only the T. rex change and today's raptors, the raptors still got out on their own at about 0:21, before the T. rex reached them, so spacing still changed nothing, and 7 massed troops lost 7 of 16 games to overrun (none today).
+49. **Spacing already matters some under today's rules.** With $60,000 to start, so every layout buys the same 7 or 8 troops: pens 3 tiles apart lost no guests in 32 games, packed pens lost at least one in 16 of 32, and pens 7 tiles apart lost the most and missed the revenue star. Why 3 tiles is safest hasn't been worked out.
+
 ## Audit follow-up: pause menu, planning numbers, timeline, edge arrows
 
 Chosen by Chris: the four small items from the design audit, before the next playtest.
