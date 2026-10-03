@@ -32,7 +32,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 1. **Briefing screen:** "Mantah Corp will cut power to the electric fences in 5:00 to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out." Tap to start.
 2. **Act 1, Build (5:00):** Place exhibits and towers, earn money from visitors, train troops, and reinforce fences. A large countdown is always visible. A warning banner appears at 1:00 left.
-3. **Act 2, Blackout:** Fences lose power and the gates close. Visitors don't notice until danger gets close. Dinosaurs break out in a cascade. Power returns 5:00 later.
+3. **Act 2, Blackout:** Fences lose power and the gates close. Nobody tells the visitors: they keep touring and paying until the first animal gets out, and then the park evacuates. Dinosaurs break out in a cascade. Power returns 5:00 later.
 4. **End screen:** Stars and a breakdown of what happened.
 
 ## 4. Map
@@ -49,8 +49,8 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 - Starting money: $25,000. Enough to open with a T. rex, or two raptor pens and a pasture, because the build phase is short.
 - Income comes only from visitors paying at exhibits. Park entry is free.
-- Revenue target for 2 stars: $4,000 per minute of build phase ($20,000 at 5:00). Revenue means total earned in Act 1, not money left in the bank.
-- No income in Act 2. Banked money can still train troops.
+- Revenue target for 2 stars: $4,000 per minute of build phase ($20,000 at 5:00). Revenue means total earned from visitors, including what they pay in the dark before the evacuation, not money left in the bank.
+- Visitors keep paying in Act 2 until the park evacuates (section 8). Banked money can still train troops.
 
 ### Exhibits
 
@@ -79,11 +79,11 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 ### Visitors
 
 - Spawn rate per second: 0.10 + 0.12 x total park appeal. Maximum 80 visitors in the park at once.
-- Each visitor has a 35-second time budget. Walking and viewing both use it up. It's short on purpose: a visitor who spends it walking between far-apart exhibits pays for fewer of them.
+- Each visitor has a 35-second time budget. Walking and viewing both use it up. It's short on purpose: a visitor who spends it walking between far-apart exhibits pays for fewer of them. It stops running while the power is out (section 8).
 - Choosing the next exhibit: highest score among exhibits they haven't visited, where score = appeal / (1 + path distance in tiles / 8), plus a little randomness.
 - At an exhibit: stand at the viewing spot for 4 seconds, then pay its price (show a floating "+$25").
 - When the budget runs out or every exhibit is visited, walk back to the gate and leave.
-- Walk speed 50 px/s, on paths only. Flee speed 100 px/s.
+- Walk speed 50 px/s, on paths only. Evacuation speed 70 px/s. Flee speed 100 px/s.
 
 This is what makes spacing cost money: a visitor walking between exhibits isn't paying anyone.
 
@@ -140,14 +140,14 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 
 ### HUD
 
-- **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/10). In Act 2 the countdown switches to time until power returns, the revenue slot shows how many visitors are still in the park, and it adds loose and secured dinosaur counts.
+- **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/8). In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 
 ### Tips
 
-Short tips teach the two defense lessons from section 13: guard each raptor pen, and keep troops together against the T. rex.
+Short tips teach the two defense lessons from section 13: guard each raptor pen, and keep troops together against the T. rex. One more explains the evacuation.
 
-- A tip appears when it's useful, once per session: when you build your first raptor pen, when you build the T. rex paddock, at the 1:00 warning if a raptor pen has no troops nearby, when raptors kill visitors beside an unguarded pen, and when the T. rex kills a troop that was on its own.
+- A tip appears when it's useful, once per session: when you build your first raptor pen, when you build the T. rex paddock, at the 1:00 warning (first how the evacuation works, if the park has an animal that breaks out on its own, then whether a raptor pen has no troops nearby), when raptors kill visitors beside an unguarded pen, and when the T. rex kills a troop that was on its own.
 - The game pauses while a tip is open, and the camera moves to what the tip is about. Orders still work while paused.
 - **Got it** closes the tip. **Hide tips** turns tips off. The briefing has a **Show tips** checkbox, and the choice is remembered on that device.
 
@@ -157,14 +157,17 @@ Short tips teach the two defense lessons from section 13: guard each raptor pen,
 
 - Banner: "Mantah Corp has cut the power." The screen dims, and fences turn from cyan to gray.
 - Gates close. No new visitors arrive.
-- Visitors don't notice. They keep strolling and viewing (without paying) until danger shows up near them: a fence breaking within 8 tiles, a loose dinosaur within 5 tiles, or someone killed within 6 tiles. Then they run for the gate at flee speed. Anyone who walks out, running or not, is safe.
+- Nobody tells the visitors. They keep touring and paying, and their visit time stands still. They still go home once they have seen every exhibit.
+- **Evacuation:** when the first animal gets out, the park sends everyone to the gate. Banner: "Raptors are out. The park is evacuating." (or "The T. rex is out."). Visitors stop touring, nobody pays after that, and they walk out at 70 px/s.
+- Anyone who sees danger runs for the gate at flee speed, before or after the evacuation: a fence breaking within 8 tiles, a loose dinosaur within 5 tiles, or someone killed within 6 tiles. Anyone who walks out, running or not, is safe.
+- So whatever gets out first meets a full park. With a T. rex in the park, its escape usually starts the evacuation, and the time until the raptors get out is the visitors' head start.
 
 ### Breakouts
 
 Not every dinosaur escapes. Each type follows its own rule, and the cascade comes from the player's layout.
 
 - **T. rex:** After 10 s, attacks the segment of its fence closest to the nearest visitor or other exhibit. Chain-link breaks in 3 hits; concrete in 8.
-- **Raptors:** After 20 s, every raptor in a pen attacks that pen's weakest segment together.
+- **Raptors:** After 18 s, every raptor in a pen attacks that pen's weakest segment together.
 - **Triceratops:** Never attack their own fence. They only get out if something else breaks it, or if they stampede through a damaged segment.
 
 When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
@@ -213,7 +216,7 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 - Stars and result.
 - Revenue by exhibit (visits and dollars).
 - Spending: exhibits, paths, reinforcement, troops, towers.
-- Visitors in the park at the blackout and how many got out.
+- Visitors in the park at the blackout, money earned in the dark, the first animal out, and how many visitors got out.
 - Casualties by cause (raptor, T. rex, stampede).
 - Troops and towers lost, and dinosaurs secured vs. contained.
 - Retry button.
@@ -269,35 +272,37 @@ Build phase (5:00, ★★ target $20,000, 3 seeds each):
 
 The visit length decides how much spacing costs. At 40 s the spread park still earned about $27,000; at 35 s it drops to about $15,000 while dense and medium parks barely change. The starting money went from $15,000 to $25,000 with the shorter build phase: at $15,000 no scripted build could afford the T. rex before 3:30, and none reached $20,000.
 
-Whole blackouts (16 seeds each, `SEEDS=16 npm run balance`). The bank is spent at 3:30 and troops alternate Heavy and Tranq. Two defender styles: **massed** keeps every troop together and sends them all at the nearest loose predator; **split** posts troops at the predator pens' viewing spots, raptor pens first, and each one fights whatever comes near it. About 52 visitors are in the park when the power goes out, and the first fence breaks at about 14 s.
+Whole blackouts (16 seeds each, `SEEDS=16 npm run balance`). The bank is spent at 3:30 and troops alternate Heavy and Tranq. Two defender styles: **massed** keeps every troop together and sends them all at the nearest loose predator; **split** posts troops at the predator pens' viewing spots, raptor pens first, and each one fights whatever comes near it. About 52 visitors are in the park when the power goes out. Nobody leaves until the first animal gets out, and the guests pay the park about $1,400 to $2,200 in the dark.
 
-Dense T. rex park (about $30,500 to spend):
+Dense T. rex park (about $30,500 to spend). The T. rex gets out first, at about 14 s, and that starts the evacuation. The raptors follow at about 21 s, or about 28 s behind concrete.
 
 | Defense | Spent | Result |
 |---|---|---|
 | Nothing | $0 | Overrun 16 of 16 |
-| 4 troops, massed | $16,500 (54%) | Overrun 16 of 16 |
-| 5 troops, massed | $18,750 (61%) | Won 15 of 16 |
+| 5 troops, massed | $18,750 (58%) | Overrun 16 of 16 |
+| 6 troops, massed | $21,000 (65%) | Won 15 of 16 |
+| 7 troops, massed | $23,250 (72%) | Won 16 of 16 |
 | Whole bank, massed (10 troops) | $30,000 | Won 16 of 16 |
 | Whole bank, split (10 troops) | $30,000 | Won 16 of 16 |
-| Concrete, rest split (8 troops) | $28,350 | Won 7, overrun 9 |
-| 2 towers, rest massed (7 troops) | $28,500 | Won 15 of 16, 4 of them ★★★ |
+| Concrete on every pen, rest split (8 troops) | $28,350 | Won 4, overrun 12 |
+| Concrete on the raptor pens only, rest split (10 troops) | $29,850 | Won 16 of 16, all ★★★ |
+| 2 towers, rest massed (7 troops) | $28,500 | Won 16 of 16 |
 
-With any real defense, 1 to 3 visitors die on average, never more than 6.
+Visitor deaths: none in 16 games with concrete on the raptor pens only, and at most 3 (usually none) with any other troop defense. With concrete on every pen, 10 of 16 games lose at least one visitor, up to 6: the T. rex gets out at about 22 s instead of 14, so the raptors meet a fuller park.
 
-Dense three-raptor park (about $24,200 to spend):
+Dense three-raptor park (about $24,200 to spend). With no T. rex, the raptors are the first out, at about 21 s (about 28 s behind concrete), into a full park.
 
 | Defense | Spent | Result |
 |---|---|---|
-| Nothing | $0 | Shut down 14, overrun 2 |
-| 4 troops, massed | $16,500 (68%) | Shut down 13, won 3 |
-| 5 troops, massed | $18,750 (77%) | Shut down 16 of 16 |
-| Whole bank, massed (7 troops) | $23,250 | Shut down 14, won 2 |
-| Whole bank, split (7 troops) | $23,250 | Shut down 9, won 7 |
-| Concrete, rest split (6 troops) | $22,650 | Won 13, shut down 3 |
-| 2 towers, rest massed (5 troops) | $24,000 | Shut down 13, won 3 |
+| Nothing | $0 | Shut down 16 of 16 |
+| 5 troops, massed | $18,750 (73%) | Shut down 14, won 2 |
+| 6 troops, massed | $21,000 (82%) | Shut down 14, won 2 |
+| Whole bank, massed (7 troops) | $23,250 | Shut down 16 of 16 |
+| Whole bank, split (7 troops) | $23,250 | Shut down 14, won 2 |
+| Concrete, rest split (6 troops) | $22,650 | Won 11, shut down 5 |
+| 2 towers, rest massed (5 troops) | $24,000 | Shut down 15, won 1 |
 
-About 5 visitors die with concrete and split troops, 7 to 8 with everything else.
+About 6 visitors die with concrete and split troops, and 8 or more with everything else.
 
 Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles away, 5 seeds each):
 
@@ -313,16 +318,17 @@ Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles a
 | T. rex vs 4 Heavy Teams | Troops win, no losses |
 | T. rex vs 2 Towers + 2 Heavy Teams | Troops win, lose 1 |
 
-`npm run stress` plays 40 random games: 1 win, 18 overruns, 21 shutdowns. Careless play loses.
+`npm run stress` plays 40 random games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses.
 
 What to watch in playtests:
 
-- Each park punishes a different mistake. The T. rex park loses to too few troops, or troops spread thin: the T. rex picks off small groups, so concrete plus split troops gets overrun 9 of 16. The raptor park loses to visitor deaths unless its fences are reinforced and troops guard each pen.
-- In these runs the raptor park has one defense that reliably works (concrete plus split troops). A player can do better than the scripted defender (towers on the paths, troops bought earlier), but if it plays like a puzzle with one answer, the levers are the casualty limit (`SCORING.casualtyLimit`) and the raptor breakout delay.
-- The casualty limit is 8. A defended T. rex park never lost more than 6 visitors, so the limit bites where raptors are many. At 6, even concrete plus split troops survived only about half the raptor park runs. `UNCAPPED=1 npm run balance` prints every game's deaths, to judge another limit.
-- The cheapest defense that holds the T. rex park costs about 61% of what that park leaves, up from under half before troop and tower prices rose 50%. Extra troops, towers, or concrete for ★★★ take most of the rest.
+- Each park punishes a different mistake. The T. rex park loses to too few troops, or troops spread thin: the T. rex picks off small groups, so concrete on every pen plus split troops gets overrun 12 of 16. The raptor park loses to visitor deaths unless its fences are reinforced and troops guard each pen.
+- The first animal out is the alarm. In a park with a T. rex, its escape usually starts the evacuation, so concrete on its fence keeps guests in the park longer, and concrete on the raptor pens alone gives them the longest head start. A park without a T. rex has no early alarm. If raptor-only parks feel like a trap, the levers are the raptor breakout delay, the evacuation speed (`VISITORS.evacuateSpeed`), and the casualty limit.
+- In these runs the raptor park has one defense that mostly works (concrete plus split troops, 11 of 16). A player can do better than the scripted defender (towers on the paths, troops bought earlier), but if it plays like a puzzle with one answer, the levers are the casualty limit (`SCORING.casualtyLimit`) and the raptor breakout delay.
+- The casualty limit is 8. A defended T. rex park never lost more than 6 visitors, so the limit bites where raptors are many. At 6, concrete plus split troops would survive only 8 of 16 raptor park runs. `UNCAPPED=1 npm run balance` prints every game's deaths, to judge another limit.
+- The cheapest defense that holds the T. rex park is 6 or 7 massed troops, 65 to 72% of what that park leaves. Before the evacuation rule it was 5 troops (58%): they won 15 of 16 then and lose all 16 now. In those games 3.6 pasture fence segments broke per game, up from 0.4. With the guests gone early, the T. rex more often finds nobody nearby and heads for the nearest exhibit with animals inside (section 8), so more animals get loose. Extra troops, towers, or concrete for ★★★ take most of the rest.
 - The T. rex is slower than a running visitor (90 vs 100 px/s), so it mostly kills troops, towers, and anyone who walks toward it. Its charges and lock-on make it the fight that costs troops.
-- The jump from 4 to 6 troops is the difference between losing and winning the dense park. The dense park leaves about $30,000, so a careful player can afford plenty. If that feels too safe, raise exhibit prices or the T. rex's sedation, or lower the starting money.
+- The jump from 5 to 7 troops is the difference between losing and winning the dense park. The dense park leaves about $30,000, so a careful player can afford plenty. If that feels too safe, raise exhibit prices or the T. rex's sedation, or lower the starting money.
 - Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.
 - One tower can just beat a raptor pack when it sits beside their pen on the far side from where they break out: they run around the pen under fire, and the tower finished with 30 of 200 HP. On open grass one tower loses. Watch for players parking one tower per pen.
 - Building extra cheap pastures can lower revenue, because visitors spend their short visits on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.

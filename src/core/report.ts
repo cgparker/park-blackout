@@ -1,4 +1,4 @@
-import { BLACKOUT, EXHIBITS, SCORING, type ExhibitKind } from '../config';
+import { BLACKOUT, EXHIBITS, SCORING, type AnimalKind, type ExhibitKind } from '../config';
 import type { CasualtyCause, World } from './world';
 
 export type EndReason = 'secured' | 'shutdown' | 'overrun';
@@ -10,6 +10,8 @@ export interface Result {
   title: string;
   detail: string;
   revenue: number;
+  /** The part of revenue earned while the power was out. */
+  blackoutRevenue: number;
   revenueTarget: number;
   exhibits: { id: number; kind: ExhibitKind; name: string; visits: number; revenue: number }[];
   spending: { exhibits: number; paths: number; reinforcement: number; troops: number; towers: number; total: number };
@@ -22,6 +24,8 @@ export interface Result {
   dinosSecured: number;
   dinosContained: number;
   visitorsAtBlackout: number;
+  /** The first animal out, whose escape started the evacuation. null if nothing got out. */
+  evacuatedBy: AnimalKind | null;
   visitorsSafe: number;
 }
 
@@ -59,6 +63,7 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
     stars: starsFor(won, w.revenue, w.revenueTarget, casualtyTotal),
     ...titles[reason],
     revenue: w.revenue,
+    blackoutRevenue: w.blackoutRevenue,
     revenueTarget: w.revenueTarget,
     exhibits: w.exhibits.map((e) => ({ id: e.id, kind: e.kind, name: EXHIBITS[e.kind].name, visits: e.visits, revenue: e.revenue })),
     spending: { ...s, total: s.exhibits + s.paths + s.reinforcement + s.troops + s.towers },
@@ -71,6 +76,7 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
     dinosSecured: w.dinosSecured,
     dinosContained: w.dinosContained,
     visitorsAtBlackout: w.visitorsAtBlackout,
+    evacuatedBy: w.evacuatedBy,
     visitorsSafe: w.visitorsSafe,
   };
 }

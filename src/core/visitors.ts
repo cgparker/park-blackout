@@ -102,6 +102,17 @@ export function panicNear(w: World, x: number, y: number, radius: number): void 
   }
 }
 
+/** The park tells everyone to leave. Guests walk briskly to the gate; anyone who sees danger still runs. */
+export function evacuate(w: World): void {
+  for (const v of w.visitors) {
+    if (v.done || v.mode === 'fleeing' || v.mode === 'leaving') continue;
+    const standing = v.mode === 'viewing' || (v.tx === v.cx && v.ty === v.cy);
+    v.mode = 'leaving';
+    v.target = 0;
+    if (standing) route(w, v);
+  }
+}
+
 function flee(w: World, v: Visitor): void {
   const standing = v.mode === 'viewing' || (v.tx === v.cx && v.ty === v.cy);
   v.mode = 'fleeing';
@@ -110,7 +121,8 @@ function flee(w: World, v: Visitor): void {
 }
 
 function step(w: World, v: Visitor, dt: number): void {
-  if (v.mode !== 'fleeing') v.budget -= dt;
+  // Visit time stands still while the power is out: nobody has told the guests anything.
+  if (v.mode !== 'fleeing' && w.powerOn) v.budget -= dt;
 
   if (v.mode === 'viewing') {
     v.timer -= dt;
@@ -122,7 +134,8 @@ function step(w: World, v: Visitor, dt: number): void {
     return;
   }
 
-  const speed = v.mode === 'fleeing' ? VISITORS.fleeSpeed : VISITORS.walkSpeed;
+  const speed =
+    v.mode === 'fleeing' ? VISITORS.fleeSpeed : v.mode === 'leaving' && w.evacuating ? VISITORS.evacuateSpeed : VISITORS.walkSpeed;
   const gx = (v.tx + 0.5) * w.T + v.ox;
   const gy = (v.ty + 0.5) * w.T + v.oy;
   const dx = gx - v.x;
@@ -215,10 +228,11 @@ function pay(w: World, v: Visitor): void {
   const ex = w.exhibitById(v.target);
   if (!ex) return;
   v.visited.push(ex.id);
-  if (w.phase !== 'build') return;
+  // Guests still pay during the blackout. The park only stops pretending once an animal is loose.
   const price = EXHIBITS[ex.kind].pricePerVisit;
   w.money += price;
   w.revenue += price;
+  if (!w.powerOn) w.blackoutRevenue += price;
   ex.visits++;
   ex.revenue += price;
   w.events.push({ type: 'paid', x: v.x, y: v.y, amount: price });

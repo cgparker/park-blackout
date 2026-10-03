@@ -245,6 +245,7 @@ export class GameScene extends Phaser.Scene {
       contained,
       allClear: w.allClear,
       inPark: w.visitors.reduce((n, v) => (v.done ? n : n + 1), 0),
+      evacuating: w.evacuating,
     });
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
@@ -288,6 +289,8 @@ export class GameScene extends Phaser.Scene {
 
   private handleEvents(events: readonly import('../core/world').GameEvent[]): void {
     const w = this.world;
+    // The evacuation banner names the first animal out, so that escape needs no toast of its own.
+    const evacuation = events.some((e) => e.type === 'evacuation');
     for (const e of events) {
       switch (e.type) {
         case 'warning':
@@ -298,9 +301,17 @@ export class GameScene extends Phaser.Scene {
           if (this.hud.panel === 'exhibit') this.closePanels();
           this.hud.showBanner(`${BLACKOUT.villainName} has cut the power.`, 'danger', 4);
           break;
+        case 'evacuation':
+          this.hud.showBanner(
+            `${e.kind === 'trex' ? 'The T. rex is' : e.kind === 'raptor' ? 'Raptors are' : 'A Triceratops is'} out. The park is evacuating.`,
+            'danger',
+            4,
+          );
+          break;
         case 'escaped': {
           const last = this.escapeToasts.get(e.kind) ?? -Infinity;
-          if (w.time - last > 3) {
+          if (evacuation) this.escapeToasts.set(e.kind, w.time);
+          else if (w.time - last > 3) {
             this.escapeToasts.set(e.kind, w.time);
             const name = e.kind === 'raptor' ? 'Raptors are loose!' : e.kind === 'trex' ? 'The T. rex is loose!' : 'A Triceratops broke out!';
             this.hud.toast(name);

@@ -32,19 +32,28 @@ describe('tips', () => {
     expect(ids(tipsFor(w, w.events))).toEqual(['trex']);
   });
 
-  it('the 1:00 warning flags raptor pens with no troops nearby', () => {
+  it('the 1:00 warning explains the evacuation, then flags raptor pens with no troops nearby', () => {
     const w = new World({ seed: 2, startingMoney: RICH });
     const a = place(w, 'raptor', 9, 11);
     place(w, 'raptor', 30, 9);
     const warning = [{ type: 'warning' as const, secondsLeft: 60 }];
     const both = tipsFor(w, warning);
-    expect(ids(both)).toEqual(['unguarded']);
-    expect(both[0].title).toBe('2 raptor pens are unguarded');
+    expect(ids(both)).toEqual(['evacuation', 'unguarded']);
+    expect(both[1].title).toBe('2 raptor pens are unguarded');
 
     const c = footprintCenter(a.footprint, T);
     spawnUnit(w, 'tranq', { x: c.x + 3 * T, y: c.y });
     const one = tipsFor(w, warning);
-    expect(one[0].title).toBe('A raptor pen is unguarded');
+    expect(one[1].title).toBe('A raptor pen is unguarded');
+  });
+
+  it('a park of pastures gets no evacuation tip: Triceratops never break out on their own', () => {
+    const w = new World({ seed: 6, startingMoney: RICH });
+    place(w, 'pasture', 6, 3);
+    const warning = [{ type: 'warning' as const, secondsLeft: 60 }];
+    expect(tipsFor(w, warning)).toEqual([]);
+    place(w, 'trex', 20, 16);
+    expect(ids(tipsFor(w, warning))).toEqual(['evacuation']);
   });
 
   it('a raptor kill beside an unguarded pen explains itself; a guarded pen stays quiet', () => {
@@ -83,7 +92,7 @@ describe('tips', () => {
       ...tipsFor(w, [{ type: 'casualty', x: 9 * T, y: 13 * T, cause: 'raptor' }]),
       ...tipsFor(w, [{ type: 'unitLost', unitId: 1, kind: 'heavy', x: 30 * T, y: 20 * T, by: 'trex' }]),
     ];
-    expect(new Set(ids(all))).toEqual(new Set(['raptorPen', 'trex', 'unguarded', 'raptorKills', 'trexLoner']));
+    expect(new Set(ids(all))).toEqual(new Set(['raptorPen', 'trex', 'evacuation', 'unguarded', 'raptorKills', 'trexLoner']));
     for (const t of all) expect(`${t.title} ${t.body}`).not.toMatch(/[–—]|\s--\s/);
   });
 });

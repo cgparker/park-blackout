@@ -7,7 +7,7 @@ import { planTower, type PlacementPlan, type TowerPlan } from './placement';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
 import { createUnit, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
-import { updateVisitors, type Visitor } from './visitors';
+import { evacuate, updateVisitors, type Visitor } from './visitors';
 
 export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'ended';
 export type CasualtyCause = 'raptor' | 'trex' | 'stampede';
@@ -19,6 +19,7 @@ export type GameEvent =
   | { type: 'paid'; x: number; y: number; amount: number }
   | { type: 'warning'; secondsLeft: number }
   | { type: 'blackout' }
+  | { type: 'evacuation'; kind: AnimalKind }
   | { type: 'powerRestored'; contained: number }
   | { type: 'trained'; unitId: number; kind: UnitKind }
   | { type: 'towerBuilt'; unitId: number }
@@ -57,8 +58,16 @@ export class World {
   private warned = false;
 
   money: number;
-  /** Earned from visitors (build phase only). */
+  /** Earned from visitors. Guests keep paying in the dark until the park evacuates. */
   revenue = 0;
+  /** The part of revenue earned while the power was out. */
+  blackoutRevenue = 0;
+  /** Set when the first animal gets loose and the park sends every guest to the gate. */
+  evacuating = false;
+  /** Seconds into the blackout when the evacuation started, or -1. */
+  evacuatedAt = -1;
+  /** The animal whose escape started the evacuation. */
+  evacuatedBy: AnimalKind | null = null;
   readonly spending = { exhibits: 0, paths: 0, reinforcement: 0, troops: 0, towers: 0 };
 
   readonly exhibits: Exhibit[] = [];
@@ -302,10 +311,19 @@ export class World {
     this.phase = 'blackout';
     this.phaseTime = 0;
     this.powerOn = false;
-    // Visitors don't notice. They keep strolling until danger shows up near them.
+    // Nobody tells the guests. They keep touring and paying until the first animal gets out.
     this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
     for (const ex of this.exhibits) ex.version++;
     this.events.push({ type: 'blackout' });
+  }
+
+  /** The first animal is loose. The park stops pretending and sends everyone to the gate. */
+  private startEvacuation(kind: AnimalKind): void {
+    this.evacuating = true;
+    this.evacuatedAt = this.phaseTime;
+    this.evacuatedBy = kind;
+    evacuate(this);
+    this.events.push({ type: 'evacuation', kind });
   }
 
   restorePower(): void {
@@ -356,6 +374,10 @@ export class World {
     updateVisitors(this, dt);
     updateUnits(this, dt);
     updateDinos(this, dt);
+    if (!this.evacuating && !this.powerOn) {
+      const first = this.dinos.find((d) => d.state === 'loose');
+      if (first) this.startEvacuation(first.kind);
+    }
     this.cleanup();
     this.checkEnd();
   }

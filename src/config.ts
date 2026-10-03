@@ -153,11 +153,14 @@ export const VISITORS = {
   /** Random bump added to each exhibit's score so crowds don't all pick the same one. */
   choiceNoise: 0.05,
   walkSpeed: 50,
+  /** Guests leaving because the park told them to: a brisk walk, not a run. */
+  evacuateSpeed: 70,
   fleeSpeed: 100,
   radius: 4,
   /** Visitors walk in loose lanes up to this far from the middle of the path. */
   laneJitterPx: 10,
-  // Visitors don't notice the blackout. They only run when danger shows up near them:
+  // Visitors don't notice the blackout: they keep touring and paying, and their visit time stands still.
+  // The park only evacuates them once the first animal gets loose. Some run sooner, when danger shows up near them:
   /** A fence breaks within this many tiles. */
   panicBreachRadiusTiles: 8,
   /** A loose dinosaur comes within this many tiles. */
@@ -282,7 +285,10 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     // 20 per second, dealt as 10 every half second.
     fenceDamage: 10,
     fenceHitIntervalSeconds: 0.5,
-    breakoutDelaySeconds: 20,
+    // The park only evacuates once the first animal is out. In a park with a T. rex, the gap between its escape
+    // and the raptors' is the guests' head start. At 20 s the park was nearly empty by then, even with every fence
+    // reinforced; at 18 s reinforcing the T. rex fence costs lives. See DECISIONS.md, Evacuation.
+    breakoutDelaySeconds: 18,
     killPauseSeconds: 1,
   },
   trex: {

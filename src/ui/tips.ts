@@ -8,9 +8,10 @@ import type { GameEvent, World } from '../core/world';
  * Tips that teach the two defense lessons the balance runs found:
  * raptors kill visitors unless each pen is guarded (and its fence reinforced),
  * and the T. rex picks off troops that are spread thin.
+ * One more explains the evacuation rule: guests stay until the first animal gets out.
  * No Phaser and no DOM here, so the rules for when a tip fires can be tested.
  */
-export type TipId = 'raptorPen' | 'trex' | 'unguarded' | 'raptorKills' | 'trexLoner';
+export type TipId = 'raptorPen' | 'trex' | 'evacuation' | 'unguarded' | 'raptorKills' | 'trexLoner';
 
 export interface Tip {
   id: TipId;
@@ -34,6 +35,7 @@ export function tipsFor(w: World, events: readonly GameEvent[]): Tip[] {
         break;
       }
       case 'warning': {
+        if (w.exhibits.some((ex) => ex.kind !== 'pasture')) out.push(evacuationTip());
         const open = w.exhibits.filter((ex) => ex.kind === 'raptor' && !guarded(w, ex));
         if (open.length) out.push(unguardedTip(open));
         break;
@@ -91,6 +93,15 @@ function trexTip(ex: Exhibit): Tip {
     title: 'The T. rex picks off loners',
     body: 'It locks onto one troop, marked with an orange ring, and charges it. Keep your troops in one group so they all dart it at once.',
     focus: footprintCenter(ex.footprint, T),
+  };
+}
+
+function evacuationTip(): Tip {
+  return {
+    id: 'evacuation',
+    title: 'Nobody will tell the guests',
+    body: 'When the power goes out, guests keep touring and paying. The park only sends them home once the first animal gets out, so whatever escapes first meets a full park.',
+    focus: null,
   };
 }
 

@@ -65,19 +65,21 @@ interface Defense {
   /** Troops to buy. Infinity means as many as the bank allows. */
   troops: number;
   towers: number;
-  /** Reinforce every predator pen first. */
-  concrete: boolean;
+  /** Which fences to reinforce first: none, every predator pen, or only the raptor pens. */
+  concrete: 'none' | 'predators' | 'raptors';
   style: Style;
 }
 
 const DEFENSES: Defense[] = [
-  { name: 'Nothing', troops: 0, towers: 0, concrete: false, style: 'massed' },
-  { name: '4 troops, massed', troops: 4, towers: 0, concrete: false, style: 'massed' },
-  { name: '5 troops, massed', troops: 5, towers: 0, concrete: false, style: 'massed' },
-  { name: 'Whole bank, massed', troops: Infinity, towers: 0, concrete: false, style: 'massed' },
-  { name: 'Whole bank, split', troops: Infinity, towers: 0, concrete: false, style: 'split' },
-  { name: 'Concrete, rest split', troops: Infinity, towers: 0, concrete: true, style: 'split' },
-  { name: '2 towers, rest massed', troops: Infinity, towers: 2, concrete: false, style: 'massed' },
+  { name: 'Nothing', troops: 0, towers: 0, concrete: 'none', style: 'massed' },
+  { name: '5 troops, massed', troops: 5, towers: 0, concrete: 'none', style: 'massed' },
+  { name: '6 troops, massed', troops: 6, towers: 0, concrete: 'none', style: 'massed' },
+  { name: '7 troops, massed', troops: 7, towers: 0, concrete: 'none', style: 'massed' },
+  { name: 'Whole bank, massed', troops: Infinity, towers: 0, concrete: 'none', style: 'massed' },
+  { name: 'Whole bank, split', troops: Infinity, towers: 0, concrete: 'none', style: 'split' },
+  { name: 'All concrete, rest split', troops: Infinity, towers: 0, concrete: 'predators', style: 'split' },
+  { name: 'Raptor concrete, rest split', troops: Infinity, towers: 0, concrete: 'raptors', style: 'split' },
+  { name: '2 towers, rest massed', troops: Infinity, towers: 2, concrete: 'none', style: 'massed' },
 ];
 
 /** Plays the build phase: builds the strategy's exhibits, then spends the bank on the chosen defense. */
@@ -101,7 +103,9 @@ function buildPhase(s: Strategy, seed: number, defense: Defense = DEFENSES[0]): 
     }
     if (late && !prepared) {
       prepared = true;
-      if (defense.concrete) for (const ex of w.exhibits) if (ex.kind !== 'pasture') w.reinforce(ex.id);
+      for (const ex of w.exhibits) {
+        if ((defense.concrete === 'predators' && ex.kind !== 'pasture') || (defense.concrete === 'raptors' && ex.kind === 'raptor')) w.reinforce(ex.id);
+      }
       if (defense.towers) buildTowers(w, defense.towers);
     }
     const ordered = w.troopsTrained + w.queue.length;
@@ -259,9 +263,9 @@ describe.skipIf(!process.env.BALANCE)('balance', () => {
           }
           const killed = runs.map((r) => r.result.casualtyTotal);
           rows.push(
-            `  ${defense.name.padEnd(22)} troops ${avg((r) => r.troops).toFixed(1).padStart(4)}  spent ${money(avg((r) => r.spent)).padStart(7)} ` +
+            `  ${defense.name.padEnd(28)} troops ${avg((r) => r.troops).toFixed(1).padStart(4)}  spent ${money(avg((r) => r.spent)).padStart(7)} ` +
               `(${Math.round(avg((r) => r.share) * 100)}% of bank)  killed ${avg((r) => r.result.casualtyTotal).toFixed(1)} [${Math.min(...killed)}-${Math.max(...killed)}]  ` +
-              `troops lost ${avg((r) => r.result.troopsLost).toFixed(1)}  | ${Object.entries(tally)
+              `troops lost ${avg((r) => r.result.troopsLost).toFixed(1)}  earned in the dark ${money(avg((r) => r.result.blackoutRevenue))}  | ${Object.entries(tally)
                 .map(([k, n]) => `${n} ${k}`)
                 .join(', ')}`,
           );

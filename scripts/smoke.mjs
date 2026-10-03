@@ -136,7 +136,9 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('clock counts down', await soon(async () => (await clockSecs()) <= 60 && (await clockSecs()) >= 55), await page.textContent('.clock .val'));
   await page.screenshot({ path: `${out}/2-visitors.png` });
 
-  // The 1:00 warning points out the unguarded raptor pen. Hide tips turns them all off.
+  // The 1:00 warning explains the evacuation, then points out the unguarded raptor pen. Hide tips turns them all off.
+  check('the warning explains the evacuation', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Nobody will tell the guests'));
+  await page.tap('.tip-ok');
   check('the warning flags an unguarded raptor pen', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'A raptor pen is unguarded'));
   await page.tap('.tip-off');
   check('Hide tips closes the tip and turns tips off', !(await page.isVisible('.tip')) && (await world(() => window.__pb.scene.session.tips)) === false);
@@ -237,7 +239,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('Blackout now cuts the power', (await world(() => window.__pb.world.phase)) === 'blackout');
   check('the blackout banner shows', await soon(async () => (await page.textContent('.banner')).includes('cut the power')));
   check('build buttons hide after the blackout', await soon(async () => !(await page.isVisible('.build-group'))));
-  check('the revenue slot counts visitors in the dark', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Visitors in park'));
+  check('guests keep paying in the dark, so the revenue slot stays', (await page.textContent('.stat.revenue .cap')).startsWith('Revenue'));
   // Run until the first raptor is through the concrete, then freeze it for the attack order below.
   const target = await world(() => {
     const w = window.__pb.world;
@@ -247,7 +249,10 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
     d.pause = 999;
     return { id: d.id, x: d.x, y: d.y, after: w.phaseTime };
   });
-  check('raptors break through the concrete after the 20 s delay', target !== null && target.after > 20, JSON.stringify(target));
+  check('raptors break through the concrete after the 18 s delay', target !== null && target.after > 18, JSON.stringify(target));
+  check('the first escape starts the evacuation', (await world(() => window.__pb.world.evacuatedBy)) === 'raptor');
+  check('the evacuation banner shows', await soon(async () => (await page.textContent('.banner')) === 'Raptors are out. The park is evacuating.'));
+  check('the revenue slot counts visitors once the park evacuates', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Visitors in park'));
   await S(page, () => {
     const s = window.__pb.scene;
     s.selected = new Set(window.__pb.world.units.filter((u) => u.kind !== 'tower').map((u) => u.id));
@@ -269,6 +274,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('end screen names the loss', (await page.textContent('.end h1')) === 'The park has been shut down');
   const endText = await page.textContent('.end');
   check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && /Towers\$4,500/.test(endText), endText.slice(0, 80));
+  check('end screen shows money earned in the dark and the first animal out', endText.includes('Earned in the dark') && endText.includes('First animal outRaptors'), endText);
   await page.screenshot({ path: `${out}/6-end.png` });
   await page.tap('.retry');
   await page.waitForTimeout(400);

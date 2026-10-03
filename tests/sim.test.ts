@@ -5,7 +5,7 @@ import { Tile } from '../src/core/grid';
 import { planPlacement, planTower } from '../src/core/placement';
 import { starsFor } from '../src/core/report';
 import { cancelQueued, enqueueUnit, orderAttack, orderMove, spawnUnit } from '../src/core/units';
-import type { Visitor } from '../src/core/visitors';
+import { spawnVisitor, type Visitor } from '../src/core/visitors';
 import { World, type GameEvent } from '../src/core/world';
 
 const STEP = 1 / 60;
@@ -147,7 +147,7 @@ describe('visitors and income', () => {
     expect(v.done).toBe(true);
   });
 
-  it('warns at 1:00, then cuts the power, and visitors stroll on without paying', () => {
+  it('warns at 1:00, then cuts the power, and guests keep touring and paying', () => {
     const w = new World({ seed: 6, buildPhaseSeconds: 90 });
     place(w, 'pasture', 6, 9);
     w.start();
@@ -162,9 +162,12 @@ describe('visitors and income', () => {
     // Nothing is loose and nothing broke, so nobody has noticed.
     expect(w.visitors.some((v) => v.mode === 'fleeing')).toBe(false);
 
+    // Triceratops never break out, so the park never evacuates. Guests leave once they have seen everything.
     const revenue = w.revenue;
-    run(w, VISITORS.timeBudgetSeconds + 60);
-    expect(w.revenue).toBe(revenue);
+    const later = run(w, VISITORS.timeBudgetSeconds + 60);
+    expect(w.blackoutRevenue).toBeGreaterThan(0);
+    expect(w.revenue).toBe(revenue + w.blackoutRevenue);
+    expect(later.some((e) => e.type === 'evacuation')).toBe(false);
     expect(w.visitors).toHaveLength(0);
     expect(w.visitorsSafe).toBe(w.visitorsAtBlackout);
   });
@@ -177,6 +180,61 @@ describe('visitors and income', () => {
 });
 
 describe('visitors in the dark', () => {
+  it('guests keep touring and paying, and their visit time stands still', () => {
+    let near!: ReturnType<typeof place>;
+    let far!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      near = place(w, 'pasture', 6, 4);
+      far = place(w, 'pasture', 30, 20);
+    });
+    const v = spawnVisitor(w);
+    w.visitors.push(v);
+    // Almost out of time. With the power on, this guest would see one exhibit at most.
+    v.budget = 1;
+    run(w, 120, () => v.done);
+    expect(v.budget).toBe(1);
+    expect([...v.visited].sort()).toEqual([near.id, far.id].sort());
+    expect(w.blackoutRevenue).toBe(2 * EXHIBITS.pasture.pricePerVisit);
+    expect(w.revenue).toBe(w.blackoutRevenue);
+    expect(v.done).toBe(true);
+    expect(w.visitorsSafe).toBe(1);
+  });
+
+  it('the first animal out starts the evacuation: everyone heads for the gate and stops paying', () => {
+    let pen!: ReturnType<typeof place>;
+    let far!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      pen = place(w, 'raptor', 9, 11);
+      far = place(w, 'pasture', 30, 20);
+    });
+    const viewer = bystander(w, (far.viewingSpot.x + 0.5) * T, (far.viewingSpot.y + 0.5) * T);
+    viewer.target = far.id;
+    const walker = spawnVisitor(w);
+    w.visitors.push(walker);
+    run(w, 1);
+    expect(w.evacuating).toBe(false);
+    expect(walker.mode).toBe('walking');
+
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    setLoose(raptor, (pen.footprint.x + 1.5) * T, (pen.footprint.y - 3) * T);
+    raptor.pause = 999;
+    const events = run(w, STEP);
+    expect(events.filter((e) => e.type === 'evacuation')).toEqual([{ type: 'evacuation', kind: 'raptor' }]);
+    expect(w.evacuating).toBe(true);
+    expect(w.evacuatedBy).toBe('raptor');
+    expect(w.evacuatedAt).toBeGreaterThan(0);
+    // Nobody saw the raptor, so they walk briskly instead of running.
+    expect(viewer.mode).toBe('leaving');
+    expect(walker.mode).toBe('leaving');
+
+    const earned = w.revenue;
+    const after = run(w, 60, () => viewer.done && walker.done);
+    expect(after.some((e) => e.type === 'evacuation')).toBe(false);
+    expect(w.revenue).toBe(earned);
+    expect(viewer.done && walker.done).toBe(true);
+    expect(w.visitorsSafe).toBe(2);
+  });
+
   it('a fence breaking sends visitors within 8 tiles running; the rest stroll on', () => {
     let pen!: ReturnType<typeof place>;
     let far!: ReturnType<typeof place>;
@@ -200,7 +258,8 @@ describe('visitors in the dark', () => {
     setLoose(raptor, v.x, v.y + (VISITORS.panicDinoRadiusTiles + 1) * T);
     raptor.pause = 999;
     run(w, 0.5);
-    expect(v.mode).toBe('viewing');
+    // The escape started the evacuation, but this guest hasn't seen the raptor yet.
+    expect(v.mode).toBe('leaving');
     raptor.y = v.y + (VISITORS.panicDinoRadiusTiles - 1) * T;
     run(w, STEP);
     expect(v.mode).toBe('fleeing');

@@ -51,6 +51,8 @@ export interface TopView {
   allClear: boolean;
   /** Visitors still in the park. */
   inPark: number;
+  /** The park has sent everyone to the gate. */
+  evacuating: boolean;
 }
 
 /** What the placement panel shows for an exhibit or a tower. */
@@ -517,10 +519,9 @@ export class Hud {
 
   setTop(v: TopView): void {
     setText(this.moneyVal, formatMoney(v.money));
-    // Revenue stops at the blackout. From then on this slot shows who is still in the park.
-    const dark = v.phase === 'blackout' || v.phase === 'restored';
-    this.revenueStat.classList.toggle('people', dark);
-    if (dark) {
+    // Guests keep paying in the dark. Once the park evacuates, this slot shows who is still inside.
+    this.revenueStat.classList.toggle('people', v.evacuating);
+    if (v.evacuating) {
       setText(this.revenueCap, 'Visitors in park');
       setText(this.revenueVal, v.inPark ? String(v.inPark) : 'Everyone is out');
     } else {
@@ -813,8 +814,12 @@ export class Hud {
       : [['No exhibits built', '$0']];
     const hit = r.revenue >= r.revenueTarget;
     const s = r.spending;
+    // The first animal out is what started the evacuation.
+    const firstOut: Record<AnimalKind, string> = { raptor: 'Raptors', trex: 'T. rex', triceratops: 'Triceratops' };
     const blackoutRows: [string, string][] = [
       ['In the park at blackout', String(r.visitorsAtBlackout)],
+      ['Earned in the dark', formatMoney(r.blackoutRevenue)],
+      ['First animal out', r.evacuatedBy ? firstOut[r.evacuatedBy] : 'None'],
       ['Got out safely', String(r.visitorsSafe)],
       ['Killed by raptors', String(r.casualties.raptor)],
       ['Killed by the T. rex', String(r.casualties.trex)],

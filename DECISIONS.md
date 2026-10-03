@@ -2,6 +2,20 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Evacuation: guests stay until the first animal gets out
+
+Chosen by Chris: the park doesn't want to alarm anyone, so it only tells guests to leave once the first animal breaks out. Until then they keep visiting exhibits and paying. This replaces Milestones 2 to 5 decision 7 and Round 2 decisions 1 (the part about paying) and 3. Numbers below are from `SEEDS=16 npm run balance` and the same scripted defenders with the casualty limit lifted.
+
+27. **Visit time stands still while the power is out.** With it running, guests left on their own within about 35 s, and that is what emptied the park before the raptors got out. They still go home once they have seen every exhibit, and the clock runs again when the power returns.
+28. **"Breaks out" means the first dinosaur of any kind is loose,** out of its fence. A fence breaking or an animal hitting its fence doesn't start the evacuation. Guests near a break still run, as before.
+29. **Evacuating guests walk at 70 px/s** (`VISITORS.evacuateSpeed`), between a stroll (50) and a run (100), because the park is still trying not to alarm them. Anyone who sees danger runs.
+30. **Fence hits still don't scare anyone** (Round 2 decision 1 stands). Tried: guests within 6 tiles running when an animal hits its fence. With no defense at all, deaths in the three-raptor park fell from 23 to 32 per game to 3 to 9, which undid the point of the change.
+31. **Money earned in the dark is real money.** It counts toward the ★★ target and can be spent on troops: about $1,400 to $2,200 per game in the measured parks.
+32. **Raptors break out at 18 s, down from 20.** In a park with a T. rex, its escape at about 14 s starts the evacuation, and the time until the raptors get out is the guests' head start. At 20 s the park was nearly empty by then: in the dense T. rex park every troop defense without concrete lost no visitors in 16 games, and concrete on every pen lost at most 1. At 18 s, concrete on every pen costs at least one visitor in 10 of 16 games (up to 6), concrete on the T. rex alone (with a tower at each raptor pen) costs 3 to 7 in every game, and concrete on the raptor pens alone costs none. At 16 s even the whole bank in troops lost 1 to 4 visitors in almost every game, which would make ★★★ rarer rather than punish a mistake (the same reason as decision 20).
+33. **The 1:00 warning tip explains the rule** ("Nobody will tell the guests"), but only when the park has a raptor pen or a T. rex, since Triceratops never break out on their own. It comes before the unguarded-pen tip.
+34. **The revenue slot keeps counting in the dark** and switches to "Visitors in park" when the evacuation starts. The banner names the first animal out ("The T. rex is out. The park is evacuating."), so that escape gets no toast of its own. The end screen adds "Earned in the dark" and "First animal out".
+35. **What the measurements show.** The first animal out is the alarm. A park without a T. rex has none, so the raptors get out into a full park: there the best scripted defense (concrete plus split troops) survives 11 of 16, about the same as before (13 of 16). The T. rex park's fight got harder: with the guests gone early, 5 massed troops lose all 16 games (they won 15 of 16 before), and it now takes 6 or 7. In those games 3.6 pasture fence segments broke per game, up from 0.4.
+
 ## Round 2: making the blackout matter
 
 Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex that locks on and charges, Tranq Towers, and a 5:00 build phase. The calls below fill in the details.

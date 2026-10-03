@@ -70,6 +70,11 @@ function playRandom(seed: number) {
       }
     }
     for (const v of w.visitors) expect(w.grid.isPathNetwork(Math.floor(v.x / T), Math.floor(v.y / T))).toBe(true);
+    // The first escape in the dark starts the evacuation, and from then on nobody tours.
+    if (!w.powerOn && w.dinos.some((d) => d.state === 'loose')) expect(w.evacuating).toBe(true);
+    if (w.evacuating) for (const v of w.visitors) expect(['leaving', 'fleeing']).toContain(v.mode);
+    expect(w.revenue).toBe(w.exhibits.reduce((n, e) => n + e.revenue, 0));
+    expect(w.blackoutRevenue).toBeLessThanOrEqual(w.revenue);
     expect(w.money).toBeGreaterThanOrEqual(0);
     expect(w.visitors.length).toBeLessThanOrEqual(80);
   }
