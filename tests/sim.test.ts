@@ -747,9 +747,12 @@ describe('power return and scoring', () => {
     expect(w.result?.won).toBe(false);
   });
 
-  it('awards stars for winning, revenue, and zero casualties', () => {
+  it('awards one star per goal: the win, the revenue target, and nobody killed', () => {
+    // A loss earns nothing, whatever else went right.
     expect(starsFor(false, 99999, 40000, 0)).toBe(0);
-    expect(starsFor(true, 39999, 40000, 0)).toBe(1);
+    expect(starsFor(true, 39999, 40000, 3)).toBe(1);
+    // The revenue and safety stars don't depend on each other.
+    expect(starsFor(true, 39999, 40000, 0)).toBe(2);
     expect(starsFor(true, 40000, 40000, 1)).toBe(2);
     expect(starsFor(true, 40000, 40000, 0)).toBe(3);
   });

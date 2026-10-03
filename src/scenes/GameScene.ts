@@ -9,6 +9,7 @@ import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
 import { afterBlackout, formatMoney, type ArrowView, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
+import { goalsNow } from '../ui/goals';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
@@ -384,10 +385,10 @@ export class GameScene extends Phaser.Scene {
   // ---------------------------------------------------------------- pause menu
 
   private openMenu(): void {
-    const phase = this.world.phase;
-    if (phase === 'briefing' || phase === 'ended') return;
+    const w = this.world;
+    if (w.phase === 'briefing' || w.phase === 'ended') return;
     if (this.placingKind) this.endPlacement();
-    this.hud.showMenu();
+    this.hud.showMenu(goalsNow({ phase: w.phase, loose: w.looseCount, revenue: w.revenue, target: w.revenueTarget, casualties: w.casualtyTotal }));
   }
 
   // ---------------------------------------------------------------- camera moves and edge arrows

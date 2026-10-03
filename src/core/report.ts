@@ -33,11 +33,10 @@ export interface Result {
   log: LogEntry[];
 }
 
-/** One star for winning, two for also hitting the revenue target, three for doing that with nobody hurt. */
+/** One star per goal: the win, the revenue target, and nobody killed. A loss earns none. */
 export function starsFor(won: boolean, revenue: number, target: number, casualties: number): number {
   if (!won) return 0;
-  if (revenue < target) return 1;
-  return casualties === 0 ? 3 : 2;
+  return 1 + (revenue >= target ? 1 : 0) + (casualties === 0 ? 1 : 0);
 }
 
 function clock(seconds: number): string {

@@ -94,8 +94,15 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('tips are on by default', await page.isChecked('#opt-tips'));
   check('briefing names the countdown', (await page.textContent('.brief-title')) === 'Lights out in 5:00');
   check('briefing offers a 2:00 quick test', (await page.textContent('label.check')).includes('Quick test: 2:00 build phase'));
+  const stars = await page.textContent('.brief-side');
+  check(
+    'briefing explains one star per goal',
+    stars.includes('Get every dinosaur back.') && stars.includes('Earn $20,000 from visitors') && stars.includes('Keep every guest alive.') && stars.includes('You need the first star to earn the other two.'),
+    stars.slice(0, 200),
+  );
   await page.tap('#opt-quick');
   check('quick test changes the countdown', (await page.textContent('.brief-title')) === 'Lights out in 2:00');
+  check('quick test scales the revenue goal', (await page.textContent('.brief-side')).includes('Earn $8,000 from visitors'));
   await page.tap('.start');
   check('Start begins the build phase', (await world(() => window.__pb.world.phase)) === 'build' && !(await page.isVisible('.briefing')));
   check('quick test sets a 2:00 build phase', (await world(() => window.__pb.world.buildPhaseSeconds)) === 120);
@@ -206,6 +213,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   // The pause menu stops the clock.
   await page.tap('.pause-btn');
   check('the pause button opens the menu', await soon(() => page.isVisible('.menu')));
+  check('the menu shows how each star goal is going', /Earn \$\d[\d,]*\$[\d,]+ so far/.test(await page.textContent('.menu .goal-rows')), await page.textContent('.menu .goal-rows'));
   const pausedAt = await world(() => window.__pb.world.phaseTime);
   await page.waitForTimeout(500);
   check('the game is paused while the menu is open', (await world(() => window.__pb.world.phaseTime)) === pausedAt);
@@ -330,6 +338,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await advance(page, 0.1);
   check('reaching the casualty limit shows the end screen', await soon(() => page.isVisible('.end'), 8000));
   check('end screen names the loss', (await page.textContent('.end h1')) === 'The park has been shut down');
+  check('end screen marks each star goal', (await page.textContent('.end-goals')).includes('Shut down at 8 deaths'), await page.textContent('.end-goals'));
   const endText = await page.textContent('.end');
   check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && /Towers\$4,500/.test(endText), endText.slice(0, 80));
   check('end screen shows money earned in the dark and the first animal out', endText.includes('Earned in the dark') && endText.includes('First animal outRaptors'), endText);

@@ -149,7 +149,7 @@ describe('next time', () => {
     expect(nextTime(result({ log: [{ t: 30, type: 'lost', kind: 'tranq', by: 'trex', alone: true }] }))).toMatch(/^The T. rex caught a troop on its own/);
     const overrun = result({ won: false, reason: 'overrun', log: [{ t: 480, type: 'end', reason: 'overrun', loose: { raptor: 2 } }] });
     expect(nextTime(overrun)).toBe('Still loose at the end: 2 raptors. Train more troops before the blackout, and keep them together.');
-    expect(nextTime(result({ revenue: 15000, stars: 1 }))).toMatch(/^Revenue fell short of ★★/);
+    expect(nextTime(result({ revenue: 15000, stars: 2 }))).toMatch(/^Revenue came in under \$20,000, so no revenue star\./);
   });
 
   it('a clean game needs no advice', () => {

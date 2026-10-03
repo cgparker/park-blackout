@@ -907,7 +907,7 @@ body {
 
 .goals li {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: 6px;
   font-size: 14px;
   line-height: 1.35;
@@ -916,6 +916,64 @@ body {
 .goal-stars {
   color: var(--money);
   letter-spacing: 0.04em;
+}
+
+.brief-side .star-rule {
+  margin-bottom: 14px;
+}
+
+.star-rule {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+/* Star goals in the pause menu and on the end screen. */
+.goal-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.goal-row {
+  display: grid;
+  grid-template-columns: 1.3em minmax(0, auto) minmax(0, 1fr) 1.2em;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.goal-star {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.goal-star.on {
+  color: var(--money);
+}
+
+.goal-name {
+  font-weight: 700;
+}
+
+.goal-status {
+  color: var(--muted);
+  text-align: right;
+}
+
+.goal-row.met .goal-mark {
+  color: var(--good);
+}
+
+.goal-row.missed .goal-mark,
+.goal-row.missed .goal-status {
+  color: var(--bad);
+}
+
+.end-goals {
+  width: min(100%, 560px);
+  align-self: center;
 }
 
 .howto li {
@@ -1088,7 +1146,7 @@ body {
 }
 
 .menu-card {
-  max-width: 340px;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1103,14 +1161,11 @@ body {
 
 .menu-actions {
   display: flex;
-  flex-direction: column;
   gap: 8px;
 }
 
-.menu-actions .primary,
 .menu-actions .secondary {
   flex: none;
-  width: 100%;
 }
 
 /* ------------------------------------------------------------ debug */

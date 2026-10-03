@@ -2,6 +2,14 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Stars: one per goal
+
+Chosen by Chris: one star for getting every dinosaur back without losing 8 guests, one for the revenue target, one for no guests lost.
+
+45. **The stars no longer stack.** Before, ★★ needed the win and the revenue target, and ★★★ needed both plus nobody killed, so a win with nobody hurt but revenue short got one star. Now it gets two: the revenue and safety stars don't depend on each other. Earlier decisions that say ★★ mean the revenue target, and ★★★ still means all three. `npm run balance` came out identical, because every measured blackout park clears the target.
+46. **A loss earns no stars,** even for goals it met. A shut-down or overrun park showing stars would read as a reward. The end screen still marks those goals met and says why their stars stay dark. This part wasn't specified.
+47. **The goals are spelled out in three places:** the briefing (the full rules), the pause menu (how each one is going), and the end screen (met or missed, star lit or not). The top bar's revenue caption reads "★ at $20,000".
+
 ## Audit follow-up: pause menu, planning numbers, timeline, edge arrows
 
 Chosen by Chris: the four small items from the design audit, before the next playtest.

@@ -179,7 +179,7 @@ export function nextTime(r: Result): string | null {
     return `${left ? `Still loose at the end: ${left}. ` : ''}Train more troops before the blackout, and keep them together.`;
   }
   if (r.won && r.revenue < r.revenueTarget) {
-    return 'Revenue fell short of ★★. Exhibits close to the gate and to each other earn more, because guests spend less of their visit walking.';
+    return `Revenue came in under $${r.revenueTarget.toLocaleString('en-US')}, so no revenue star. Exhibits close to the gate and to each other earn more, because guests spend less of their visit walking.`;
   }
   return null;
 }

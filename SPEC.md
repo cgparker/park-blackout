@@ -49,7 +49,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 - Starting money: $25,000. Enough to open with a T. rex, or two raptor pens and a pasture, because the build phase is short.
 - Income comes only from visitors paying at exhibits. Park entry is free.
-- Revenue target for 2 stars: $4,000 per minute of build phase ($20,000 at 5:00). Revenue means total earned from visitors, including what they pay in the dark before the evacuation, not money left in the bank.
+- Revenue target for the revenue star: $4,000 per minute of build phase ($20,000 at 5:00). Revenue means total earned from visitors, including what they pay in the dark before the evacuation, not money left in the bank.
 - Visitors keep paying in Act 2 until the park evacuates (section 8). Banked money can still train troops.
 
 ### Exhibits
@@ -144,7 +144,7 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 
 - **Top bar:** money, revenue vs. target, the countdown (large, centered), casualties (x/8), and the pause button. In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
-- **Pause menu:** stops the clock. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
+- **Pause menu:** stops the clock and shows how each star goal is going. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
 - **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors.
 - **When the power goes out** the camera moves to show every exhibit.
 - **Edge arrows:** in Act 2, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
@@ -213,14 +213,18 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 ### Stars
 
-- ⭐ Win.
-- ⭐⭐ Win and hit the revenue target.
-- ⭐⭐⭐ Win, hit the revenue target, and have zero casualties.
+One star for each goal. You need the first star to earn the other two, so a loss earns no stars.
+
+- ⭐ **Get every dinosaur back:** win. No dinosaur loose 3:00 after the power returns, and fewer than 8 guests killed.
+- ⭐ **Earn the revenue target:** $4,000 per minute of build phase ($20,000 at 5:00), counting what guests pay in the dark.
+- ⭐ **Keep every guest alive.**
+
+The briefing lists the three goals, the pause menu shows how each one is going, and the end screen marks each one met or missed, with its star lit only when earned.
 
 ### End screen
 
-- Stars and result.
-- **Next time:** one thing to do differently, picked from what went worst (raptors first out into a full park, deaths by an unguarded raptor pen, raptors out while guests were still inside, a troop the T. rex caught alone, an overrun, or revenue short of ★★). None after a clean game.
+- Stars and result, then the three goals, each marked met or missed with its star lit when earned. A loss that met a goal says why its star stays dark.
+- **Next time:** one thing to do differently, picked from what went worst (raptors first out into a full park, deaths by an unguarded raptor pen, raptors out while guests were still inside, a troop the T. rex caught alone, an overrun, or revenue short of its star). None after a clean game.
 - **What happened:** a short timeline of the blackout. The power cut, the first animal out of each exhibit with the guests still inside, the evacuation, deaths with their cause and place, troops and towers lost, the park emptying, the power coming back, and anything still loose at the end.
 - Revenue by exhibit (visits and dollars).
 - Spending: exhibits, paths, reinforcement, troops, towers.
@@ -268,9 +272,9 @@ After the six milestones, a second round made the blackout matter more: visitors
 
 `npm run balance` plays these headlessly with the real rules. Each exhibit goes in the open spot closest to the gate that keeps the stated gap, and building stops at 70% of the build phase (3:30). These are starting points for playtests, not truth.
 
-Build phase (5:00, ★★ target $20,000, 3 seeds each):
+Build phase (5:00, revenue star at $20,000, 3 seeds each):
 
-| Strategy | Revenue | ★★? | Left for defense |
+| Strategy | Revenue | Revenue star? | Left for defense |
 |---|---|---|---|
 | Dense: 2 raptor pens, T. rex, 2 pastures | ~$36,500 | Yes | ~$30,500 |
 | Dense: 3 raptor pens, 3 pastures | ~$27,800 | Yes | ~$24,200 |

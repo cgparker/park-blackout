@@ -2,6 +2,7 @@ import { COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, FENCE, SQUAD, UNITS, UNIT_KINDS
 import { sedationPerSecond } from '../core/estimates';
 import type { Result } from '../core/report';
 import type { Phase } from '../core/world';
+import { goalRules, goalsAtEnd, STAR_RULE, type GoalLine } from './goals';
 import { nextTime, timelineLines } from './timeline';
 
 /** Things placed from the build bar. */
@@ -174,6 +175,21 @@ function unitIcon(kind: UnitKind): string {
   }
 }
 
+/** Star goal rows: a star (lit when earned), the goal, how it went, and a mark. */
+function renderGoals(box: HTMLElement, goals: readonly GoalLine[]): void {
+  box.innerHTML = '';
+  for (const g of goals) {
+    const row = el('div', `goal-row ${g.met === true ? 'met' : g.met === false ? 'missed' : 'open'}`);
+    row.append(
+      el('span', g.earned ? 'goal-star on' : 'goal-star', g.earned ? '★' : '☆'),
+      el('span', 'goal-name', g.name),
+      el('span', 'goal-status', g.status),
+      el('span', 'goal-mark', g.met === true ? '✓' : g.met === false ? '✗' : ''),
+    );
+    box.append(row);
+  }
+}
+
 /** The HTML layer over the game canvas. */
 export class Hud {
   handlers: HudHandlers | null = null;
@@ -232,7 +248,7 @@ export class Hud {
   private readonly briefing: HTMLElement;
   private readonly briefTitle: HTMLElement;
   private readonly briefIntro: HTMLElement;
-  private readonly briefGoal2: HTMLElement;
+  private readonly briefGoals: HTMLElement[] = [];
   private readonly quickBox: HTMLInputElement;
   private readonly quickLabel: HTMLElement;
   private readonly debugBox: HTMLInputElement;
@@ -247,6 +263,7 @@ export class Hud {
   private readonly endBody: HTMLElement;
 
   private readonly menu: HTMLElement;
+  private readonly menuGoals: HTMLElement;
   private readonly arrowLayer: HTMLElement;
   private readonly arrows: { el: HTMLButtonElement; pointer: HTMLElement; icon: HTMLElement; count: HTMLElement; kind: string; transform: string; rotate: string }[] = [];
 
@@ -439,16 +456,13 @@ export class Hud {
 
     const right = el('div', 'brief-side');
     const goals = el('ul', 'goals');
-    const goal = (stars: string, text: string) => {
+    for (let i = 0; i < 3; i++) {
       const li = el('li');
-      const t = el('span', 'goal-text', text);
-      li.append(el('span', 'goal-stars', stars), t);
+      const t = el('span', 'goal-text');
+      li.append(el('span', 'goal-stars', '★'), t);
       goals.append(li);
-      return t;
-    };
-    goal('★', 'Secure every loose dinosaur after the power comes back.');
-    this.briefGoal2 = goal('★★', 'Also earn $40,000 before the blackout.');
-    goal('★★★', 'Also keep every visitor alive.');
+      this.briefGoals.push(t);
+    }
     const howto = el('ul', 'howto');
     for (const line of [
       'Tap an exhibit or a tower below, then tap the map to place it.',
@@ -459,7 +473,7 @@ export class Hud {
     ]) {
       howto.append(el('li', '', line));
     }
-    right.append(el('h2', '', 'Goals'), goals, el('h2', '', 'Controls'), howto);
+    right.append(el('h2', '', 'Stars'), goals, el('p', 'star-rule', `One star for each goal. ${STAR_RULE}`), el('h2', '', 'Controls'), howto);
     card.append(left, right);
     this.briefing.append(card);
 
@@ -487,8 +501,11 @@ export class Hud {
     endGame.addEventListener('click', () => this.handlers?.endGame());
     const menuActions = el('div', 'menu-actions');
     menuActions.append(resume, restart, endGame);
+    this.menuGoals = el('div', 'goal-rows');
     menuCard.append(
       el('div', 'eyebrow', 'Paused'),
+      this.menuGoals,
+      el('p', 'star-rule', STAR_RULE),
       el('p', 'menu-text', 'Restart goes back to the briefing. End game shows what happened so far.'),
       menuActions,
     );
@@ -592,7 +609,7 @@ export class Hud {
       setText(this.revenueCap, 'Visitors in park');
       setText(this.revenueVal, v.inPark ? String(v.inPark) : 'Everyone is out');
     } else {
-      setText(this.revenueCap, `Revenue · ★★ at ${formatMoney(v.revenueTarget)}`);
+      setText(this.revenueCap, `Revenue · ★ at ${formatMoney(v.revenueTarget)}`);
       setText(this.revenueVal, formatMoney(v.revenue));
     }
     const pct = Math.min(100, (v.revenue / Math.max(1, v.revenueTarget)) * 100);
@@ -836,8 +853,10 @@ export class Hud {
 
   // ------------------------------------------------ pause menu
 
-  showMenu(): void {
+  /** Opens the pause menu, with how each star goal is going. */
+  showMenu(goals: readonly GoalLine[]): void {
     this.toastEl.classList.remove('show');
+    renderGoals(this.menuGoals, goals);
     this.menu.classList.remove('hidden');
   }
 
@@ -914,7 +933,7 @@ export class Hud {
       this.briefIntro,
       `${v.villain} will cut power to the electric fences in ${formatClock(seconds)} to steal dinosaur embryos. Build your park, earn money, and train your containment team before the lights go out.`,
     );
-    setText(this.briefGoal2, `Also earn ${formatMoney(target)} before the blackout.`);
+    goalRules(target).forEach((text, i) => setText(this.briefGoals[i], text));
   }
 
   hideBriefing(): void {
@@ -935,7 +954,12 @@ export class Hud {
     for (let i = 0; i < 3; i++) stars.append(el('span', i < r.stars ? 'star on' : 'star', i < r.stars ? '★' : '☆'));
     const head = el('div', `end-head ${r.won ? 'won' : 'lost'}`);
     head.append(stars, el('h1', '', r.title), el('p', 'detail', r.detail));
-    const parts: HTMLElement[] = [head];
+    const goals = el('div', 'goal-rows end-goals');
+    const lines = goalsAtEnd(r);
+    renderGoals(goals, lines);
+    // Explain the dark stars when a goal was met but the game was lost.
+    if (!r.won && lines.some((g) => g.met)) goals.append(el('p', 'star-rule', 'Goals you met earn no stars without the first one.'));
+    const parts: HTMLElement[] = [head, goals];
 
     const advice = nextTime(r);
     if (advice) {
@@ -943,12 +967,12 @@ export class Hud {
       box.append(el('span', 'next-label', 'Next time'), el('p', '', advice));
       parts.push(box);
     }
-    const lines = timelineLines(r.log);
-    if (lines.length) {
+    const story = timelineLines(r.log);
+    if (story.length) {
       const s = el('section', 'timeline');
       s.append(el('h2', '', 'What happened'));
       const list = el('div', 'tl-rows');
-      for (const l of lines) {
+      for (const l of story) {
         const row = el('div', `tl-row ${l.tone}`);
         row.append(el('span', 'tl-time', l.time), el('span', 'tl-text', l.text));
         list.append(row);
@@ -996,7 +1020,7 @@ export class Hud {
     blackoutRows.push(['Dinosaurs secured', String(r.dinosSecured)], ['Dinosaurs contained', String(r.dinosContained)]);
     const grid = el('div', 'end-grid');
     grid.append(
-      section('Revenue', revenueRows, [`Total (★★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
+      section('Revenue', revenueRows, [`Total (★ at ${formatMoney(r.revenueTarget)})${hit ? ' ✓' : ''}`, formatMoney(r.revenue)]),
       section(
         'Spending',
         [
