@@ -7,6 +7,7 @@ import { planPlacement, planTower } from '../src/core/placement';
 import { createRng } from '../src/core/rng';
 import { enqueueUnit, isTroop, orderAttack, orderMove } from '../src/core/units';
 import { World } from '../src/core/world';
+import { nextTime, timelineLines } from '../src/ui/timeline';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -79,6 +80,15 @@ function playRandom(seed: number) {
     expect(w.visitors.length).toBeLessThanOrEqual(80);
   }
   expect(w.phase).toBe('ended');
+  // The blackout log reads in order, from the power cut to the end, and the end screen can always say it.
+  const log = w.result!.log;
+  if (log.length) {
+    expect(log[0].type).toBe('blackout');
+    expect(log[log.length - 1].type).toBe('end');
+    for (let i = 1; i < log.length; i++) expect(log[i].t).toBeGreaterThanOrEqual(log[i - 1].t);
+  }
+  const words = [...timelineLines(log).map((l) => l.text), nextTime(w.result!) ?? ''];
+  for (const text of words) expect(text).not.toMatch(/[\u2013\u2014]|\s--\s/);
   return w.result!;
 }
 

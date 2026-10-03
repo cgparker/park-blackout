@@ -1,7 +1,9 @@
 import { BLACKOUT, EXHIBITS, SCORING, type AnimalKind, type ExhibitKind } from '../config';
+import type { LogEntry } from './log';
 import type { CasualtyCause, World } from './world';
 
-export type EndReason = 'secured' | 'shutdown' | 'overrun';
+/** `abandoned`: the player ended the game from the pause menu. */
+export type EndReason = 'secured' | 'shutdown' | 'overrun' | 'abandoned';
 
 export interface Result {
   won: boolean;
@@ -13,7 +15,7 @@ export interface Result {
   /** The part of revenue earned while the power was out. */
   blackoutRevenue: number;
   revenueTarget: number;
-  exhibits: { id: number; kind: ExhibitKind; name: string; visits: number; revenue: number }[];
+  exhibits: { id: number; kind: ExhibitKind; name: string; visits: number; revenue: number; reinforced: boolean }[];
   spending: { exhibits: number; paths: number; reinforcement: number; troops: number; towers: number; total: number };
   casualties: Record<CasualtyCause, number>;
   casualtyTotal: number;
@@ -27,6 +29,8 @@ export interface Result {
   /** The first animal out, whose escape started the evacuation. null if nothing got out. */
   evacuatedBy: AnimalKind | null;
   visitorsSafe: number;
+  /** What happened after the lights went out. Empty if the game ended before the blackout. */
+  log: LogEntry[];
 }
 
 /** One star for winning, two for also hitting the revenue target, three for doing that with nobody hurt. */
@@ -55,6 +59,10 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
       title: 'The park is overrun',
       detail: `Dinosaurs were still loose ${clock(BLACKOUT.overrunSeconds)} after the power came back.`,
     },
+    abandoned: {
+      title: 'Game ended early',
+      detail: w.log.length ? 'You ended the game before every dinosaur was accounted for.' : 'You ended the game before the blackout.',
+    },
   };
   const s = w.spending;
   return {
@@ -65,7 +73,7 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
     revenue: w.revenue,
     blackoutRevenue: w.blackoutRevenue,
     revenueTarget: w.revenueTarget,
-    exhibits: w.exhibits.map((e) => ({ id: e.id, kind: e.kind, name: EXHIBITS[e.kind].name, visits: e.visits, revenue: e.revenue })),
+    exhibits: w.exhibits.map((e) => ({ id: e.id, kind: e.kind, name: EXHIBITS[e.kind].name, visits: e.visits, revenue: e.revenue, reinforced: e.reinforced })),
     spending: { ...s, total: s.exhibits + s.paths + s.reinforcement + s.troops + s.towers },
     casualties: { ...w.casualties },
     casualtyTotal,
@@ -78,5 +86,6 @@ export function buildResult(w: World, won: boolean, reason: EndReason): Result {
     visitorsAtBlackout: w.visitorsAtBlackout,
     evacuatedBy: w.evacuatedBy,
     visitorsSafe: w.visitorsSafe,
+    log: w.log.map((e) => ({ ...e })),
   };
 }

@@ -1,6 +1,8 @@
-import { COLORS, EXHIBITS, EXHIBIT_KINDS, MAP, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import { COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, FENCE, SQUAD, UNITS, UNIT_KINDS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import { sedationPerSecond } from '../core/estimates';
 import type { Result } from '../core/report';
 import type { Phase } from '../core/world';
+import { nextTime, timelineLines } from './timeline';
 
 /** Things placed from the build bar. */
 export type BuildKind = ExhibitKind | 'tower';
@@ -34,6 +36,12 @@ export interface HudHandlers {
   tipDone(): void;
   /** Turn tips off. */
   tipsOff(): void;
+  /** Pause menu. Restart uses retry. */
+  openMenu(): void;
+  resume(): void;
+  endGame(): void;
+  /** An arrow at the map edge was tapped. */
+  focusArrow(key: string): void;
 }
 
 export interface TopView {
@@ -69,6 +77,8 @@ export interface TrainingView {
   money: number;
   canTrain: boolean;
   queue: { id: number; kind: UnitKind; progress: number }[];
+  /** Troops alive or queued, and how long they take darting together. */
+  team: { troops: number; trexSeconds: number; packSeconds: number; packSize: number };
 }
 
 export interface ExhibitView {
@@ -83,6 +93,19 @@ export interface ExhibitView {
   reinforceCost: number | null;
   reinforced: boolean;
   money: number;
+  /** Before the blackout: seconds until these animals get out (null: never on their own), and the same behind concrete. */
+  breakout: { now: number | null; concrete: number | null } | null;
+}
+
+/** An arrow at the edge of the map pointing at something off screen. Position in CSS pixels. */
+export interface ArrowView {
+  key: string;
+  x: number;
+  y: number;
+  /** Direction it points, in radians. */
+  angle: number;
+  kind: AnimalKind | 'breach';
+  count: number;
 }
 
 export interface BriefingView {
@@ -96,6 +119,9 @@ export interface BriefingView {
 }
 
 export type Panel = 'place' | 'train' | 'exhibit';
+
+/** "14 s after the blackout" style text for planning numbers. */
+export const afterBlackout = (s: number | null) => (s === null ? 'Never on its own' : `${Math.round(s)} s after blackout`);
 
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 export const formatMoney = (n: number) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
@@ -184,6 +210,7 @@ export class Hud {
   private readonly trainButtons = new Map<UnitKind, HTMLButtonElement>();
   private readonly queueLabel: HTMLElement;
   private readonly queueChips: HTMLElement;
+  private readonly teamNote: HTMLElement;
   private queueKey = '';
 
   private readonly exhibitPanel: HTMLElement;
@@ -192,6 +219,7 @@ export class Hud {
   private readonly exRevenue: HTMLElement;
   private readonly exFence: HTMLElement;
   private readonly exAnimals: HTMLElement;
+  private readonly exBreakout: HTMLElement;
   private readonly reinforceBtn: HTMLButtonElement;
   private readonly reinforceNote: HTMLElement;
   private exhibitId = 0;
@@ -217,6 +245,10 @@ export class Hud {
 
   private readonly endScreen: HTMLElement;
   private readonly endBody: HTMLElement;
+
+  private readonly menu: HTMLElement;
+  private readonly arrowLayer: HTMLElement;
+  private readonly arrows: { el: HTMLButtonElement; pointer: HTMLElement; icon: HTMLElement; count: HTMLElement; kind: string; transform: string; rotate: string }[] = [];
 
   private readonly debugPanel: HTMLElement;
   private readonly fpsEl: HTMLElement;
@@ -246,7 +278,11 @@ export class Hud {
     this.clock.append(this.clockCap, this.clockVal);
     const dinos = stat('dinos', 'Dinosaurs');
     const casualties = stat('casualties', 'Casualties');
-    this.topBar.append(money.box, revenue.box, this.clock, dinos.box, casualties.box);
+    const pause = button('pause-btn');
+    pause.setAttribute('aria-label', 'Pause');
+    pause.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="3.5" height="12" rx="1"/><rect x="11.5" y="4" width="3.5" height="12" rx="1"/></svg>';
+    pause.addEventListener('click', () => this.handlers?.openMenu());
+    this.topBar.append(money.box, revenue.box, this.clock, dinos.box, casualties.box, pause);
     this.moneyVal = money.val;
     this.revenueVal = revenue.val;
     this.revenueCap = revenue.cap;
@@ -321,7 +357,7 @@ export class Hud {
       const label = el('span', 'label');
       label.append(
         el('span', 'name', cfg.name),
-        el('span', 'meta', `${cfg.hp}\u00a0HP · range\u00a0${Math.round(cfg.range / MAP.tileSize)} · ${cfg.trainSeconds}\u00a0s`),
+        el('span', 'meta', `Sedates ${Math.round(sedationPerSecond(kind))}/s · ${cfg.hp}\u00a0HP`),
       );
       b.append(icon, label, el('span', 'price', formatMoney(cfg.cost)));
       b.addEventListener('click', () => this.handlers?.train(kind));
@@ -332,7 +368,8 @@ export class Hud {
     this.queueLabel = el('span', 'queue-label');
     this.queueChips = el('div', 'chips');
     queue.append(this.queueLabel, this.queueChips);
-    this.trainPanel.append(queue, el('div', 'note', 'Tap a queued troop to cancel it for a full refund.'));
+    this.teamNote = el('div', 'team-note');
+    this.trainPanel.append(queue, this.teamNote, el('div', 'note', 'Tap a queued troop to cancel it for a full refund.'));
 
     // ------------------------------------------------ exhibit panel
     this.exhibitPanel = el('div', 'panel exhibit-panel hidden');
@@ -350,6 +387,7 @@ export class Hud {
     this.exRevenue = row('Revenue');
     this.exFence = row('Fence');
     this.exAnimals = row('Animals');
+    this.exBreakout = row('Breaks out');
     this.reinforceBtn = button('primary reinforce');
     this.reinforceBtn.addEventListener('click', () => this.handlers?.reinforce(this.exhibitId));
     this.reinforceNote = el('div', 'note');
@@ -431,8 +469,33 @@ export class Hud {
     this.endBody = el('div', 'end-body');
     const retry = button('primary retry', 'Retry');
     retry.addEventListener('click', () => this.handlers?.retry());
-    endCard.append(this.endBody, retry);
+    // The end screen can be taller than a phone: its body scrolls, and Retry stays in view below it.
+    const foot = el('div', 'end-foot');
+    foot.append(retry);
+    endCard.append(this.endBody, foot);
     this.endScreen.append(endCard);
+
+    // ------------------------------------------------ pause menu
+    this.menu = el('div', 'overlay menu hidden');
+    const menuCard = el('div', 'card menu-card');
+    menuCard.setAttribute('role', 'dialog');
+    const resume = button('primary menu-resume', 'Resume');
+    resume.addEventListener('click', () => this.handlers?.resume());
+    const restart = button('secondary menu-restart', 'Restart');
+    restart.addEventListener('click', () => this.handlers?.retry());
+    const endGame = button('secondary menu-end', 'End game');
+    endGame.addEventListener('click', () => this.handlers?.endGame());
+    const menuActions = el('div', 'menu-actions');
+    menuActions.append(resume, restart, endGame);
+    menuCard.append(
+      el('div', 'eyebrow', 'Paused'),
+      el('p', 'menu-text', 'Restart goes back to the briefing. End game shows what happened so far.'),
+      menuActions,
+    );
+    this.menu.append(menuCard);
+
+    // ------------------------------------------------ edge arrows
+    this.arrowLayer = el('div', 'arrows');
 
     // ------------------------------------------------ debug
     this.debugPanel = el('div', 'debug hidden');
@@ -471,6 +534,7 @@ export class Hud {
     this.debugPanel.append(dbgHead, speedRow, actionRow, toggleRow, this.fpsEl);
 
     root.append(
+      this.arrowLayer,
       this.topBar,
       this.bottomBar,
       this.placePanel,
@@ -482,6 +546,7 @@ export class Hud {
       this.debugPanel,
       this.briefing,
       this.endScreen,
+      this.menu,
     );
   }
 
@@ -509,6 +574,8 @@ export class Hud {
   reset(): void {
     this.closePanels();
     this.hideTip();
+    this.hideMenu();
+    this.setArrows([]);
     this.endScreen.classList.add('hidden');
     this.banner.classList.remove('show');
     this.toastEl.classList.remove('show');
@@ -639,6 +706,13 @@ export class Hud {
       if (b.disabled !== disabled) b.disabled = disabled;
     }
     setText(this.queueLabel, v.queue.length ? `Queue ${v.queue.length}/${SQUAD.queueMax}` : 'Queue empty');
+    const t = v.team;
+    setText(
+      this.teamNote,
+      t.troops
+        ? `Your ${t.troops} ${t.troops === 1 ? 'troop' : 'troops'}, darting together: a T. rex in ${Math.ceil(t.trexSeconds)} s, a pack of ${t.packSize} raptors in ${Math.ceil(t.packSeconds)} s.`
+        : `No troops yet. A T. rex takes ${DINOS.trex.sedation} sedation, a raptor ${DINOS.raptor.sedation}.`,
+    );
     const key = v.queue.map((q) => q.id).join(',');
     if (key !== this.queueKey) {
       this.queueKey = key;
@@ -672,6 +746,9 @@ export class Hud {
     setText(this.exRevenue, formatMoney(v.revenue));
     setText(this.exFence, v.fence);
     setText(this.exAnimals, v.animals);
+    const row = this.exBreakout.parentElement!;
+    row.classList.toggle('hidden', !v.breakout);
+    if (v.breakout) setText(this.exBreakout, afterBlackout(v.breakout.now));
     const canReinforce = v.reinforceCost !== null;
     this.reinforceBtn.classList.toggle('hidden', !canReinforce);
     if (canReinforce) {
@@ -679,9 +756,14 @@ export class Hud {
       const disabled = v.money < v.reinforceCost!;
       if (this.reinforceBtn.disabled !== disabled) this.reinforceBtn.disabled = disabled;
     }
+    const holds = canReinforce && v.breakout?.concrete != null ? ` It holds them in until about ${Math.round(v.breakout.concrete)} s.` : '';
     setText(
       this.reinforceNote,
-      v.reinforced ? 'Concrete fence: 600 HP per segment.' : canReinforce ? 'Concrete: 600 HP per segment instead of 200.' : 'Fences can only be reinforced before the blackout.',
+      v.reinforced
+        ? `Concrete fence: ${FENCE.concreteHp} HP per segment.`
+        : canReinforce
+          ? `Concrete: ${FENCE.concreteHp} HP per segment instead of ${FENCE.chainLinkHp}.${holds}`
+          : 'Fences can only be reinforced before the blackout.',
     );
   }
 
@@ -718,6 +800,11 @@ export class Hud {
     this.bannerTimer = window.setTimeout(() => this.banner.classList.remove('show'), seconds * 1000);
   }
 
+  /** Where the banner is while it shows, so edge arrows can step around it. */
+  get bannerBox(): DOMRect | null {
+    return this.banner.classList.contains('show') ? this.banner.getBoundingClientRect() : null;
+  }
+
   toast(message: string): void {
     this.toastEl.textContent = message;
     this.toastEl.classList.add('show');
@@ -745,6 +832,64 @@ export class Hud {
   /** Top edge of the open tip card, in CSS pixels. */
   get tipTop(): number {
     return this.tipCard.getBoundingClientRect().top;
+  }
+
+  // ------------------------------------------------ pause menu
+
+  showMenu(): void {
+    this.toastEl.classList.remove('show');
+    this.menu.classList.remove('hidden');
+  }
+
+  hideMenu(): void {
+    this.menu.classList.add('hidden');
+  }
+
+  get menuOpen(): boolean {
+    return !this.menu.classList.contains('hidden');
+  }
+
+  // ------------------------------------------------ edge arrows
+
+  /** Arrows at the map edge. Elements are reused, and the DOM is only touched when something changed. */
+  setArrows(list: readonly ArrowView[]): void {
+    while (this.arrows.length < list.length) {
+      const b = button('edge-arrow hidden');
+      const pointer = el('span', 'pointer');
+      const icon = el('span', 'arrow-icon');
+      const count = el('span', 'arrow-count');
+      b.append(pointer, icon, count);
+      b.addEventListener('click', () => {
+        const key = b.dataset.key;
+        if (key) this.handlers?.focusArrow(key);
+      });
+      this.arrowLayer.append(b);
+      this.arrows.push({ el: b, pointer, icon, count, kind: '', transform: '', rotate: '' });
+    }
+    this.arrows.forEach((a, i) => {
+      const v = list[i];
+      const hidden = !v;
+      if (a.el.classList.contains('hidden') !== hidden) a.el.classList.toggle('hidden', hidden);
+      if (!v) return;
+      if (a.el.dataset.key !== v.key) a.el.dataset.key = v.key;
+      if (a.kind !== v.kind) {
+        a.kind = v.kind;
+        a.el.dataset.kind = v.kind;
+        a.icon.innerHTML = v.kind === 'breach' ? '!' : animalIcon(v.kind);
+        a.el.setAttribute('aria-label', v.kind === 'breach' ? 'Broken fence off screen' : `${DINOS[v.kind].name} off screen`);
+      }
+      setText(a.count, v.count > 1 ? String(v.count) : '');
+      const transform = `translate(${Math.round(v.x)}px, ${Math.round(v.y)}px)`;
+      if (a.transform !== transform) {
+        a.transform = transform;
+        a.el.style.transform = transform;
+      }
+      const rotate = `rotate(${v.angle.toFixed(2)}rad)`;
+      if (a.rotate !== rotate) {
+        a.rotate = rotate;
+        a.pointer.style.transform = rotate;
+      }
+    });
   }
 
   // ------------------------------------------------ briefing
@@ -790,6 +935,27 @@ export class Hud {
     for (let i = 0; i < 3; i++) stars.append(el('span', i < r.stars ? 'star on' : 'star', i < r.stars ? '★' : '☆'));
     const head = el('div', `end-head ${r.won ? 'won' : 'lost'}`);
     head.append(stars, el('h1', '', r.title), el('p', 'detail', r.detail));
+    const parts: HTMLElement[] = [head];
+
+    const advice = nextTime(r);
+    if (advice) {
+      const box = el('div', 'next-time');
+      box.append(el('span', 'next-label', 'Next time'), el('p', '', advice));
+      parts.push(box);
+    }
+    const lines = timelineLines(r.log);
+    if (lines.length) {
+      const s = el('section', 'timeline');
+      s.append(el('h2', '', 'What happened'));
+      const list = el('div', 'tl-rows');
+      for (const l of lines) {
+        const row = el('div', `tl-row ${l.tone}`);
+        row.append(el('span', 'tl-time', l.time), el('span', 'tl-text', l.text));
+        list.append(row);
+      }
+      s.append(list);
+      parts.push(s);
+    }
 
     const section = (title: string, rows: [string, string][], foot?: [string, string]) => {
       const s = el('section');
@@ -844,9 +1010,9 @@ export class Hud {
       ),
       section('Blackout', blackoutRows, ['Visitors killed', String(r.casualtyTotal)]),
     );
-    b.append(head, grid);
+    b.append(...parts, grid);
     this.endScreen.classList.remove('hidden');
-    this.endScreen.scrollTop = 0;
+    this.endBody.scrollTop = 0;
   }
 
   // ------------------------------------------------ debug

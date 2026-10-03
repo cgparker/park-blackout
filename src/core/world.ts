@@ -1,7 +1,9 @@
-import { BLACKOUT, ECONOMY, FENCE, MAP, SCORING, UNITS, type AnimalKind, type ExhibitKind, type MapConfig, type UnitKind } from '../config';
+import { BLACKOUT, ECONOMY, FENCE, MAP, SCORING, TIPS, UNITS, type AnimalKind, type ExhibitKind, type MapConfig, type UnitKind } from '../config';
 import { containDino, evictFromPens, spawnAnimals, updateDinos, type Dino } from './dinos';
 import { buildSegments, inFootprint, reinforceCost, type Exhibit } from './exhibit';
 import { createGrid, Tile, type Grid, type Point } from './grid';
+import { guarded, nearestExhibit, troopsNear } from './guard';
+import type { LogEntry } from './log';
 import { distanceField } from './nav';
 import { planTower, type PlacementPlan, type TowerPlan } from './placement';
 import { buildResult, type EndReason, type Result } from './report';
@@ -88,6 +90,14 @@ export class World {
   dinosContained = 0;
   result: Result | null = null;
 
+  /** What happened after the lights went out, for the end screen. */
+  readonly log: LogEntry[] = [];
+  /** World time when the power went out, or -1. */
+  private blackoutAt = -1;
+  private readonly escapedFrom = new Set<number>();
+  private loggedEmpty = false;
+  private loggedClear = false;
+
   /** Things that happened since the renderer last looked. */
   events: GameEvent[] = [];
 
@@ -166,6 +176,11 @@ export class World {
       default:
         return 0;
     }
+  }
+
+  /** Seconds since the power went out (0 before the blackout). */
+  get blackoutTime(): number {
+    return this.blackoutAt < 0 ? 0 : this.time - this.blackoutAt;
   }
 
   get looseCount(): number {
@@ -314,6 +329,8 @@ export class World {
     // Nobody tells the guests. They keep touring and paying until the first animal gets out.
     this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
     for (const ex of this.exhibits) ex.version++;
+    this.blackoutAt = this.time;
+    this.log.push({ t: 0, type: 'blackout', inPark: this.visitorsAtBlackout });
     this.events.push({ type: 'blackout' });
   }
 
@@ -323,7 +340,45 @@ export class World {
     this.evacuatedAt = this.phaseTime;
     this.evacuatedBy = kind;
     evacuate(this);
+    // The escape that set this off was logged a moment ago, in this same update.
+    const trigger = [...this.log].reverse().find((e) => e.type === 'escape');
+    if (trigger?.type === 'escape') trigger.evacuation = true;
     this.events.push({ type: 'evacuation', kind });
+  }
+
+  /** The player gives up. The game ends now as a loss, so the end screen can show what happened so far. */
+  quit(): void {
+    if (this.phase === 'briefing' || this.phase === 'ended') return;
+    this.end(false, 'abandoned');
+  }
+
+  // ------------------------------------------------------------ the blackout log
+
+  /** An animal left its pen. Only the first one out of each exhibit is logged. */
+  noteEscape(d: Dino): void {
+    if (this.blackoutAt < 0 || this.escapedFrom.has(d.home)) return;
+    this.escapedFrom.add(d.home);
+    this.log.push({ t: this.blackoutTime, type: 'escape', kind: d.kind, inPark: this.inPark, evacuation: false });
+  }
+
+  noteDeath(cause: CasualtyCause, x: number, y: number): void {
+    if (this.blackoutAt < 0) return;
+    const near = nearestExhibit(this, x, y, TIPS.killNearPenTiles);
+    const pen = nearestExhibit(this, x, y, TIPS.killNearPenTiles, 'raptor');
+    this.log.push({ t: this.blackoutTime, type: 'death', cause, near: near?.kind ?? null, unguardedPen: !!pen && !guarded(this, pen) });
+  }
+
+  noteLoss(kind: UnitKind, x: number, y: number, by: AnimalKind | null): void {
+    if (this.blackoutAt < 0) return;
+    const alone = kind !== 'tower' && troopsNear(this, x, y, TIPS.lonerRadiusTiles) <= TIPS.lonerMaxFriends;
+    this.log.push({ t: this.blackoutTime, type: 'lost', kind, by, alone });
+  }
+
+  /** Visitors still in the park. */
+  get inPark(): number {
+    let n = 0;
+    for (const v of this.visitors) if (!v.done) n++;
+    return n;
   }
 
   restorePower(): void {
@@ -351,6 +406,7 @@ export class World {
       }
     }
     this.dinosContained += contained;
+    this.log.push({ t: this.blackoutTime, type: 'power', contained });
     this.events.push({ type: 'powerRestored', contained });
   }
 
@@ -379,7 +435,20 @@ export class World {
       if (first) this.startEvacuation(first.kind);
     }
     this.cleanup();
+    if (this.blackoutAt >= 0) this.logMilestones();
     this.checkEnd();
+  }
+
+  /** The moments worth a line on the end screen that no single event marks. */
+  private logMilestones(): void {
+    if (!this.loggedEmpty && this.visitorsAtBlackout > 0 && this.inPark === 0) {
+      this.loggedEmpty = true;
+      this.log.push({ t: this.blackoutTime, type: 'parkEmpty' });
+    }
+    if (!this.loggedClear && this.allClear && this.exhibits.some((e) => e.kind !== 'pasture')) {
+      this.loggedClear = true;
+      this.log.push({ t: this.blackoutTime, type: 'allClear' });
+    }
   }
 
   // ------------------------------------------------------------ internals
@@ -395,6 +464,11 @@ export class World {
 
   private end(won: boolean, reason: EndReason): void {
     if (this.phase === 'ended') return;
+    if (this.blackoutAt >= 0) {
+      const loose: Partial<Record<AnimalKind, number>> = {};
+      for (const d of this.dinos) if (d.state === 'loose') loose[d.kind] = (loose[d.kind] ?? 0) + 1;
+      this.log.push({ t: this.blackoutTime, type: 'end', reason, loose });
+    }
     this.phase = 'ended';
     this.result = buildResult(this, won, reason);
     this.events.push({ type: 'ended', won });

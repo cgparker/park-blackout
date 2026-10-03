@@ -4,7 +4,7 @@ A single-player RTS prototype for phones. Build a dinosaur park, earn money from
 
 ## Status
 
-All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Then the park stopped warning its guests: they keep touring and paying in the dark until the first animal gets out, and only then does the park evacuate. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
+All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Then the park stopped warning its guests: they keep touring and paying in the dark until the first animal gets out, and only then does the park evacuate. A design audit added a pause menu (Restart, End game), breakout times and team strength in the panels, an end-screen timeline with one "next time" suggestion, and edge arrows during the blackout. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
 
 ## Run it
 
@@ -31,6 +31,8 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 | Pinch | Scroll wheel | Zoom |
 | **Select all**, **Clear** | Same, or Esc to clear | Selection |
 | **Got it** or **Hide tips** on a tip | Same, or Esc to close it | Tips pause the game; turn them off here or on the briefing |
+| The pause button, top right | Same, or Esc with nothing selected, or P | Pause menu: Resume, Restart, End game |
+| An arrow at the edge of the map | Click it | Look at the off-screen animal or broken fence |
 
 ## Tuning
 
@@ -43,9 +45,9 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 ## Checks
 
-- `npm test` runs 66 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, when each tip fires, and a full scripted game.
-- `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a guest keeps touring after the evacuation, the revenue doesn't add up, a number goes bad, or a game never ends.
-- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (66 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
+- `npm test` runs 83 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge, combat, power return, breakout times against the simulation, the blackout log, the end-screen timeline and its advice, when each tip fires, and a full scripted game.
+- `npm run stress` plays 40 randomized games (towers included) and fails if anyone walks through a rock, pen, or tower, a tower moves, a guest keeps touring after the evacuation, the revenue doesn't add up, the blackout log is out of order, a number goes bad, or a game never ends.
+- `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches (83 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
 - `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
 - `npm run typecheck` checks types.
 
@@ -57,9 +59,12 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 | `src/core/world.ts` | The game state, phases, and rules that tie the systems together |
 | `src/core/visitors.ts`, `units.ts`, `dinos.ts`, `combat.ts` | The systems. No Phaser in `src/core`, so it all runs in tests |
 | `src/core/nav.ts` | A* paths, distance maps, and line-of-sight |
+| `src/core/estimates.ts` | Breakout times and team sedation speed, worked out from the rules |
+| `src/core/log.ts` | What the world records during the blackout for the end screen |
 | `src/render/worldView.ts` | Draws the world |
 | `src/scenes/GameScene.ts` | Camera, touch and mouse input, wiring to the HUD |
-| `src/ui/hud.ts` | The HTML layer: bars, panels, briefing, end screen, debug |
+| `src/ui/hud.ts` | The HTML layer: bars, panels, briefing, pause menu, edge arrows, end screen, debug |
+| `src/ui/tips.ts`, `src/ui/timeline.ts` | When tips fire, and the end-screen timeline and next-time line (no DOM, so they're tested) |
 
 ## Deploy
 

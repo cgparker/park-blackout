@@ -1,7 +1,7 @@
 import { MAP, TIPS } from '../config';
 import { footprintCenter, type Exhibit } from '../core/exhibit';
 import type { Point } from '../core/grid';
-import { isTroop } from '../core/units';
+import { guarded, nearestExhibit, troopsNear } from '../core/guard';
 import type { GameEvent, World } from '../core/world';
 
 /**
@@ -42,40 +42,18 @@ export function tipsFor(w: World, events: readonly GameEvent[]): Tip[] {
       }
       case 'casualty': {
         if (e.cause !== 'raptor') break;
-        const pen = nearestRaptorPen(w, e.x, e.y, TIPS.killNearPenTiles * T);
+        const pen = nearestExhibit(w, e.x, e.y, TIPS.killNearPenTiles, 'raptor');
         if (pen && !guarded(w, pen)) out.push(raptorKillsTip(e.x, e.y));
         break;
       }
       case 'unitLost': {
         if (e.by !== 'trex' || e.kind === 'tower') break;
-        const friends = w.units.filter((u) => !u.dead && isTroop(u) && Math.hypot(u.x - e.x, u.y - e.y) <= TIPS.lonerRadiusTiles * T).length;
-        if (friends <= TIPS.lonerMaxFriends) out.push(trexLonerTip(e.x, e.y));
+        if (troopsNear(w, e.x, e.y, TIPS.lonerRadiusTiles) <= TIPS.lonerMaxFriends) out.push(trexLonerTip(e.x, e.y));
         break;
       }
     }
   }
   return out;
-}
-
-/** A raptor pen is guarded when a troop (not a tower) stands within a few tiles of its center. */
-export function guarded(w: World, ex: Exhibit): boolean {
-  const c = footprintCenter(ex.footprint, T);
-  return w.units.some((u) => !u.dead && isTroop(u) && Math.hypot(u.x - c.x, u.y - c.y) <= TIPS.guardRadiusTiles * T);
-}
-
-function nearestRaptorPen(w: World, x: number, y: number, within: number): Exhibit | null {
-  let best: Exhibit | null = null;
-  let bestD = within;
-  for (const ex of w.exhibits) {
-    if (ex.kind !== 'raptor') continue;
-    const c = footprintCenter(ex.footprint, T);
-    const d = Math.hypot(c.x - x, c.y - y);
-    if (d <= bestD) {
-      bestD = d;
-      best = ex;
-    }
-  }
-  return best;
 }
 
 function raptorPenTip(ex: Exhibit): Tip {

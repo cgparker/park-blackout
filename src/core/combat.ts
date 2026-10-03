@@ -19,6 +19,7 @@ export function damageUnit(w: World, u: Unit, amount: number, by: AnimalKind | n
   } else {
     w.troopsLost++;
   }
+  w.noteLoss(u.kind, u.x, u.y, by);
   w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y, by });
 }
 

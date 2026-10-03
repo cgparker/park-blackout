@@ -117,6 +117,18 @@ export const CAMERA = {
   keyPanSpeed: 700,
   /** Mouse wheel zoom sensitivity. */
   wheelZoomFactor: 0.0015,
+  /** Length of an automatic camera move: to the park at the blackout, or to an arrow's target. */
+  moveSeconds: 0.5,
+  /** Space around the exhibits when the camera frames the park at the blackout. */
+  frameMarginTiles: 1,
+  /** Edge arrows sit this far inside the map's edge. */
+  arrowInsetPx: 26,
+  /** Off-screen animals of one kind this close together share one arrow. */
+  arrowGroupTiles: 4,
+  /** An arrow that would land closer than this to a more urgent one is left out. */
+  arrowSpacingPx: 36,
+  /** A broken fence gets an arrow for this long. */
+  breachArrowSeconds: 4,
 };
 
 export const INPUT = {
@@ -342,7 +354,7 @@ export const BLACKOUT = {
   powerRestoreSeconds: 300,
   overrunSeconds: 180,
   /** Time runs this much faster while nothing is loose and no predator is left to escape. */
-  allClearSpeed: 8,
+  allClearSpeed: 30,
   /** The quick-test build phase offered on the briefing screen. */
   quickBuildPhaseSeconds: 120,
   /** Placeholder: Mantah Corp is from Camp Cretaceous. Rename before sharing publicly. */

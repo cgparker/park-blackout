@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
-import { BLACKOUT, CAMERA, COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, MAP, SCORING, SIM, UNITS, type ExhibitKind, type UnitKind } from '../config';
+import { BLACKOUT, CAMERA, COLORS, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, MAP, SCORING, SIM, UNITS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import { breakoutSeconds, secondsToSedate } from '../core/estimates';
 import { reinforceCost } from '../core/exhibit';
-import type { Rect } from '../core/grid';
+import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
 import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
-import { formatMoney, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
+import { afterBlackout, formatMoney, type ArrowView, type BuildKind, type ExhibitView, type Hud, type PlaceView } from '../ui/hud';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
@@ -80,6 +81,12 @@ export class GameScene extends Phaser.Scene {
   private tipQueue: Tip[] = [];
   private showFps = false;
   private resizeHandler: (() => void) | null = null;
+  /** A camera move in progress (to the park at the blackout, or to an arrow's target). Any pan or zoom cancels it. */
+  private camMove: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; t: number } | null = null;
+  /** Fresh fence breaks, shown as edge arrows for a few seconds. */
+  private breaches: { x: number; y: number; until: number }[] = [];
+  /** Where each edge arrow points, by key, for taps. */
+  private arrowTargets = new Map<string, Point>();
 
   constructor(hud: Hud, dpr: number, params: Params) {
     super({ key: 'game' });
@@ -107,6 +114,9 @@ export class GameScene extends Phaser.Scene {
     this.escapeToasts = new Map();
     this.tipQueue = [];
     this.zoomLevel = CAMERA.defaultZoom;
+    this.camMove = null;
+    this.breaches = [];
+    this.arrowTargets = new Map();
 
     this.setupCamera();
     this.setupInput();
@@ -139,9 +149,11 @@ export class GameScene extends Phaser.Scene {
     this.updateKeyboardPan(dt);
     this.updateLongPress(time);
 
+    this.updateCameraMove(dt);
+
     const w = this.world;
-    // An open tip pauses the game, so reading it never costs clock time. Orders can still be given.
-    if (w.phase !== 'briefing' && w.phase !== 'ended' && !this.hud.tipOpen) {
+    // An open tip or the pause menu stops the clock. Orders can still be given under a tip.
+    if (w.phase !== 'briefing' && w.phase !== 'ended' && !this.hud.tipOpen && !this.hud.menuOpen) {
       this.accumulator += dt * this.speed * w.timeScale;
       let steps = 0;
       while (this.accumulator >= SIM.step && steps < SIM.maxStepsPerFrame) {
@@ -160,6 +172,7 @@ export class GameScene extends Phaser.Scene {
     for (const id of this.selected) if (!w.unitById(id)) this.selected.delete(id);
     this.view.render(dt, { selected: this.selected, box: this.gesture === 'box' ? this.boxRect() : null, press: this.pressRing(time) });
     this.refreshHud();
+    this.updateArrows();
     if (this.showFps) this.hud.setFps(this.game.loop.actualFps);
   }
 
@@ -182,6 +195,16 @@ export class GameScene extends Phaser.Scene {
       },
       clearSelection: () => this.selected.clear(),
       tipDone: () => this.nextTip(),
+      openMenu: () => this.openMenu(),
+      resume: () => this.hud.hideMenu(),
+      endGame: () => {
+        this.hud.hideMenu();
+        this.world.quit();
+      },
+      focusArrow: (key) => {
+        const p = this.arrowTargets.get(key);
+        if (p) this.moveCamera(p.x, p.y, this.zoomLevel);
+      },
       tipsOff: () => {
         this.session.tips = false;
         saveTipsOn(false);
@@ -300,6 +323,10 @@ export class GameScene extends Phaser.Scene {
           this.endPlacement();
           if (this.hud.panel === 'exhibit') this.closePanels();
           this.hud.showBanner(`${BLACKOUT.villainName} has cut the power.`, 'danger', 4);
+          this.frameParkForBlackout();
+          break;
+        case 'breach':
+          this.breaches.push({ x: e.x, y: e.y, until: w.time + CAMERA.breachArrowSeconds });
           break;
         case 'evacuation':
           this.hud.showBanner(
@@ -339,7 +366,10 @@ export class GameScene extends Phaser.Scene {
           this.closePanels();
           this.tipQueue = [];
           this.hud.hideTip();
-          this.time.delayedCall(1200, () => {
+          this.hud.hideMenu();
+          this.hud.setArrows([]);
+          // A game ended from the menu shows its results right away; otherwise let the last moment play out.
+          this.time.delayedCall(w.result?.reason === 'abandoned' ? 0 : 1200, () => {
             if (w.result) this.hud.showEnd(w.result);
           });
           break;
@@ -349,6 +379,109 @@ export class GameScene extends Phaser.Scene {
     if (allClear && !this.wasAllClear && w.phase === 'blackout') this.hud.showBanner('All clear. Fast-forwarding to power-on.', 'good');
     this.wasAllClear = allClear;
     this.queueTips(events);
+  }
+
+  // ---------------------------------------------------------------- pause menu
+
+  private openMenu(): void {
+    const phase = this.world.phase;
+    if (phase === 'briefing' || phase === 'ended') return;
+    if (this.placingKind) this.endPlacement();
+    this.hud.showMenu();
+  }
+
+  // ---------------------------------------------------------------- camera moves and edge arrows
+
+  /** Eases the camera to a point and zoom. Any pan or zoom by the player cancels it. */
+  private moveCamera(x: number, y: number, zoom: number): void {
+    this.camMove = { x0: this.cx, y0: this.cy, z0: this.zoomLevel, x1: x, y1: y, z1: zoom, t: 0 };
+  }
+
+  private updateCameraMove(dt: number): void {
+    const m = this.camMove;
+    if (!m) return;
+    m.t = Math.min(1, m.t + dt / CAMERA.moveSeconds);
+    const k = 1 - (1 - m.t) ** 3;
+    this.zoomLevel = m.z0 * (m.z1 / m.z0) ** k;
+    this.cx = m.x0 + (m.x1 - m.x0) * k;
+    this.cy = m.y0 + (m.y1 - m.y0) * k;
+    this.applyCamera();
+    if (m.t >= 1) this.camMove = null;
+  }
+
+  /** At the blackout, frame every exhibit so the first escape happens on screen. */
+  private frameParkForBlackout(): void {
+    const exs = this.world.exhibits;
+    if (!exs.length || this.gesture !== 'idle') return;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const e of exs) {
+      x0 = Math.min(x0, e.footprint.x);
+      y0 = Math.min(y0, e.footprint.y);
+      x1 = Math.max(x1, e.footprint.x + e.footprint.w);
+      y1 = Math.max(y1, e.footprint.y + e.footprint.h);
+    }
+    const m = CAMERA.frameMarginTiles;
+    const cam = this.cameras.main;
+    const fit = Math.min(cam.width / this.dpr / ((x1 - x0 + 2 * m) * T), cam.height / this.dpr / ((y1 - y0 + 2 * m) * T));
+    this.moveCamera(((x0 + x1) / 2) * T, ((y0 + y1) / 2) * T, clamp(fit, this.minZoom(), CAMERA.defaultZoom));
+  }
+
+  /** Arrows at the map edge for loose animals and fresh fence breaks that are off screen. Tap one to look there. */
+  private updateArrows(): void {
+    const w = this.world;
+    this.arrowTargets.clear();
+    if (w.phase !== 'blackout' && w.phase !== 'restored') {
+      this.hud.setArrows([]);
+      return;
+    }
+    this.breaches = this.breaches.filter((b) => b.until > w.time);
+    const targets: { kind: AnimalKind | 'breach'; x: number; y: number; count: number }[] = [];
+    const join = (kind: AnimalKind | 'breach', x: number, y: number) => {
+      const near = targets.find((t) => t.kind === kind && Math.hypot(t.x - x, t.y - y) <= CAMERA.arrowGroupTiles * T);
+      if (!near) {
+        targets.push({ kind, x, y, count: 1 });
+        return;
+      }
+      near.x = (near.x * near.count + x) / (near.count + 1);
+      near.y = (near.y * near.count + y) / (near.count + 1);
+      near.count++;
+    };
+    for (const d of w.dinos) if (d.state === 'loose') join(d.kind, d.x, d.y);
+    for (const b of this.breaches) join('breach', b.x, b.y);
+    const urgency: Record<AnimalKind | 'breach', number> = { trex: 0, raptor: 1, breach: 2, triceratops: 3 };
+    targets.sort((a, b) => urgency[a.kind] - urgency[b.kind]);
+
+    const cam = this.cameras.main;
+    const left = cam.x / this.dpr;
+    const top = cam.y / this.dpr;
+    const right = (cam.x + cam.width) / this.dpr;
+    const bottom = (cam.y + cam.height) / this.dpr;
+    const mx = (left + right) / 2;
+    const my = (top + bottom) / 2;
+    const hw = (right - left) / 2 - CAMERA.arrowInsetPx;
+    const hh = (bottom - top) / 2 - CAMERA.arrowInsetPx;
+    const out: ArrowView[] = [];
+    const banner = this.hud.bannerBox;
+    const r = CAMERA.arrowInsetPx;
+    for (const t of targets) {
+      const p = this.worldToCss(t.x, t.y);
+      if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) continue;
+      const dx = p.x - mx;
+      const dy = p.y - my;
+      const s = Math.min(hw / Math.max(Math.abs(dx), 1e-6), hh / Math.max(Math.abs(dy), 1e-6));
+      const x = mx + dx * s;
+      let y = my + dy * s;
+      // Step below the banner rather than cover it. The arrow still points the right way.
+      if (banner && x > banner.left - r && x < banner.right + r && y > banner.top - r && y < banner.bottom + r) y = banner.bottom + r;
+      if (out.some((a) => Math.hypot(a.x - x, a.y - y) < CAMERA.arrowSpacingPx)) continue;
+      const key = `${t.kind}-${out.length}`;
+      this.arrowTargets.set(key, { x: t.x, y: t.y });
+      out.push({ key, x, y, angle: Math.atan2(dy, dx), kind: t.kind, count: t.count });
+    }
+    this.hud.setArrows(out);
   }
 
   // ---------------------------------------------------------------- tips
@@ -397,6 +530,9 @@ export class GameScene extends Phaser.Scene {
 
   private trainingView() {
     const w = this.world;
+    // Troops alive plus the queue: what the player will have.
+    const team = [...w.units.filter(isTroop).map((u) => u.kind), ...w.queue.map((q) => q.kind)];
+    const packSize = EXHIBITS.raptor.animalCount;
     return {
       money: w.money,
       canTrain: canTrainNow(w),
@@ -405,6 +541,7 @@ export class GameScene extends Phaser.Scene {
         kind: q.kind,
         progress: i === 0 ? 1 - q.left / UNITS[q.kind].trainSeconds : 0,
       })),
+      team: { troops: team.length, trexSeconds: secondsToSedate(team, 'trex'), packSeconds: secondsToSedate(team, 'raptor', packSize), packSize },
     };
   }
 
@@ -449,6 +586,7 @@ export class GameScene extends Phaser.Scene {
       reinforceCost: w.canBuild && !ex.reinforced ? reinforceCost(ex.footprint) : null,
       reinforced: ex.reinforced,
       money: w.money,
+      breakout: w.canBuild ? { now: breakoutSeconds(ex.kind, ex.reinforced), concrete: ex.reinforced ? null : breakoutSeconds(ex.kind, true) } : null,
     };
   }
 
@@ -540,6 +678,7 @@ export class GameScene extends Phaser.Scene {
     const dx = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
     const dy = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
     if (!dx && !dy) return;
+    this.camMove = null;
     this.cx += (dx * CAMERA.keyPanSpeed * dt) / this.zoomLevel;
     this.cy += (dy * CAMERA.keyPanSpeed * dt) / this.zoomLevel;
     this.applyCamera();
@@ -554,17 +693,28 @@ export class GameScene extends Phaser.Scene {
     this.input.on(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
     this.input.on(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
     this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.onPointerUp, this);
-    this.input.on(Phaser.Input.Events.POINTER_WHEEL, (p: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) =>
-      this.zoomAt(p.x, p.y, this.zoomLevel * Math.exp(-dy * CAMERA.wheelZoomFactor)),
-    );
+    this.input.on(Phaser.Input.Events.POINTER_WHEEL, (p: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) => {
+      this.camMove = null;
+      this.zoomAt(p.x, p.y, this.zoomLevel * Math.exp(-dy * CAMERA.wheelZoomFactor));
+    });
     const kb = this.input.keyboard;
     if (kb) {
       this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT', false) as Record<string, Phaser.Input.Keyboard.Key>;
-      kb.on('keydown-ESC', () => {
-        if (this.hud.tipOpen) this.nextTip();
+      // Phaser handles a key as it arrives and again each frame until the frame ends, and can hand an earlier
+      // key event over a second time when several arrive within one slow frame. Each event acts once.
+      const handled = new WeakSet<KeyboardEvent>();
+      const fresh = (e: KeyboardEvent) => !handled.has(e) && !!handled.add(e);
+      kb.on('keydown-ESC', (e: KeyboardEvent) => {
+        if (!fresh(e)) return;
+        if (this.hud.menuOpen) this.hud.hideMenu();
+        else if (this.hud.tipOpen) this.nextTip();
         else if (this.placingKind) this.endPlacement();
         else if (this.hud.panel) this.closePanels();
-        else this.selected.clear();
+        else if (this.selected.size) this.selected.clear();
+        else this.openMenu();
+      });
+      kb.on('keydown-P', (e: KeyboardEvent) => {
+        if (fresh(e)) (this.hud.menuOpen ? this.hud.hideMenu() : this.openMenu());
       });
     }
   }
@@ -575,6 +725,7 @@ export class GameScene extends Phaser.Scene {
 
   private onPointerDown(p: Phaser.Input.Pointer): void {
     if (this.blocked) return;
+    this.camMove = null;
     const touch = p.wasTouch;
     if (!touch && p.button === 2) {
       this.rightDown = { x: p.x, y: p.y };
@@ -832,6 +983,7 @@ export class GameScene extends Phaser.Scene {
     const lines: [string, string][] = [['Exhibit', formatMoney(plan.exhibitCost)]];
     if (plan.viewingSpot) lines.push([tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, formatMoney(plan.pathCost)]);
     lines.push(['Earns per visit', formatMoney(cfg.pricePerVisit)]);
+    lines.push(['Breaks out', afterBlackout(breakoutSeconds(plan.kind, false))]);
     return { title: cfg.name, lines, reason: plan.reason, cost: plan.totalCost, valid: plan.valid };
   }
 

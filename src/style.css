@@ -90,12 +90,29 @@ body {
   height: calc(var(--top-h) + var(--safe-t));
   padding: var(--safe-t) calc(16px + var(--safe-r)) 0 calc(16px + var(--safe-l));
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, auto) auto;
   align-items: center;
   gap: 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   pointer-events: auto;
+}
+
+.pause-btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+}
+
+.pause-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: var(--text);
 }
 
 .stat {
@@ -541,6 +558,12 @@ body {
   color: var(--muted);
 }
 
+.team-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .reinforce {
   width: 100%;
   margin-top: 10px;
@@ -662,6 +685,102 @@ body {
   flex: none;
 }
 
+/* ------------------------------------------------------------ edge arrows */
+
+/* Point at loose animals and fresh fence breaks that are off screen. Tap one to look there. */
+/* Above the banner, below panels and tips. */
+.arrows {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.edge-arrow {
+  position: absolute;
+  left: -21px;
+  top: -21px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--bad);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.edge-arrow .pointer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.edge-arrow .pointer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -12px;
+  margin-top: -7px;
+  border-left: 10px solid var(--bad);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+}
+
+.arrow-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--warn);
+}
+
+.arrow-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.arrow-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 17px;
+  height: 17px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 17px;
+  text-align: center;
+}
+
+.arrow-count:empty {
+  display: none;
+}
+
+.edge-arrow[data-kind='breach'] {
+  border-color: var(--warn);
+}
+
+.edge-arrow[data-kind='breach'] .pointer::after {
+  border-left-color: var(--warn);
+}
+
+.edge-arrow[data-kind='triceratops'] {
+  border-color: var(--muted);
+}
+
+.edge-arrow[data-kind='triceratops'] .pointer::after {
+  border-left-color: var(--muted);
+}
+
 /* ------------------------------------------------------------ overlays */
 
 .overlay {
@@ -762,7 +881,8 @@ body {
 }
 
 .brief-side h2,
-.end-grid h2 {
+.end-grid h2,
+.timeline h2 {
   margin: 0 0 6px;
   font-size: 11px;
   font-weight: 700;
@@ -817,10 +937,16 @@ body {
   background: var(--accent);
 }
 
+/* The card fits the screen: its body scrolls and Retry stays below it. */
+.overlay.end {
+  overflow: hidden;
+}
+
 .end-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  max-height: 100%;
 }
 
 .end-head {
@@ -876,6 +1002,115 @@ body {
   min-width: 200px;
   min-height: 50px;
   font-size: 17px;
+}
+
+.end-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.end-foot {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.end-foot .retry {
+  flex: none;
+}
+
+.next-time {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 181, 71, 0.08);
+  border: 1px solid rgba(255, 181, 71, 0.45);
+}
+
+.next-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+.next-time p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.tl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tl-row {
+  display: grid;
+  grid-template-columns: 3em minmax(0, 1fr);
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tl-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-row.bad .tl-text {
+  color: var(--bad);
+}
+
+.tl-row.loss .tl-text {
+  color: var(--danger);
+}
+
+.tl-row.good .tl-text {
+  color: #b6f5cd;
+}
+
+/* ------------------------------------------------------------ pause menu */
+
+.menu {
+  z-index: 22;
+}
+
+.menu-card {
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.menu-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu-actions .primary,
+.menu-actions .secondary {
+  flex: none;
+  width: 100%;
 }
 
 /* ------------------------------------------------------------ debug */
@@ -1030,6 +1265,10 @@ body {
   .hq-icon {
     width: 28px;
     height: 28px;
+  }
+  .pause-btn {
+    width: 32px;
+    height: 32px;
   }
   .card {
     padding: 14px 16px;

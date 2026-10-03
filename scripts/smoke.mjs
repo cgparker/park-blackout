@@ -50,6 +50,8 @@ const cssOf = (page, wx, wy) => S(page, ([x, y]) => window.__pb.scene.worldToCss
 const centerOn = (page, wx, wy, zoom = 0.8) =>
   S(page, ([x, y, z]) => {
     const s = window.__pb.scene;
+    // Stop any camera move still easing, so taps land where this puts things.
+    s.camMove = null;
     s.zoomLevel = z;
     s.cx = x;
     s.cy = y;
@@ -150,9 +152,19 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const penCenter = await cssOf(page, (pen.x + 2) * T, (pen.y + 2) * T);
   await page.touchscreen.tap(penCenter.x, penCenter.y);
   check('tapping an exhibit opens its panel', await page.isVisible('.exhibit-panel'));
+  const breakoutText = () =>
+    S(page, () => [...document.querySelectorAll('.exhibit-panel .line')].find((l) => l.textContent.startsWith('Breaks out'))?.querySelector('.value')?.textContent ?? '');
+  const chainLink = await breakoutText();
+  check('the exhibit panel says when the animals break out', /^\d+ s after blackout$/.test(chainLink), chainLink);
+  check('the reinforce note says how long concrete holds them', (await page.textContent('.exhibit-panel .note')).includes('holds them in until about'));
   await S(page, () => (window.__pb.world.money += 5000));
   await page.tap('.exhibit-panel .reinforce');
   check('Reinforce upgrades the fence', await world(() => window.__pb.world.exhibits[0].segments.every((s) => s.hp === 600)));
+  const concrete = await soon(async () => {
+    const t = await breakoutText();
+    return t !== chainLink ? t : null;
+  });
+  check('concrete pushes the breakout later', parseInt(concrete) > parseInt(chainLink), `${chainLink} -> ${concrete}`);
   await page.tap('.exhibit-panel .close');
 
   // Build a Tranq Tower with the UI.
@@ -187,8 +199,19 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await advance(page, 32);
   await page.waitForTimeout(100);
   check('troops appear beside HQ', (await world(() => window.__pb.world.units.filter((u) => u.kind !== 'tower').length)) === 3);
+  check('HQ says how fast the team sedates a T. rex and a raptor pack', await soon(async () => /^Your 3 troops, darting together: a T\. rex in \d+ s, a pack of 3 raptors in \d+ s\.$/.test(await page.textContent('.team-note'))), await page.textContent('.team-note'));
   await page.screenshot({ path: `${out}/3-training.png` });
   await page.tap('.train-panel .close');
+
+  // The pause menu stops the clock.
+  await page.tap('.pause-btn');
+  check('the pause button opens the menu', await soon(() => page.isVisible('.menu')));
+  const pausedAt = await world(() => window.__pb.world.phaseTime);
+  await page.waitForTimeout(500);
+  check('the game is paused while the menu is open', (await world(() => window.__pb.world.phaseTime)) === pausedAt);
+  await page.tap('.menu-resume');
+  await page.waitForTimeout(300);
+  check('Resume closes the menu and the game runs again', !(await page.isVisible('.menu')) && (await world(() => window.__pb.world.phaseTime)) > pausedAt);
 
   // Tap to select, tap to move.
   const unit = await world(() => {
@@ -237,6 +260,20 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.dbg-btn >> text=Blackout now');
   await page.waitForTimeout(800);
   check('Blackout now cuts the power', (await world(() => window.__pb.world.phase)) === 'blackout');
+  await page.waitForTimeout(700);
+  const framed = await world(() => {
+    const s = window.__pb.scene;
+    const cam = s.cameras.main;
+    const top = cam.y / s.dpr;
+    const bottom = (cam.y + cam.height) / s.dpr;
+    const right = cam.width / s.dpr;
+    const shown = window.__pb.world.exhibits.every((e) => {
+      const c = s.worldToCss((e.footprint.x + e.footprint.w / 2) * 40, (e.footprint.y + e.footprint.h / 2) * 40);
+      return c.x > 0 && c.x < right && c.y > top && c.y < bottom;
+    });
+    return { shown, zoom: s.zoomLevel };
+  });
+  check('the camera frames the park when the power goes out', framed.shown && framed.zoom <= 0.8 + 1e-6, JSON.stringify(framed));
   check('the blackout banner shows', await soon(async () => (await page.textContent('.banner')).includes('cut the power')));
   check('build buttons hide after the blackout', await soon(async () => !(await page.isVisible('.build-group'))));
   check('guests keep paying in the dark, so the revenue slot stays', (await page.textContent('.stat.revenue .cap')).startsWith('Revenue'));
@@ -253,6 +290,27 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('the first escape starts the evacuation', (await world(() => window.__pb.world.evacuatedBy)) === 'raptor');
   check('the evacuation banner shows', await soon(async () => (await page.textContent('.banner')) === 'Raptors are out. The park is evacuating.'));
   check('the revenue slot counts visitors once the park evacuates', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Visitors in park'));
+  // Look away: an arrow at the map edge points back at the raptors, and tapping it brings the camera there.
+  // Every raptor holds still meanwhile, so the one the arrow points at can't run off before the camera arrives.
+  await S(page, () => window.__pb.world.dinos.forEach((d) => d.kind === 'raptor' && d.state === 'loose' && (d.pause = 999)));
+  await centerOn(page, 34 * T, 21 * T, 1.6);
+  check('an edge arrow points at loose raptors off screen', await soon(async () => (await page.locator('.edge-arrow[data-kind="raptor"]:not(.hidden)').count()) > 0));
+  await page.tap('.edge-arrow[data-kind="raptor"]:not(.hidden) >> nth=0');
+  // The camera eases over half a second of frame time, which is slower in software rendering.
+  await soon(() => world(() => window.__pb.scene.camMove === null), 6000);
+  const looked = await world(() => {
+    const s = window.__pb.scene;
+    const cam = s.cameras.main;
+    const top = cam.y / s.dpr;
+    const bottom = (cam.y + cam.height) / s.dpr;
+    const right = cam.width / s.dpr;
+    return window.__pb.world.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose').some((d) => {
+      const c = s.worldToCss(d.x, d.y);
+      return c.x > 0 && c.x < right && c.y > top && c.y < bottom;
+    });
+  });
+  check('tapping the arrow brings the raptors on screen', looked);
+  await S(page, (id) => window.__pb.world.dinos.forEach((d) => d.kind === 'raptor' && d.id !== id && (d.pause = 0)), target.id);
   await S(page, () => {
     const s = window.__pb.scene;
     s.selected = new Set(window.__pb.world.units.filter((u) => u.kind !== 'tower').map((u) => u.id));
@@ -275,6 +333,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const endText = await page.textContent('.end');
   check('end screen counts visitors and towers', endText.includes('Got out safely') && endText.includes('Towers lost') && /Towers\$4,500/.test(endText), endText.slice(0, 80));
   check('end screen shows money earned in the dark and the first animal out', endText.includes('Earned in the dark') && endText.includes('First animal outRaptors'), endText);
+  check('end screen tells what happened, in order', /What happened0:00The power is cut with \d+ guests? inside\..*Raptors are out\./.test(endText), endText.slice(0, 300));
   await page.screenshot({ path: `${out}/6-end.png` });
   await page.tap('.retry');
   await page.waitForTimeout(400);
@@ -286,6 +345,18 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.reload();
   await page.waitForFunction(() => window.__pb?.world, null, { timeout: 15000 });
   check('tips stay off after a reload', !(await page.isChecked('#opt-tips')));
+
+  // Restart and End game from the pause menu.
+  await page.tap('.start');
+  await page.tap('.pause-btn');
+  await page.tap('.menu-restart');
+  check('Restart from the menu goes back to the briefing', await soon(() => page.isVisible('.briefing')));
+  await page.tap('.start');
+  await page.tap('.pause-btn');
+  await page.tap('.menu-end');
+  check('End game shows the results right away', await soon(() => page.isVisible('.end'), 1500));
+  check('a game ended early says so', (await page.textContent('.end h1')) === 'Game ended early' && (await page.textContent('.end .detail')).includes('before the blackout'));
+  await page.tap('.retry');
 
   check('no console errors on phone', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -336,6 +407,14 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const r = await cssOf(page, 14.5 * T, 16.5 * T);
   await page.mouse.click(r.x, r.y, { button: 'right' });
   check('right-click orders a move', (await S(page, () => window.__pb.world.units.every((u) => u.order === 'move'))) === true);
+  // Phaser handles keys on its next frame, so each check waits for it.
+  const escState = () => S(page, () => `selected ${window.__pb.scene.selected.size}, menu ${window.__pb.scene.hud.menuOpen}, tip ${window.__pb.scene.hud.tipOpen}, panel ${window.__pb.scene.hud.panel}, fps ${Math.round(window.__pb.scene.game.loop.actualFps)}`);
+  await page.keyboard.press('Escape');
+  check('Esc clears the selection first', (await soon(async () => (await S(page, () => window.__pb.scene.selected.size)) === 0, 8000)) && !(await page.isVisible('.menu')), await escState());
+  await page.keyboard.press('Escape');
+  check('Esc with nothing selected opens the pause menu', await soon(() => page.isVisible('.menu'), 8000), await escState());
+  await page.keyboard.press('Escape');
+  check('Esc closes the pause menu', await soon(async () => !(await page.isVisible('.menu')), 8000), await escState());
   await page.keyboard.down('d');
   await page.waitForTimeout(250);
   await page.keyboard.up('d');

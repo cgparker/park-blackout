@@ -93,6 +93,6 @@ describe('tips', () => {
       ...tipsFor(w, [{ type: 'unitLost', unitId: 1, kind: 'heavy', x: 30 * T, y: 20 * T, by: 'trex' }]),
     ];
     expect(new Set(ids(all))).toEqual(new Set(['raptorPen', 'trex', 'evacuation', 'unguarded', 'raptorKills', 'trexLoner']));
-    for (const t of all) expect(`${t.title} ${t.body}`).not.toMatch(/[–—]|\s--\s/);
+    for (const t of all) expect(`${t.title} ${t.body}`).not.toMatch(/[\u2013\u2014]|\s--\s/);
   });
 });

@@ -305,6 +305,7 @@ function goLoose(w: World, d: Dino): void {
   d.pathIndex = 0;
   d.wander = null;
   d.lockId = 0;
+  w.noteEscape(d);
   w.events.push({ type: 'escaped', dinoId: d.id, kind: d.kind });
 }
 
@@ -869,6 +870,7 @@ function checkVisitorContact(w: World, dt: number): void {
 export function killVisitor(w: World, v: Visitor, cause: CasualtyCause): void {
   v.done = true;
   w.casualties[cause]++;
+  w.noteDeath(cause, v.x, v.y);
   w.events.push({ type: 'casualty', x: v.x, y: v.y, cause });
   panicNear(w, v.x, v.y, VISITORS.panicCasualtyRadiusTiles * w.T);
 }

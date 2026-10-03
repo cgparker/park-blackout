@@ -15,7 +15,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 2. Does the cascade feel dramatic and fair ("I should have spaced those pens out") rather than random?
 3. Do I want to replay it with a different build order?
 
-**Out of scope:** real art, sound, saving, menus beyond Retry, multiple levels, lethal weapons, fence repair, and Mantah troops.
+**Out of scope:** real art, sound, saving, menus beyond the pause menu and Retry, multiple levels, lethal weapons, fence repair, and Mantah troops.
 
 ## 2. Platform and tech
 
@@ -131,17 +131,23 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 | Tap an exhibit with nothing selected | Exhibit panel: visits, revenue, fence HP, Reinforce button |
 | Tap HQ | Training panel |
 | Tap **Tower** in the bottom bar, then the map | Place a Tranq Tower |
+| Tap the pause button (right end of the top bar) | Pause menu: **Resume**, **Restart**, **End game** |
+| Tap an arrow at the edge of the map | Look at the off-screen animal or broken fence it points to |
 
 HUD buttons: **Select All Troops** and **Clear Selection**.
 
 ### Mouse
 
-Left-click to select, left-drag for a selection box, right-click to move or attack, WASD or arrow keys to pan, scroll wheel to zoom.
+Left-click to select, left-drag for a selection box, right-click to move or attack, WASD or arrow keys to pan, scroll wheel to zoom. Esc clears the selection, and with nothing selected it opens the pause menu. P pauses too.
 
 ### HUD
 
-- **Top bar:** money, revenue vs. target, the countdown (large, centered), and casualties (x/8). In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
+- **Top bar:** money, revenue vs. target, the countdown (large, centered), casualties (x/8), and the pause button. In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
+- **Pause menu:** stops the clock. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
+- **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors.
+- **When the power goes out** the camera moves to show every exhibit.
+- **Edge arrows:** in Act 2, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
 
 ### Tips
 
@@ -202,7 +208,7 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 ## 9. Winning and losing
 
-- **Lose:** 8 casualties at any point ("The park has been shut down"), or any dinosaur still loose 3:00 after power returns ("The park is overrun").
+- **Lose:** 8 casualties at any point ("The park has been shut down"), or any dinosaur still loose 3:00 after power returns ("The park is overrun"). Ending the game from the pause menu also counts as a loss ("Game ended early").
 - **Win:** Power has returned and no dinosaurs are loose.
 
 ### Stars
@@ -214,6 +220,8 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 ### End screen
 
 - Stars and result.
+- **Next time:** one thing to do differently, picked from what went worst (raptors first out into a full park, deaths by an unguarded raptor pen, raptors out while guests were still inside, a troop the T. rex caught alone, an overrun, or revenue short of ★★). None after a clean game.
+- **What happened:** a short timeline of the blackout. The power cut, the first animal out of each exhibit with the guests still inside, the evacuation, deaths with their cause and place, troops and towers lost, the park emptying, the power coming back, and anything still loose at the end.
 - Revenue by exhibit (visits and dollars).
 - Spending: exhibits, paths, reinforcement, troops, towers.
 - Visitors in the park at the blackout, money earned in the dark, the first animal out, and how many visitors got out.

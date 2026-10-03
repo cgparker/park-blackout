@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, SCORING, SQUAD, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { damageUnit } from '../src/core/combat';
 import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
+import { breakoutSeconds, secondsToSedate, sedationPerSecond } from '../src/core/estimates';
 import { Tile } from '../src/core/grid';
 import { planPlacement, planTower } from '../src/core/placement';
 import { starsFor } from '../src/core/report';
@@ -417,7 +419,7 @@ describe('blackout and cascade', () => {
     expect(events.filter((e) => e.type === 'fenceHit' && e.exhibitId === rex.id)).toHaveLength(8);
   });
 
-  it('the raptor pack hits the weakest segment together after 20 seconds', () => {
+  it('the raptor pack hits the weakest segment together after its breakout delay', () => {
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const weak = pen.segments.findIndex((s) => !s.corner && s.nx === 1);
@@ -750,6 +752,122 @@ describe('power return and scoring', () => {
     expect(starsFor(true, 39999, 40000, 0)).toBe(1);
     expect(starsFor(true, 40000, 40000, 1)).toBe(2);
     expect(starsFor(true, 40000, 40000, 0)).toBe(3);
+  });
+});
+
+describe('planning numbers and the blackout log', () => {
+  it('breakout estimates match the simulation within a second', () => {
+    for (const kind of ['trex', 'raptor'] as const) {
+      for (const reinforced of [false, true]) {
+        const w = new World({ seed: 11, startingMoney: RICH, buildPhaseSeconds: 1 });
+        const ex = place(w, kind, kind === 'trex' ? 20 : 9, kind === 'trex' ? 16 : 11);
+        if (reinforced) w.reinforce(ex.id);
+        w.start();
+        run(w, 1 + 60, () => w.dinos.some((d) => d.state === 'loose'));
+        const estimate = breakoutSeconds(kind, reinforced)!;
+        expect(Math.abs(w.phaseTime - estimate), `${kind} ${reinforced ? 'concrete' : 'chain-link'}`).toBeLessThan(1);
+      }
+    }
+    expect(breakoutSeconds('pasture', false)).toBeNull();
+    // Concrete always buys time.
+    expect(breakoutSeconds('raptor', true)!).toBeGreaterThan(breakoutSeconds('raptor', false)!);
+  });
+
+  it('team sedation adds up every dart', () => {
+    expect(sedationPerSecond('tranq')).toBe(UNITS.tranq.dartSedation / UNITS.tranq.fireIntervalSeconds);
+    const team = ['heavy', 'tranq', 'heavy'] as const;
+    const rate = 2 * sedationPerSecond('heavy') + sedationPerSecond('tranq');
+    expect(secondsToSedate(team, 'trex')).toBeCloseTo(DINOS.trex.sedation / rate);
+    expect(secondsToSedate(team, 'raptor', 3)).toBeCloseTo((3 * DINOS.raptor.sedation) / rate);
+    expect(secondsToSedate([], 'trex')).toBe(Infinity);
+  });
+
+  it('logs the escape that starts the evacuation, the guests inside, and when the park empties', () => {
+    let pen!: ReturnType<typeof place>;
+    let far!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => {
+      pen = place(w, 'raptor', 9, 11);
+      far = place(w, 'pasture', 30, 20);
+    });
+    const guest = bystander(w, (far.viewingSpot.x + 0.5) * T, (far.viewingSpot.y + 0.5) * T);
+    guest.target = far.id;
+    expect(w.log).toEqual([{ t: 0, type: 'blackout', inPark: 0 }]);
+    // As if this guest had been in the park when the lights went out.
+    w.visitorsAtBlackout = 1;
+    run(w, 40, () => w.evacuating);
+    const escape = w.log.find((e) => e.type === 'escape');
+    expect(escape).toMatchObject({ type: 'escape', kind: 'raptor', inPark: 1, evacuation: true });
+    expect(escape!.t).toBeCloseTo(w.blackoutTime, 1);
+    // One line per pen, not per raptor.
+    run(w, 2);
+    expect(w.log.filter((e) => e.type === 'escape')).toHaveLength(1);
+    // Walked out or caught on the way, the park is empty once this guest is gone.
+    run(w, 60, () => guest.done);
+    expect(w.log.at(-1)?.type).toBe('parkEmpty');
+    expect(w.log.filter((e) => e.type === 'parkEmpty')).toHaveLength(1);
+    expect(pen.id).toBeGreaterThan(0);
+  });
+
+  it('logs where guests died and whether a raptor pen nearby was guarded', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const spot = { x: (pen.viewingSpot.x + 0.5) * T, y: (pen.viewingSpot.y + 0.5) * T };
+    killVisitor(w, bystander(w, spot.x, spot.y), 'raptor');
+    spawnUnit(w, 'heavy', { x: spot.x + T, y: spot.y });
+    killVisitor(w, bystander(w, spot.x, spot.y), 'raptor');
+    killVisitor(w, bystander(w, 30.5 * T, 21.5 * T), 'stampede');
+    const deaths = w.log.filter((e) => e.type === 'death');
+    expect(deaths).toMatchObject([
+      { cause: 'raptor', near: 'raptor', unguardedPen: true },
+      { cause: 'raptor', near: 'raptor', unguardedPen: false },
+      { cause: 'stampede', near: null, unguardedPen: false },
+    ]);
+  });
+
+  it('logs troop losses and whether the T. rex caught one alone', () => {
+    const w = blackoutWorld(() => {});
+    const loner = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 12.5 * T });
+    damageUnit(w, loner, 999, 'trex');
+    const grouped = spawnUnit(w, 'heavy', { x: 10.5 * T, y: 12.5 * T });
+    spawnUnit(w, 'tranq', { x: 11.5 * T, y: 12.5 * T });
+    spawnUnit(w, 'tranq', { x: 9.5 * T, y: 12.5 * T });
+    damageUnit(w, grouped, 999, 'trex');
+    expect(w.log.filter((e) => e.type === 'lost')).toMatchObject([
+      { kind: 'tranq', by: 'trex', alone: true },
+      { kind: 'heavy', by: 'trex', alone: false },
+    ]);
+  });
+
+  it('ending the game from the menu is a loss that keeps what happened', () => {
+    const early = new World({ seed: 12 });
+    early.start();
+    run(early, 5);
+    early.quit();
+    expect(early.phase).toBe('ended');
+    expect(early.result).toMatchObject({ won: false, reason: 'abandoned', stars: 0, title: 'Game ended early', log: [] });
+    expect(early.result!.detail).toContain('before the blackout');
+
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    run(w, 30, () => w.evacuating);
+    w.quit();
+    expect(w.result?.reason).toBe('abandoned');
+    const end = w.result!.log.at(-1);
+    expect(end).toMatchObject({ type: 'end', reason: 'abandoned', loose: { raptor: 3 } });
+    expect(pen.id).toBeGreaterThan(0);
+    // Quitting twice, or before the start, changes nothing.
+    w.quit();
+    expect(w.result!.log.filter((e) => e.type === 'end')).toHaveLength(1);
+    const unstarted = new World({ seed: 13 });
+    unstarted.quit();
+    expect(unstarted.phase).toBe('briefing');
+  });
+
+  it('a won game logs every predator secured, the power coming back, and the end', () => {
+    const w = blackoutWorld((w) => place(w, 'pasture', 6, 4));
+    run(w, BLACKOUT.powerRestoreSeconds + 1, () => w.phase === 'ended');
+    expect(w.result?.log.map((e) => e.type)).toEqual(['blackout', 'power', 'end']);
+    expect(w.result?.log.at(-2)).toMatchObject({ type: 'power', contained: 2 });
   });
 });
 
