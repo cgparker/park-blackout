@@ -13,10 +13,11 @@ Chosen by Chris: move toward real 3D, starting with a playable slice of levels 1
 68. **The tower deck is 1.25 tiles up,** above a troop's head. At the old height a troop behind the tower seemed to float beside the gun.
 69. **Eyes sit on the side of the head**, found from the head's own shape (a set share back from the snout and up from the jaw), because the models have no eyeballs.
 70. **Only what the camera can see is drawn.** Trees, bushes, and grass outside the view (plus a margin on the sun's side for shadows) are skipped, and the shadow map is fitted to the view.
-71. **High and Low quality.** High: up to 2x pixel density, antialiasing, bloom, sharper shadows, more grass, and a few shadow-casting night lights. Low: about 1.25x, no antialiasing or bloom, shadows from trees only, less grass, and no shadows from night lights. Switching reloads the page. After 6 seconds under 24 fps on High, a toast suggests Low, once.
+71. **High and Low quality.** High: up to 2x pixel density, antialiasing, bloom, sharper shadows, more grass, and a few shadow-casting night lights. Low: about 1.25x, no antialiasing or bloom, shadows from trees only, less grass, and no shadows from night lights. Switching rebuilds the view on a new canvas and keeps the game going, since the renderer's settings are fixed when it starts. The choice is remembered on the device when storage allows. After 6 seconds under 24 fps on High, a toast suggests Low, once.
 72. **The Night switch is a test tool.** It changes the lighting only; levels 1 and 2 still play by day rules.
 73. **No meshopt compression.** The models use packed vertices (KHR_mesh_quantization), which needs no decoder, because the artifact page may refuse the WebAssembly that meshopt decoding needs. The files are about twice as big.
 74. **Panels stay on screen** when what they point at is off it (HQ scrolled away, say). This also applies to the 2D game.
+75. **In the artifact, models travel as base64 text.** The artifact host serves text, images, and media, but no binary model files. The artifact build (`--mode artifact`) reads each model as a GLB in base64 (`.glb.txt`) and decodes it in the page; textures stay ordinary images. It adds about a third to the download, about 9.5 MB in all.
 
 ## Levels 1 and 2
 

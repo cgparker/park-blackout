@@ -45,7 +45,7 @@ export class SliceGame {
   private world!: World;
   private vw!: ViewWorld;
   private view!: View3D;
-  private readonly canvas: HTMLCanvasElement;
+  private canvas: HTMLCanvasElement;
   private readonly session: { level: LevelId; debug: boolean; tips: boolean };
   private selected = new Set<number>();
   private accumulator = 0;
@@ -82,12 +82,15 @@ export class SliceGame {
   private readonly fpsEl: HTMLElement;
   private readonly nightBtn: HTMLButtonElement;
 
+  private switching = false;
+  private readonly qualityBtn: HTMLButtonElement;
+
   constructor(
-    container: HTMLElement,
+    private readonly container: HTMLElement,
     private readonly hud: Hud,
     private readonly params: Params,
-    private readonly quality: Quality,
-    private readonly onQuality: (q: Quality) => void,
+    private quality: Quality,
+    private readonly saveQuality: (q: Quality) => void,
   ) {
     const level = params.level && SLICE_LEVELS.includes(params.level) ? params.level : SLICE_LEVELS[0];
     this.session = { level, debug: params.debug, tips: loadTipsOn() };
@@ -115,8 +118,8 @@ export class SliceGame {
     q.type = 'button';
     q.className = 'test-btn';
     q.textContent = quality === 'low' ? 'Low quality' : 'High quality';
-    q.title = 'Switching quality reloads the page';
-    q.addEventListener('click', () => this.onQuality(quality === 'low' ? 'high' : 'low'));
+    q.addEventListener('click', () => void this.setQuality(this.quality === 'low' ? 'high' : 'low'));
+    this.qualityBtn = q;
     bar.append(this.fpsEl, this.nightBtn, q);
     document.getElementById('app')!.append(bar);
   }
@@ -196,6 +199,42 @@ export class SliceGame {
     this.night = on;
     this.view.setNight(on);
     this.nightBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  /**
+   * Rebuilds the 3D view at another quality without losing the game: the renderer's settings are fixed
+   * when it starts, so a new one is made on a new canvas, and the old one is let go once it is ready.
+   */
+  private async setQuality(q: Quality): Promise<void> {
+    if (q === this.quality || this.switching) return;
+    this.switching = true;
+    const loading = document.getElementById('loading');
+    const text = loading?.querySelector('.load-text');
+    if (text) text.textContent = q === 'low' ? 'Switching to Low quality' : 'Switching to High quality';
+    loading?.classList.remove('hidden');
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'view3d';
+      this.container.insertBefore(canvas, this.canvas);
+      const view = new View3D(canvas, { base: '.', quality: q, night: this.night, guests: false });
+      await view.init(this.vw);
+      const old = this.view;
+      this.canvas.remove();
+      old.dispose();
+      this.view = view;
+      this.canvas = canvas;
+      this.quality = q;
+      this.slowFor = 0;
+      this.qualityBtn.textContent = q === 'low' ? 'Low quality' : 'High quality';
+      this.saveQuality(q);
+      this.layout();
+    } catch (e) {
+      console.error(e);
+      this.hud.toast('Could not switch quality.');
+    } finally {
+      loading?.classList.add('hidden');
+      this.switching = false;
+    }
   }
 
   // ---------------------------------------------------------------- frame
@@ -704,7 +743,8 @@ export class SliceGame {
   // ---------------------------------------------------------------- input
 
   private setupInput(): void {
-    const c = this.canvas;
+    // On the container, not the canvas: switching quality swaps the canvas.
+    const c = this.container;
     c.addEventListener('pointerdown', (e) => this.onDown(e));
     c.addEventListener('pointermove', (e) => this.onMove(e));
     c.addEventListener('pointerup', (e) => this.onUp(e));
@@ -757,7 +797,7 @@ export class SliceGame {
       return;
     }
     try {
-      this.canvas.setPointerCapture(e.pointerId);
+      this.container.setPointerCapture(e.pointerId);
     } catch {
       // Pointers the browser doesn't track (scripted ones) can't be captured; moves still arrive.
     }

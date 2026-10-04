@@ -11,3 +11,4 @@ assets-src
 .tex-tmp
 dist-slice
 .dbg
+dist-slice-artifact

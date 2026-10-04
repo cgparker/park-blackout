@@ -242,6 +242,13 @@ export class View3D {
     for (const f of this.fences.values()) f.sig = '';
   }
 
+  /** Lets go of the GPU: for swapping in a view at another quality. */
+  dispose(): void {
+    this.composer.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+  }
+
   /** Forgets the last game: actors, effects, and fences. The ground and decor rebuild for the next world. */
   reset(): void {
     this.actors.clear();

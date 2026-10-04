@@ -20,16 +20,13 @@ function startQuality(): Quality {
   }
 }
 
-/** Saves the choice and reloads, since the renderer's settings are fixed when it starts. */
-function switchQuality(q: Quality): void {
+/** Remembers the choice on this device, when storage is allowed. */
+function saveQuality(q: Quality): void {
   try {
     localStorage.setItem(QUALITY_KEY, q);
   } catch {
-    // Storage can be off; the address below still carries the choice.
+    // Storage can be off; the choice then lasts until the page closes.
   }
-  const tokens = location.hash.replace(/^#/, '').split('.').filter((t) => t && t !== 'low' && t !== 'high');
-  location.hash = [...tokens, q].join('.');
-  location.reload();
 }
 
 const hud = new Hud(document.getElementById('hud')!, { levels: SLICE_LEVELS });
@@ -37,7 +34,7 @@ const params = readParams(window.location.search, window.location.hash);
 const loading = document.getElementById('loading')!;
 const fill = loading.querySelector('.load-bar i') as HTMLElement;
 const text = loading.querySelector('.load-text') as HTMLElement;
-const game = new SliceGame(document.getElementById('game')!, hud, params, startQuality(), switchQuality);
+const game = new SliceGame(document.getElementById('game')!, hud, params, startQuality(), saveQuality);
 game
   .boot((done, total) => {
     fill.style.width = `${Math.round((done / Math.max(1, total)) * 100)}%`;

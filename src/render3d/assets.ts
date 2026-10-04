@@ -41,6 +41,22 @@ function loader(): GLTFLoader {
   return new GLTFLoader();
 }
 
+/**
+ * Loads a model. The artifact build publishes each one as a GLB in base64 text (`.glb.txt`), since
+ * the artifact host serves no binary files; textures stay separate images beside it.
+ */
+async function fetchModel(l: GLTFLoader, base: string, path: string): Promise<GLTF> {
+  if (typeof __MODELS_AS_TEXT__ === 'undefined' || !__MODELS_AS_TEXT__) return l.loadAsync(`${base}/${path}`);
+  const url = `${base}/${path.replace(/\.gltf$/, '.glb')}.txt`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not load ${url} (${res.status})`);
+  const text = (await res.text()).replace(/\s+/g, '');
+  const raw = atob(text);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return l.parseAsync(bytes.buffer, url.slice(0, url.lastIndexOf('/') + 1));
+}
+
 // Kit and eyes are placed in the model's rest pose, in its own space (metres for people). The files are
 // packed (quantized), and each packed mesh keeps its own scale in its bind matrices, so raw vertex
 // positions can't be mixed between meshes. Skinning every vertex once into the rest pose sidesteps that.
@@ -687,7 +703,7 @@ export async function loadAssets(M: Mats, o: LoadOptions): Promise<Assets> {
     p.then(() => o.onProgress?.(++done, jobs.length));
     return p;
   };
-  const load = (url: string) => track(l.loadAsync(`${o.base}/${url}`));
+  const load = (url: string) => track(fetchModel(l, o.base, url));
   const dinoP = Promise.all((['trex', 'raptor', 'triceratops'] as AnimalKind[]).map(async (k) => [k, prepDino(k, await load(`dinos/${k}.glb`))] as const));
   const lightP = Promise.all(['ranger_m', 'ranger_f'].map(async (n) => prepLight(await load(`people/${n}.glb`), M)));
   const heavyP = load('people/heavy.glb').then((g) => prepHeavy(g, M));

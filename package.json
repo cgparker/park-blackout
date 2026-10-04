@@ -17,7 +17,8 @@
     "build:3d": "tsc --noEmit && vite build --config vite.slice.config.ts",
     "smoke3d": "node scripts/smoke3d.mjs",
     "stills3d": "node scripts/stills3d.mjs",
-    "assets3d": "node scripts/assets3d.mjs"
+    "assets3d": "node scripts/assets3d.mjs",
+    "build:3d-artifact": "tsc --noEmit && vite build --config vite.slice.config.ts --mode artifact && node scripts/make-slice-artifact.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",
