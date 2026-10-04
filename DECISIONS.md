@@ -2,6 +2,13 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Stampedes go around things
+
+Chosen by Chris, after playing the 3D slice: Triceratops got stuck in the terrain too easily, which made them easy to catch.
+
+76. **A stampede turns along what it meets instead of stopping.** Rock, water, HQ, a tower, the edge of the map, and a fence while the power is on all count. It tries turns of 30, then 60, then 90 degrees, toward the side with more room, and never turns more than 90 degrees from straight away over the whole run. So a corner, or a second wall, still stops it, and cornering is still the skill. In the blackout a fence still takes the hit and stops it, as before. In level 1, 80% of stampedes used to end at once against something; now about 20% do, nearly all in corners (`DINO_AI.triSlideStepDeg`, `triSlideMaxDeg`).
+77. **Level 1 got harder, and the clock stays at 2:30.** With one squad the scripted player now loses 3 of 16 games split (0:04 to 1:06 left) and wins with 0:01 to 0:47 left massed. Two squads earn three stars in 12 of 16 games split and 7 of 16 massed, down from all 16. These replace the numbers in decision 56. Walking home through the gap stays rare, about 0.3 to 0.4 per game. Level 2 and the blackout balance runs came out the same.
+
 ## 3D slice
 
 Chosen by Chris: move toward real 3D, starting with a playable slice of levels 1 and 2 to test the look and frame rate on a phone. His notes on the first stills: a jungle T. rex paddock, faint eyes at night (in the eye, not in front of it), a Heavy Team that reads as power armour next to regular troops (then mostly white with blue accents, no shoulder pads), an HQ that doesn't look like a hospital, a detailed tower, fences that look stronger when reinforced and wrecked when destroyed, and a subtle selection ring.
@@ -100,7 +107,7 @@ Chosen by Chris: visitors stay oblivious until danger, shorter visits, a T. rex 
 
 8. **Towers are placed from the bottom bar** like exhibits (ghost, range circle, Build and Cancel), not from the HQ panel. Placing is the same action, and it's one tap instead of two.
 9. **200 HP, 20 sedation every 1.5 s, range 5 tiles.** At 300 HP one tower beat a whole raptor pack alone; at 200 it loses to the pack and two towers win. It cost $3,000 at first; see 19 for the current price.
-10. **A tower fills its tile.** Troops and animals path around it, Triceratops stampedes stop at it, and it can't be selected, boxed, or ordered. It doesn't count as a troop anywhere (Select all, troop counts, troops trained or lost).
+10. **A tower fills its tile.** Troops and animals path around it, Triceratops stampedes turn along it (decision 76), and it can't be selected, boxed, or ordered. It doesn't count as a troop anywhere (Select all, troop counts, troops trained or lost).
 11. **Towers don't scare Triceratops.** Otherwise a tower beside a pasture would set off a stampede every few seconds for the whole blackout.
 12. **A tower right outside a fence still counts as a way out.** Animals break that segment and then knock the tower down, so towers can't wall a pen in. A destroyed tower leaves grass.
 13. **Animals reach a tower from the next tile.** Its body radius is half a tile, and a chasing animal only needs a clear line to the spot where it stops, not to the tower's center.

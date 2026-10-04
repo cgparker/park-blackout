@@ -43,6 +43,8 @@ export interface Dino extends PathFollower {
   stampede: number;
   sdx: number;
   sdy: number;
+  /** Radians the stampede has turned to get around things since it started (positive is clockwise on screen). */
+  sturn: number;
   recover: number;
   /** Seconds left in the secured fade-out. */
   fade: number;
@@ -98,6 +100,7 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       stampede: 0,
       sdx: 0,
       sdy: 0,
+      sturn: 0,
       recover: 0,
       fade: 0,
       removed: false,
@@ -864,6 +867,7 @@ function updateTriceratops(w: World, d: Dino, dt: number): void {
       }
       d.sdx = dx;
       d.sdy = dy;
+      d.sturn = 0;
       d.facing = Math.atan2(dy, dx);
       d.stampede = DINO_AI.triStampedeSeconds;
       d.wander = null;
@@ -898,22 +902,65 @@ function nearestThreat(w: World, d: Dino, radius: number): Point | null {
   return best;
 }
 
+/**
+ * Whether a stampede going this way runs into something it can't break within `ahead` px: rock, water,
+ * a building, the park's edge, or a fence while the power is on.
+ */
+function stampedeBlocked(w: World, d: Dino, dx: number, dy: number, ahead: number): boolean {
+  const r = DINOS.triceratops.radius;
+  const px = d.x + dx * (ahead + r);
+  const py = d.y + dy * (ahead + r);
+  const lx = Math.floor(px / w.T);
+  const ly = Math.floor(py / w.T);
+  const t = w.grid.inBounds(lx, ly) ? w.grid.get(lx, ly) : Tile.Rock;
+  if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower) return true;
+  return w.powerOn && !!crossesIntactFence(w, d.x, d.y, px, py);
+}
+
+/**
+ * Turns a blocked stampede along whatever is in the way: the smallest clear turn, toward the side with more
+ * room. The whole stampede never turns more than the limit from straight away, so a Triceratops that meets
+ * a second wall in a corner stops there. Returns false when it is cornered.
+ */
+function slideStampede(w: World, d: Dino, step: number): boolean {
+  const max = (DINO_AI.triSlideMaxDeg * Math.PI) / 180 + 1e-6;
+  const room = (o: { dx: number; dy: number }) => {
+    let n = 0;
+    for (let k = 1; k <= 4 && !stampedeBlocked(w, d, o.dx, o.dy, step + (k * w.T) / 4); k++) n++;
+    return n;
+  };
+  for (let deg = DINO_AI.triSlideStepDeg; deg <= 180; deg += DINO_AI.triSlideStepDeg) {
+    const a = (deg * Math.PI) / 180;
+    const options = [a, -a]
+      .filter((t) => Math.abs(d.sturn + t) <= max)
+      .map((t) => ({ t, dx: d.sdx * Math.cos(t) - d.sdy * Math.sin(t), dy: d.sdx * Math.sin(t) + d.sdy * Math.cos(t) }))
+      .filter((o) => !stampedeBlocked(w, d, o.dx, o.dy, step));
+    if (!options.length) continue;
+    const best = options.length === 2 && room(options[1]) > room(options[0]) ? options[1] : options[0];
+    d.sdx = best.dx;
+    d.sdy = best.dy;
+    d.sturn += best.t;
+    d.facing = Math.atan2(best.dy, best.dx);
+    return true;
+  }
+  return false;
+}
+
 function stampedeStep(w: World, d: Dino, dt: number): void {
   const cfg = DINOS.triceratops;
   const step = cfg.speed * dt;
+  // Rock, water, a building, the park's edge, or a fence with the power on: turn along it, and stop only
+  // when cornered. With the power off, a fence still takes the hit and stops it (below).
+  if (stampedeBlocked(w, d, d.sdx, d.sdy, step) && !slideStampede(w, d, step)) {
+    endStampede(w, d);
+    return;
+  }
   const nx = d.x + d.sdx * step;
   const ny = d.y + d.sdy * step;
 
   const hit = crossesIntactFence(w, d.x, d.y, nx, ny);
   if (hit) {
     damageSegment(w, hit.exhibit, hit.index, cfg.fenceDamage);
-    endStampede(w, d);
-    return;
-  }
-  const lx = Math.floor((nx + d.sdx * cfg.radius) / w.T);
-  const ly = Math.floor((ny + d.sdy * cfg.radius) / w.T);
-  const t = w.grid.inBounds(lx, ly) ? w.grid.get(lx, ly) : Tile.Rock;
-  if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower) {
     endStampede(w, d);
     return;
   }

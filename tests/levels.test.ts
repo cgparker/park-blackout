@@ -121,6 +121,50 @@ describe('levels 1 and 2: getting animals back', () => {
     expect(w.log.at(-1)).toMatchObject({ type: 'back', kind: 'triceratops', how: 'walked', left: 5 });
   });
 
+  it('a stampede into the edge of the park turns and runs along it', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const d = loose(w)[0];
+    d.x = 10.5 * T;
+    d.y = 0.3 * T;
+    spawnUnit(w, 'tranq', { x: 10.5 * T, y: 2.5 * T });
+    run(w, 1);
+    expect(d.stampede).toBeGreaterThan(0);
+    expect(Math.abs(d.x - 10.5 * T)).toBeGreaterThan(2 * T);
+    expect(d.y).toBeGreaterThanOrEqual(0);
+    expect(d.y).toBeLessThan(T);
+  });
+
+  it('a stampede along a powered fence goes around it, and the fence takes no damage', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const whole = w.exhibits.find((e) => e.segments.every((s) => s.hp > 0))!;
+    const r = fenceRect(whole.footprint, T);
+    const d = loose(w)[0];
+    d.x = r.left - 0.3 * T;
+    d.y = (r.top + r.bottom) / 2;
+    spawnUnit(w, 'tranq', { x: r.left - 2.5 * T, y: d.y });
+    const hp = whole.segments.map((s) => s.hp);
+    run(w, 1);
+    expect(d.stampede).toBeGreaterThan(0);
+    expect(d.x).toBeLessThan(r.left);
+    expect(Math.abs(d.y - (r.top + r.bottom) / 2)).toBeGreaterThan(T);
+    expect(whole.segments.map((s) => s.hp)).toEqual(hp);
+  });
+
+  it('a cornered Triceratops stops', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const d = loose(w)[0];
+    d.x = 0.2 * T;
+    d.y = 0.2 * T;
+    spawnUnit(w, 'tranq', { x: 2.2 * T, y: 2.2 * T });
+    const events = run(w, 1);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'stampede', dinoId: d.id }));
+    expect(d.x).toBeLessThan(0.6 * T);
+    expect(d.y).toBeLessThan(0.6 * T);
+  });
+
   it('a troop close enough to dart a Triceratops scares it into running, and says so', () => {
     const w = new World({ seed: 2, level: 1 });
     w.start();

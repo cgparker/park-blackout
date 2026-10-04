@@ -69,7 +69,7 @@ There are three levels. Each one teaches one part of the game, and all three are
 | ★ Spend no more than | $4,500 | $13,500 |
 | ★ Third goal | Finish with 1:00 or more left | Lose no troops |
 
-**Level 1.** Triceratops run from troops that come within 4 tiles, and a Tranq Squad's range is 4 tiles, so they run as soon as a squad can dart them (section 8). A Triceratops that runs into rocks, water, a fence, or the edge of the map stops. Cornering them is the skill.
+**Level 1.** Triceratops run from troops that come within 4 tiles, and a Tranq Squad's range is 4 tiles, so they run as soon as a squad can dart them (section 8). A Triceratops that runs into rocks, water, a building, a fence, or the edge of the map turns and runs along it. It only stops when it's cornered. Cornering them is the skill.
 
 **Level 2: the nest.** Raptors at a nest wander within 2 tiles of it. They go after the nearest troop within 8 tiles of themselves, as long as that troop is within 10 tiles of the nest. Past that they give up and run back. So they never come for HQ, and a group that pulls back can regroup. Because they wander close together, a troop that comes near brings most of them at once.
 
@@ -233,6 +233,7 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 - **T. rex charge:** when it is locked on, 1.5 to 5 tiles away, with a clear run, it stops and winds up for 0.6 s (an orange arc fills around it and a line points at its target). Then it runs straight at double speed for up to 1.2 s. It bites the first troop or tower it hits, tramples visitors in its way, and stops at anything solid. It can charge again 4 s later. Troops that move during the wind-up can get out of the way.
 - **Raptors:** Hunt the nearest visitor or unit within 8 tiles. Otherwise head for the nearest visitor anywhere, and if there are none, the nearest unit.
 - **Triceratops:** If a dinosaur or unit is within 4 tiles, stampede directly away for 5 s, trampling anything in the way. Otherwise, graze in place. A stampede that hits a fence deals 40 damage to that segment and stops. Triceratops still inside their pen can stampede too, so a T. rex outside their fence can scare them into breaking it from the inside.
+- **Going around things:** a stampede that meets rock, water, HQ, a tower, the edge of the map, or a fence while the power is on turns along it, in 30 degree steps toward the side with more room. It never turns more than 90 degrees from straight away, so in a corner, or against a second wall, it stops.
 - A visitor touched by a raptor or T. rex for 0.5 s, or hit by a stampeding Triceratops, is a casualty.
 - Dinosaurs ignore HQ and paths. They only damage fences, troops, and visitors.
 
@@ -396,12 +397,12 @@ Level 1, 2:30 on the clock and $9,000. Stars at $4,500 or less and 1:00 or more 
 
 | Squads | Cost | Split: time left | Massed: time left | Stars |
 |---|---|---|---|---|
-| 1 | $2,250 | 0:35 to 1:02 | 0:39 to 1:00 | Won 16 of 16, mostly ★★ |
-| 2 | $4,500 | 1:18 to 1:30 | 1:03 to 1:25 | ★★★ in all 16, both ways |
-| 3 | $6,750 | 1:34 to 1:39 | 1:21 to 1:31 | ★★ (over the cap) |
-| 4 | $9,000 | 1:35 to 1:41 | 1:25 to 1:34 | ★★ (over the cap) |
+| 1 | $2,250 | 0:04 to 1:06 | 0:01 to 0:47 | Split loses 3 of 16 to the clock; massed wins all 16. Mostly ★★ |
+| 2 | $4,500 | 0:49 to 1:26 | 0:41 to 1:17 | ★★★ in 12 of 16 split, 7 of 16 massed, ★★ in the rest |
+| 3 | $6,750 | 1:18 to 1:35 | 0:55 to 1:25 | ★★ (over the cap), ★ in 3 massed games |
+| 4 | $9,000 | 1:22 to 1:38 | 1:04 to 1:29 | ★★ (over the cap) |
 
-A third squad saves about 10 seconds and a fourth almost nothing, because HQ trains one at a time and the later ones arrive late. A Heavy Team would catch a Triceratops in about 11 s without making it run once, since it darts from outside the 4 tiles that set one off. That's why level 1 has none.
+Since stampedes turn along whatever they meet, a Triceratops only stops in a corner, and chasing it takes longer. A third squad saves about 15 to 30 seconds and a fourth little more, because HQ trains one at a time and the later ones arrive late. A Heavy Team would catch a Triceratops in about 11 s without making it run once, since it darts from outside the 4 tiles that set one off. That's why level 1 has none.
 
 Level 2, 4:00 on the clock and $21,000. Stars at $13,500 or less and no troops lost. **Massed:** every troop waits outside the nest's reach until all are trained, then they go in together. **Trickle:** each troop goes in as soon as it's ready.
 
@@ -416,7 +417,7 @@ Level 2, 4:00 on the clock and $21,000. Stars at $13,500 or less and no troops l
 | 1 Heavy + 4 Tranq | $15,000 | Won 16 of 16, lost 0.6 | Won 2 of 16 |
 | 2 Heavy + 2 Tranq | $16,500 | Won 16 of 16, lost 0.6 | Won 15 of 16, lost 1.9 |
 
-`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each new level: level 1 is won once in 20 (random orders don't corner anything in time), and level 2 is won 14 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together.
+`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each new level: level 1 is won twice in 20 (random orders rarely corner anything in time), and level 2 is won 14 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together.
 
 What to watch in playtests:
 
@@ -430,7 +431,7 @@ What to watch in playtests:
 - Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.
 - One tower can just beat a raptor pack when it sits beside their pen on the far side from where they break out: they run around the pen under fire, and the tower finished with 30 of 200 HP. On open grass one tower loses. Watch for players parking one tower per pen.
 - Building extra cheap pastures can lower revenue, because visitors spend their short visits on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
-- Level 1's clock is the lever for how hard it feels. At 2:30 one squad wins with time to spare in the scripted runs, but a person tapping orders is much slower, so two or three squads should be the norm. If it's too easy, try 2:00; the time star then needs 1:00 left from a 2:00 clock.
+- Level 1's clock is the lever for how hard it feels. At 2:30 one squad sometimes runs out of time even in the scripted runs, and two usually earn three stars. A person tapping orders is much slower, so two or three squads should be the norm. If it's too hard, try 3:00; if it's too easy, 2:00. The time star needs 1:00 left either way.
 - Level 2 is easy to win once troops go in together, and the stars carry the challenge. If it feels too easy, lower the starting money: at $15,000, five Tranq Squads or two Heavy Teams still fit, with less room to recover from a bad first fight.
 
 ## 14. Later, not now

@@ -110,7 +110,7 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'spooked',
           title: 'Triceratops run from troops',
-          body: 'A Triceratops runs straight away from the nearest troop. Come at it from the open side, so it runs into rocks, water, a fence, or the edge of the park and stops.',
+          body: 'A Triceratops runs straight away from the nearest troop. It turns along rocks, water, fences, and the edge of the park, and only stops in a corner. Come at it from the open side to drive it into one.',
           focus: { x: e.x, y: e.y },
         });
         break;

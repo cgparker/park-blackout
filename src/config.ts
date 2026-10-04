@@ -359,6 +359,12 @@ export const DINO_AI = {
   raptorHuntRadiusTiles: 8,
   triThreatRadiusTiles: 4,
   triStampedeSeconds: 5,
+  /**
+   * A stampede that meets rock, water, a building, or the park's edge turns along it in steps of this
+   * many degrees, up to the most, instead of stopping dead. Only a cornered Triceratops stops.
+   */
+  triSlideStepDeg: 30,
+  triSlideMaxDeg: 90,
   /** Rest after a stampede before another one can start. */
   triRecoverSeconds: 1.5,
   visitorContactSeconds: 0.5,
