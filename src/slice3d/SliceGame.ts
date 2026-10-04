@@ -1,23 +1,24 @@
-// The playable 3D slice: levels 1 and 2 drawn in real 3D with three.js. The rules come from src/core
-// and the HUD from src/ui, as in the 2D game. This controller turns touches into orders and keeps the
-// camera, the HUD, and the 3D view in step with the world. It only reads the world and sends it orders.
-import { BLACKOUT, CAMERA, DINOS, EXHIBITS, INPUT, SCORING, SIM, UNITS, VIEW3D, type AnimalKind, type LevelId, type UnitKind } from '../config';
-import { secondsToSedate } from '../core/estimates';
+// The 3D build: every level drawn in real 3D with three.js. The rules come from src/core and the HUD
+// from src/ui, as in the 2D game. This controller turns touches into orders and keeps the camera, the
+// HUD, and the 3D view in step with the world. It only reads the world and sends it orders.
+import { BLACKOUT, CAMERA, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, SCORING, SIM, UNITS, VIEW3D, type AnimalKind, type ExhibitKind, type LevelId, type UnitKind } from '../config';
 import type { Point, Rect } from '../core/grid';
+import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { animalNoun } from '../core/report';
-import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
+import { cancelQueued, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
 import { World, type GameEvent } from '../core/world';
 import type { Params } from '../params';
 import { MARGIN } from '../render3d/terrain';
 import { View3D, type Quality, type ViewWorld } from '../render3d/View3D';
 import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
-import { formatClock, type ArrowView, type BriefingOptions, type ExhibitView, type Hud, type TrainingView } from '../ui/hud';
+import { formatClock, formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
+import { exhibitPlaceView, exhibitView, towerPlaceView, trainingView } from '../ui/panels';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
-/** Levels the slice offers. */
-export const SLICE_LEVELS: readonly LevelId[] = [1, 2];
+/** Levels the 3D build offers. */
+export const SLICE_LEVELS: readonly LevelId[] = [1, 2, 3];
 
 type Gesture = 'idle' | 'press' | 'pan' | 'pinch' | 'box';
 
@@ -41,12 +42,24 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 /** Body height in tiles, for picking an animal by where it shows on screen. */
 const BODY_Y: Record<AnimalKind, number> = { triceratops: 0.45, raptor: 0.3, trex: 0.75 };
 
+/** Words that float up from the map: money paid, breaches, animals secured, a T. rex charging. */
+interface Float {
+  el: HTMLElement;
+  x: number;
+  y: number;
+  z: number;
+  life: number;
+  max: number;
+  /** Money shown, for payments that join it. */
+  amount?: number;
+}
+
 export class SliceGame {
   private world!: World;
   private vw!: ViewWorld;
   private view!: View3D;
   private canvas: HTMLCanvasElement;
-  private readonly session: { level: LevelId; debug: boolean; tips: boolean };
+  private readonly session: { level: LevelId; debug: boolean; tips: boolean; quick: boolean };
   private selected = new Set<number>();
   private accumulator = 0;
   private speed = 1;
@@ -71,6 +84,15 @@ export class SliceGame {
   private fpsFrames = 0;
   private fpsShownAt = 0;
   private endTimer = 0;
+  private placingKind: BuildKind | null = null;
+  private placingTile = { x: 0, y: 0 };
+  private plan: PlacementPlan | null = null;
+  private towerPlan: TowerPlan | null = null;
+  private wasAllClear = false;
+  /** The power state the lighting shows. In the blackout level, the dark comes with the power cut. */
+  private powerShown = true;
+  private floats: Float[] = [];
+  private readonly floatLayer: HTMLElement;
   /** Seconds of play with a low frame rate, for the one-time hint to try Low quality. */
   private slowFor = 0;
   private slowHinted = false;
@@ -93,7 +115,7 @@ export class SliceGame {
     private readonly saveQuality: (q: Quality) => void,
   ) {
     const level = params.level && SLICE_LEVELS.includes(params.level) ? params.level : SLICE_LEVELS[0];
-    this.session = { level, debug: params.debug, tips: loadTipsOn() };
+    this.session = { level, debug: params.debug, tips: loadTipsOn(), quick: false };
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'view3d';
     container.append(this.canvas);
@@ -101,7 +123,9 @@ export class SliceGame {
     this.boxEl.className = 'select-box hidden';
     this.ringEl = document.createElement('div');
     this.ringEl.className = 'press-ring hidden';
-    container.append(this.boxEl, this.ringEl);
+    this.floatLayer = document.createElement('div');
+    this.floatLayer.className = 'float-layer';
+    container.append(this.boxEl, this.ringEl, this.floatLayer);
 
     // A small bar for testing on a phone: frame rate, a day and night switch, and the quality setting.
     const bar = document.createElement('div');
@@ -127,7 +151,7 @@ export class SliceGame {
   /** Loads the models, builds the park, and starts the loop. */
   async boot(onProgress: (done: number, total: number) => void): Promise<void> {
     this.newWorld();
-    this.view = new View3D(this.canvas, { base: '.', quality: this.quality, night: false, guests: false });
+    this.view = new View3D(this.canvas, { base: '.', quality: this.quality, night: false, guests: true });
     await this.view.init(this.vw, onProgress);
     this.layout();
     this.setupInput();
@@ -145,7 +169,7 @@ export class SliceGame {
   // ---------------------------------------------------------------- games
 
   private newWorld(): void {
-    this.world = new World({ seed: this.params.seed ?? undefined, level: this.session.level });
+    this.world = new World({ seed: this.params.seed ?? undefined, level: this.session.level, buildPhaseSeconds: this.params.buildPhaseSeconds ?? undefined });
     this.vw = viewOf(this.world);
   }
 
@@ -159,6 +183,16 @@ export class SliceGame {
 
   private resetGame(): void {
     const w = this.world;
+    this.placingKind = null;
+    this.plan = null;
+    this.towerPlan = null;
+    this.view.setGhost(null);
+    this.wasAllClear = false;
+    this.powerShown = w.powerOn;
+    for (const f of this.floats) f.el.remove();
+    this.floats = [];
+    // The blackout level starts by day. In levels 1 and 2 the Night switch is a test tool and stays as set.
+    if (!w.hunt) this.setNight(false);
     this.selected = new Set();
     this.accumulator = 0;
     this.pointers.clear();
@@ -178,11 +212,11 @@ export class SliceGame {
       quickSeconds: BLACKOUT.quickBuildPhaseSeconds,
       revenueTarget: w.revenueTarget,
       villain: BLACKOUT.villainName,
-      quick: false,
+      quick: this.session.quick,
       debug: this.session.debug,
       tips: this.session.tips,
     });
-    // Start at HQ, where the troops come from.
+    // Start at HQ, where the troops come from. The gate, where the blackout level's guests arrive, is beside it.
     const hq = w.map.hq;
     this.cam = { x: hq.x + hq.w / 2 + 6, z: hq.y + hq.h / 2 - 2, dist: VIEW3D.defaultDist };
     this.applyCamera();
@@ -190,6 +224,7 @@ export class SliceGame {
   }
 
   private keepOptions(o: BriefingOptions): void {
+    this.session.quick = o.quick;
     this.session.debug = o.debug;
     if (o.tips !== this.session.tips) saveTipsOn(o.tips);
     this.session.tips = o.tips;
@@ -216,7 +251,7 @@ export class SliceGame {
       const canvas = document.createElement('canvas');
       canvas.className = 'view3d';
       this.container.insertBefore(canvas, this.canvas);
-      const view = new View3D(canvas, { base: '.', quality: q, night: this.night, guests: false });
+      const view = new View3D(canvas, { base: '.', quality: q, night: this.night, guests: true });
       await view.init(this.vw);
       const old = this.view;
       this.canvas.remove();
@@ -250,7 +285,8 @@ export class SliceGame {
       this.fpsFrames = 0;
       this.fpsShownAt = now;
       // On High quality, a phone that can't keep up gets one hint (it is the player's call).
-      if (this.quality !== 'low' && !this.slowHinted && this.world.phase === 'hunt' && !this.hud.tipOpen && !this.hud.menuOpen) {
+      const playing = this.world.phase !== 'briefing' && this.world.phase !== 'ended';
+      if (this.quality !== 'low' && !this.slowHinted && playing && !this.hud.tipOpen && !this.hud.menuOpen) {
         this.slowFor = this.fps < 24 ? this.slowFor + 0.5 : 0;
         if (this.slowFor >= 6) {
           this.slowHinted = true;
@@ -280,23 +316,30 @@ export class SliceGame {
     w.events = [];
     this.view.handle(events, this.vw);
     this.handleEvents(events);
+    // The blackout level goes dark when the power is cut and lights up again when it comes back.
+    if (!w.hunt && w.powerOn !== this.powerShown) {
+      this.powerShown = w.powerOn;
+      this.setNight(!w.powerOn);
+    }
     for (const id of this.selected) if (!w.unitById(id)) this.selected.delete(id);
     this.view.render(this.vw, { selected: this.selected }, dt);
     this.refreshHud();
     this.updateArrows();
     this.updateOverlays(now);
+    this.updateFloats(dt);
   };
 
   // ---------------------------------------------------------------- HUD
 
   private wireHud(): void {
     this.hud.handlers = {
-      selectBuild: () => undefined,
-      confirmPlacement: () => undefined,
-      cancelPlacement: () => undefined,
-      reinforce: () => undefined,
+      selectBuild: (kind) => this.togglePlacement(kind),
+      confirmPlacement: () => this.confirmPlacement(),
+      cancelPlacement: () => this.endPlacement(),
+      reinforce: (id) => this.reinforce(id),
       start: (o) => {
         this.keepOptions(o);
+        if (!this.world.hunt) this.world.setBuildPhase(o.quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
         this.hud.showDebug(o.debug);
         this.hud.hideBriefing();
         this.world.start();
@@ -316,7 +359,7 @@ export class SliceGame {
       openTraining: () => this.openTraining(),
       train: (kind) => this.train(kind),
       cancelQueued: (id) => cancelQueued(this.world, id),
-      closePanel: () => this.hud.closePanels(),
+      closePanel: () => this.closePanels(),
       selectAll: () => {
         this.selected = new Set(this.world.units.filter(isTroop).map((u) => u.id));
       },
@@ -343,7 +386,9 @@ export class SliceGame {
         this.speed = s;
         this.hud.setDebugSpeed(s);
       },
-      debugBlackout: () => undefined,
+      debugBlackout: () => {
+        if (this.world.phase === 'build') this.world.startBlackout();
+      },
       debugMoney: () => {
         this.world.money += 10000;
       },
@@ -383,7 +428,8 @@ export class SliceGame {
       inPark: w.inPark,
       evacuating: w.evacuating,
     });
-    this.hud.setBuildBar(false, w.money, { pasture: 0, raptor: 0, trex: 0 }, null);
+    const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
+    this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
     let tranq = 0;
     let heavy = 0;
     for (const id of this.selected) {
@@ -393,14 +439,17 @@ export class SliceGame {
     }
     const parts = [tranq ? `${tranq} Tranq` : '', heavy ? `${heavy} Heavy` : ''].filter(Boolean);
     const troops = w.units.reduce((n, u) => (isTroop(u) ? n + 1 : n), 0);
-    this.hud.setTroops(troops, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, true);
-    if (this.hud.panel === 'train') {
-      this.hud.updateTraining(this.trainingView());
+    this.hud.setTroops(troops, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
+    if (this.hud.panel === 'place') {
+      const r = this.placementRect();
+      if (r) this.anchorToTiles(r);
+    } else if (this.hud.panel === 'train') {
+      this.hud.updateTraining(trainingView(this.world));
       this.anchorToTiles(w.map.hq);
     } else if (this.hud.panel === 'exhibit') {
       const ex = w.exhibitById(this.hud.shownExhibit);
       if (ex) {
-        this.hud.updateExhibit(this.exhibitView(ex.id)!);
+        this.hud.updateExhibit(exhibitView(w, ex.id)!);
         this.anchorToTiles(ex.footprint);
       }
     }
@@ -422,22 +471,10 @@ export class SliceGame {
     this.hud.anchor({ left: left + this.area.left, top: top + this.area.top, right: right + this.area.left, bottom: bottom + this.area.top });
   }
 
-  private trainingView(): TrainingView {
-    const w = this.world;
-    const team = [...w.units.filter(isTroop).map((u) => u.kind), ...w.queue.map((q) => q.kind)];
-    const kinds = (Object.keys(w.startedLoose) as AnimalKind[]).map((kind) => ({ kind, count: 1 }));
-    return {
-      money: w.money,
-      canTrain: canTrainNow(w),
-      kinds: w.trainable,
-      queue: w.queue.map((q, i) => ({ id: q.id, kind: q.kind, progress: i === 0 ? 1 - q.left / UNITS[q.kind].trainSeconds : 0 })),
-      team: { troops: team.length, targets: kinds.map((k) => ({ ...k, seconds: secondsToSedate(team, k.kind, k.count) })) },
-    };
-  }
-
   private openTraining(): void {
     if (this.world.phase === 'briefing' || this.world.phase === 'ended') return;
-    this.hud.showTraining(this.trainingView());
+    if (this.placingKind) this.endPlacement();
+    this.hud.showTraining(trainingView(this.world));
     this.anchorToTiles(this.world.map.hq);
   }
 
@@ -445,25 +482,18 @@ export class SliceGame {
     if (!enqueueUnit(this.world, kind)) this.hud.toast(this.world.money < UNITS[kind].cost ? 'Not enough money' : 'The queue is full');
   }
 
-  private exhibitView(id: number): ExhibitView | null {
-    const w = this.world;
-    const ex = w.exhibitById(id);
-    if (!ex) return null;
-    const segs = ex.segments;
-    const gaps = segs.filter((s) => s.hp <= 0).length;
-    const material = ex.reinforced ? 'Concrete' : 'Chain-link';
-    const fence = gaps ? `${material}, ${gaps} ${gaps === 1 ? 'segment' : 'segments'} down` : `${material}, powered`;
-    const kind = EXHIBITS[ex.kind].animal;
-    const mine = w.dinos.filter((d) => d.home === ex.id);
-    const inside = mine.filter((d) => d.state === 'penned' || d.state === 'contained').length;
-    const out = mine.filter((d) => d.state === 'loose').length;
-    const name = DINOS[kind];
-    const animals = out ? `${inside} inside · ${out} loose` : inside ? `${inside} ${inside === 1 ? name.name : name.plural}` : 'None left';
-    return { id: ex.id, name: EXHIBITS[ex.kind].name, kind: ex.kind, visits: ex.visits, revenue: ex.revenue, fence, animals, reinforceCost: null, reinforced: ex.reinforced, money: w.money, closed: true, breakout: null };
+  private reinforce(id: number): void {
+    if (this.world.reinforce(id)) this.hud.toast('Fence reinforced');
+    else this.hud.toast('Not enough money');
+  }
+
+  private closePanels(): void {
+    if (this.placingKind) this.endPlacement();
+    this.hud.closePanels();
   }
 
   private openExhibit(id: number): void {
-    const v = this.exhibitView(id);
+    const v = exhibitView(this.world, id);
     if (!v) return;
     this.hud.showExhibit(v);
     this.anchorToTiles(this.world.exhibitById(id)!.footprint);
@@ -472,6 +502,7 @@ export class SliceGame {
   private openMenu(): void {
     const w = this.world;
     if (w.phase === 'briefing' || w.phase === 'ended') return;
+    if (this.placingKind) this.endPlacement();
     this.hud.showMenu(
       goalsNow({ phase: w.phase, loose: w.looseCount, revenue: w.revenue, target: w.revenueTarget, casualties: w.casualtyTotal, level: w.level, spent: w.troopSpending, timeLeft: w.clockSeconds, troopsLost: w.troopsLost }),
     );
@@ -482,9 +513,12 @@ export class SliceGame {
   private handleEvents(events: readonly GameEvent[]): void {
     const w = this.world;
     const T = w.T;
+    // The evacuation banner names the first animal out, so that escape needs no toast of its own.
+    const evacuation = events.some((e) => e.type === 'evacuation');
     for (const e of events) {
       switch (e.type) {
         case 'started': {
+          if (!w.hunt) break;
           const loose = w.dinos.filter((d) => d.state === 'loose');
           const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
           const what = `${loose.length} ${animalNoun(kind, loose.length)}`;
@@ -494,17 +528,37 @@ export class SliceGame {
           this.frame(pts, true);
           break;
         }
+        case 'warning':
+          this.hud.showBanner(`${BLACKOUT.villainName} cuts the power in 1:00`, 'warn');
+          break;
+        case 'blackout':
+          this.endPlacement();
+          if (this.hud.panel === 'exhibit') this.closePanels();
+          this.hud.showBanner(`${BLACKOUT.villainName} has cut the power.`, 'danger', 4);
+          this.frameParkForBlackout();
+          break;
         case 'breach':
           this.breaches.push({ x: e.x, y: e.y, until: w.time + CAMERA.breachArrowSeconds });
+          this.float('Breach!', e.x / T, 0.9, e.y / T, '#ff7a7a', 1.6);
+          break;
+        case 'evacuation':
+          this.hud.showBanner(`${e.kind === 'trex' ? 'The T. rex is' : e.kind === 'raptor' ? 'Raptors are' : 'A Triceratops is'} out. The park is evacuating.`, 'danger', 4);
           break;
         case 'escaped': {
           const lastAt = this.escapeToasts.get(e.kind) ?? -Infinity;
-          if (w.time - lastAt > 3) {
+          if (evacuation) this.escapeToasts.set(e.kind, w.time);
+          else if (w.time - lastAt > 3) {
             this.escapeToasts.set(e.kind, w.time);
             this.hud.toast(e.kind === 'raptor' ? 'Raptors are loose!' : e.kind === 'trex' ? 'The T. rex is loose!' : 'A Triceratops broke out!');
           }
           break;
         }
+        case 'paid':
+          this.paid(e.amount, e.x / T, e.y / T);
+          break;
+        case 'charge':
+          this.float('Charge!', e.x / T, 1.6, e.y / T, '#ff9a4d', 1.2);
+          break;
         case 'trained':
           this.hud.toast(`${UNITS[e.kind].name} ready`);
           break;
@@ -512,11 +566,18 @@ export class SliceGame {
           this.hud.toast(`${UNITS[e.kind].name} lost`);
           break;
         case 'secured': {
+          this.float('Secured', e.x / T, 1.1, e.y / T, '#cdb4ff', 1.6);
+          // In levels 1 and 2 the count left is what matters. The last one ends the level, so it needs no toast.
           const left = w.looseCount;
-          if (left) this.hud.toast(`${DINOS[e.kind].name} darted. ${left} to go.`);
+          if (!w.hunt) this.hud.toast(`${DINOS[e.kind].name} secured`);
+          else if (left) this.hud.toast(`${DINOS[e.kind].name} darted. ${left} to go.`);
           break;
         }
+        case 'powerRestored':
+          this.hud.showBanner(e.contained ? `Power restored. ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : 'Power restored.', 'good', 4);
+          break;
         case 'ended':
+          this.endPlacement();
           this.hud.closePanels();
           this.tipQueue = [];
           this.hud.hideTip();
@@ -530,6 +591,9 @@ export class SliceGame {
           break;
       }
     }
+    const allClear = w.allClear;
+    if (allClear && !this.wasAllClear && w.phase === 'blackout') this.hud.showBanner('All clear. Fast-forwarding to power-on.', 'good');
+    this.wasAllClear = allClear;
     this.queueTips(events);
   }
 
@@ -675,6 +739,13 @@ export class SliceGame {
     this.moveCamera({ x: cx, z: cz, dist });
   }
 
+  /** At the blackout, frame every exhibit so the first escape happens on screen. */
+  private frameParkForBlackout(): void {
+    const pts: { x: number; y: number }[] = [];
+    for (const e of this.world.exhibits) pts.push({ x: e.footprint.x, y: e.footprint.y }, { x: e.footprint.x + e.footprint.w, y: e.footprint.y + e.footprint.h });
+    this.frame(pts, false);
+  }
+
   private updateKeyboardPan(dt: number): void {
     const k = this.keys;
     const dx = (k.has('d') || k.has('arrowright') ? 1 : 0) - (k.has('a') || k.has('arrowleft') ? 1 : 0);
@@ -692,7 +763,7 @@ export class SliceGame {
   private updateArrows(): void {
     const w = this.world;
     this.arrowTargets.clear();
-    if (w.phase !== 'hunt') {
+    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'hunt') {
       this.hud.setArrows([]);
       return;
     }
@@ -767,7 +838,8 @@ export class SliceGame {
       if (key === 'escape') {
         if (this.hud.menuOpen) this.hud.hideMenu();
         else if (this.hud.tipOpen) this.nextTip();
-        else if (this.hud.panel) this.hud.closePanels();
+        else if (this.placingKind) this.endPlacement();
+        else if (this.hud.panel) this.closePanels();
         else if (this.selected.size) this.selected.clear();
         else this.openMenu();
       } else if (key === 'p') {
@@ -915,7 +987,7 @@ export class SliceGame {
 
   /** Hold still for a moment, then drag, to draw a selection box. */
   private updateLongPress(now: number): void {
-    if (this.gesture !== 'press' || this.pointers.size !== 1) return;
+    if (this.gesture !== 'press' || this.pointers.size !== 1 || this.placingKind) return;
     const info = [...this.pointers.values()][0];
     if (!info.touch || now - info.downTime < INPUT.longPressMs) return;
     this.gesture = 'box';
@@ -935,7 +1007,7 @@ export class SliceGame {
       s.height = `${Math.abs(this.boxEnd.y - this.boxStart.y)}px`;
       this.boxEl.classList.remove('hidden');
     } else this.boxEl.classList.add('hidden');
-    const info = this.gesture === 'press' && this.pointers.size === 1 ? [...this.pointers.values()][0] : null;
+    const info = this.gesture === 'press' && this.pointers.size === 1 && !this.placingKind ? [...this.pointers.values()][0] : null;
     if (info?.touch) {
       const k = clamp((now - info.downTime) / INPUT.longPressMs, 0, 1);
       const s = this.ringEl.style;
@@ -959,15 +1031,26 @@ export class SliceGame {
       return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
     });
     this.selected = new Set(picked.map((u) => u.id));
-    if (picked.length) this.hud.closePanels();
+    if (picked.length) this.closePanels();
   }
 
   private handleTap(sx: number, sy: number): void {
     if (this.world.phase === 'ended') return;
+    // While placing, a tap moves the preview there.
+    if (this.placingKind) {
+      const p = this.view.groundAt(sx, sy);
+      if (!p) return;
+      const px = Math.floor(p.x);
+      const py = Math.floor(p.z);
+      if (!this.world.grid.inBounds(px, py)) return;
+      this.placingTile = { x: px, y: py };
+      this.updatePlan();
+      return;
+    }
     const unit = this.unitAt(sx, sy);
     if (unit) {
       this.selected = new Set([unit.id]);
-      if (this.hud.panel) this.hud.closePanels();
+      if (this.hud.panel) this.closePanels();
       return;
     }
     const g = this.view.groundAt(sx, sy);
@@ -985,7 +1068,7 @@ export class SliceGame {
     }
     const ex = this.world.grid.inBounds(tx, ty) ? this.world.exhibitAtTile(tx, ty) : undefined;
     if (ex) this.openExhibit(ex.id);
-    else this.hud.closePanels();
+    else this.closePanels();
   }
 
   /** Move or attack with the selected troops. */
@@ -1046,5 +1129,139 @@ export class SliceGame {
       }
     }
     return best;
+  }
+
+  // ---------------------------------------------------------------- building
+
+  private togglePlacement(kind: BuildKind): void {
+    if (!this.world.canBuild) return;
+    if (this.placingKind === kind) {
+      this.endPlacement();
+      return;
+    }
+    this.placingKind = kind;
+    this.placingTile = this.findOpenTileNear(kind, Math.floor(this.cam.x), Math.floor(this.cam.z));
+    this.updatePlan();
+  }
+
+  /** Spirals out from (tx, ty) looking for a spot where the exhibit (and a path to it) or the tower fits. */
+  private findOpenTileNear(kind: BuildKind, tx: number, ty: number): { x: number; y: number } {
+    const grid = this.world.grid;
+    const start = { x: clamp(tx, 0, grid.cols - 1), y: clamp(ty, 0, grid.rows - 1) };
+    const fits = (x: number, y: number) => (kind === 'tower' ? planTower(grid, x, y, Infinity).valid : planPlacement(grid, kind, x, y, Infinity, 0).reason === null);
+    for (let r = 0; r <= 10; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = start.x + dx;
+          const y = start.y + dy;
+          if (grid.inBounds(x, y) && fits(x, y)) return { x, y };
+        }
+      }
+    }
+    return start;
+  }
+
+  private updatePlan(): void {
+    const kind = this.placingKind;
+    if (!kind) return;
+    const w = this.world;
+    const { x, y } = this.placingTile;
+    if (kind === 'tower') {
+      this.plan = null;
+      this.towerPlan = planTower(w.grid, x, y, w.money);
+      const t = this.towerPlan;
+      this.hud.showPlacement(towerPlaceView(t, w.T));
+      this.view.setGhost({ rect: { x: t.tile.x, y: t.tile.y, w: 1, h: 1 }, valid: t.valid, range: UNITS.tower.range / w.T });
+    } else {
+      this.towerPlan = null;
+      this.plan = planPlacement(w.grid, kind, x, y, w.money, w.countOf(kind));
+      const p = this.plan;
+      this.hud.showPlacement(exhibitPlaceView(p));
+      this.view.setGhost({ rect: p.footprint, valid: p.valid, paths: p.newPathTiles, spot: p.viewingSpot });
+    }
+    const r = this.placementRect();
+    if (r) this.anchorToTiles(r);
+  }
+
+  /** Tiles covered by the thing being placed, for the panel's position. */
+  private placementRect(): Rect | undefined {
+    if (this.towerPlan) return { x: this.towerPlan.tile.x, y: this.towerPlan.tile.y, w: 1, h: 1 };
+    return this.plan?.footprint;
+  }
+
+  private confirmPlacement(): void {
+    if (!this.placingKind || !this.world.canBuild) return;
+    // Checked again here, so a stale preview can't build something invalid.
+    this.updatePlan();
+    if (this.placingKind === 'tower') {
+      const plan = this.towerPlan;
+      if (!plan || !plan.valid) {
+        this.hud.toast(plan?.reason ?? 'Can’t build there');
+        return;
+      }
+      this.world.buildTower(plan);
+      this.hud.toast(`${UNITS.tower.name} built for ${formatMoney(plan.cost)}`);
+      this.endPlacement();
+      return;
+    }
+    const plan = this.plan;
+    if (!plan || !plan.valid) {
+      this.hud.toast(plan?.reason ?? 'Can’t build there');
+      return;
+    }
+    const ex = this.world.build(plan);
+    this.hud.toast(`${EXHIBITS[ex.kind].name} built for ${formatMoney(plan.totalCost)}`);
+    this.endPlacement();
+  }
+
+  private endPlacement(): void {
+    this.placingKind = null;
+    this.plan = null;
+    this.towerPlan = null;
+    this.view?.setGhost(null);
+    if (this.hud.panel === 'place') this.hud.closePanels();
+  }
+
+  // ---------------------------------------------------------------- floating words
+
+  /** Money paid at a viewing spot. Guests often pay together, so a payment joins a fresh one beside it. */
+  private paid(amount: number, x: number, z: number): void {
+    const near = this.floats.find((f) => f.amount !== undefined && f.max - f.life < 0.35 && Math.hypot(f.x - x, f.z - z) < 1);
+    if (near) {
+      near.amount = (near.amount ?? 0) + amount;
+      near.el.textContent = `+$${near.amount}`;
+      return;
+    }
+    this.float(`+$${amount}`, x + (Math.random() - 0.5) * 0.4, 0.55, z, '#ffd166', 1.1);
+    this.floats[this.floats.length - 1].amount = amount;
+  }
+
+  /** Text that rises from a point (tiles) and fades. */
+  private float(text: string, x: number, y: number, z: number, color: string, seconds: number): void {
+    // A busy park pays often; past a few dozen at once, the oldest go first.
+    if (this.floats.length > 40) this.floats.shift()?.el.remove();
+    const el = document.createElement('div');
+    el.className = 'float-label';
+    el.textContent = text;
+    el.style.color = color;
+    this.floatLayer.append(el);
+    this.floats.push({ el, x, y, z, life: seconds, max: seconds });
+  }
+
+  private updateFloats(dt: number): void {
+    for (let i = this.floats.length - 1; i >= 0; i--) {
+      const f = this.floats[i];
+      f.life -= dt;
+      if (f.life <= 0) {
+        f.el.remove();
+        this.floats.splice(i, 1);
+        continue;
+      }
+      const k = 1 - f.life / f.max;
+      const p = this.view.project(f.x, f.y + k * 0.6, f.z);
+      f.el.style.transform = `translate(${p.x.toFixed(1)}px, ${(p.y + this.area.top).toFixed(1)}px) translate(-50%, -50%)`;
+      f.el.style.opacity = String(Math.min(1, (f.life / f.max) * 2.5));
+    }
   }
 }

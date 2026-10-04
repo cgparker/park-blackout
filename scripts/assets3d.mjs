@@ -1,12 +1,12 @@
 // Builds the 3D view's models from the Quaternius source packs (CC0) into public3d/.
 // Sources are not in the repo: put them in assets-src/ (see public3d/LICENSES.md).
-// Usage: node scripts/assets3d.mjs
+// Usage: node scripts/assets3d.mjs [dinos|people|nature], or no argument for everything.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, prune, quantize, resample, simplifyPrimitive, weldPrimitive } from '@gltf-transform/functions';
+import { compactPrimitive, dedup, prune, quantize, resample, simplifyPrimitive, weldPrimitive } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 
 const SRC = 'assets-src';
@@ -20,8 +20,12 @@ const io = new NodeIO()
   .registerExtensions(ALL_EXTENSIONS)
   .registerDependencies({ 'meshopt.encoder': MeshoptEncoder, 'meshopt.decoder': MeshoptDecoder });
 
-const r = spawnSync('python3', ['scripts/assets3d_textures.py', `${SRC}/nature`], { stdio: 'inherit' });
-if (r.status !== 0) throw new Error('texture pass failed');
+const ONLY = process.argv[2] ?? null;
+const want = (part) => !ONLY || ONLY === part;
+if (want('nature')) {
+  const r = spawnSync('python3', ['scripts/assets3d_textures.py', `${SRC}/nature`], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error('texture pass failed');
+}
 
 const DINO_CLIPS = ['Idle', 'Walk', 'Run', 'Attack', 'Death'];
 const TROOP_CLIPS = ['Idle', 'Idle_Gun', 'Idle_Gun_Pointing', 'Gun_Shoot', 'Run', 'Run_Shoot', 'Walk', 'HitRecieve', 'Death'];
@@ -35,8 +39,14 @@ const clipName = (name) => name.split('|').pop().replace(/^(TRex|Velociraptor|Tr
 function keepClips(doc, keep) {
   for (const a of doc.getRoot().listAnimations()) {
     const n = clipName(a.getName());
-    if (!keep.includes(n)) a.dispose();
-    else a.setName(n);
+    if (keep.includes(n)) {
+      a.setName(n);
+      continue;
+    }
+    // Channels and samplers too, or their keyframe data stays in the file with nothing using it.
+    for (const c of a.listChannels()) c.dispose();
+    for (const s of a.listSamplers()) s.dispose();
+    a.dispose();
   }
 }
 
@@ -129,6 +139,8 @@ function simplifyByMaterial(doc, rules) {
       const target = Math.max(3, Math.floor((src.length * ratio) / 3) * 3);
       const [out] = MeshoptSimplifier.simplifySloppy(src, positions, 3, null, target, error);
       indices.setArray(pos.getCount() > 65535 ? new Uint32Array(out) : new Uint16Array(out));
+      // Drop the vertices no triangle uses any more.
+      compactPrimitive(prim);
     }
   }
 }
@@ -207,21 +219,35 @@ async function build(src, out, { clips = null, smooth = false, compress = false,
   console.log(`${out} ${(statSync(dest).size / 1024).toFixed(0)} KB`);
 }
 
-for (const k of ['trex', 'raptor', 'triceratops']) await build(`models/${k}.glb`, `dinos/${k}.glb`, { clips: DINO_CLIPS, smooth: true });
+if (want('dinos')) for (const k of ['trex', 'raptor', 'triceratops']) await build(`models/${k}.glb`, `dinos/${k}.glb`, { clips: DINO_CLIPS, smooth: true });
 
-const PEOPLE = {
-  'umm/Adventurer.gltf': 'ranger_m', 'umw/Adventurer.gltf': 'ranger_f', 'umm/Swat.gltf': 'heavy',
-  'umm/Casual_2.gltf': 'guest_m1', 'umm/Casual_Hoodie.gltf': 'guest_m2', 'umm/Beach.gltf': 'guest_m3', 'umm/Punk.gltf': 'guest_m4', 'umm/Suit.gltf': 'guest_m5',
-  'umw/Casual.gltf': 'guest_f1', 'umw/Formal.gltf': 'guest_f2', 'umw/Punk.gltf': 'guest_f3', 'umw/Suit.gltf': 'guest_f4',
+const TROOPS = { 'umm/Adventurer.gltf': 'ranger_m', 'umw/Adventurer.gltf': 'ranger_f', 'umm/Swat.gltf': 'heavy' };
+/**
+ * Guests. Every model in a pack moves with the same clips, so only the first of each pack (guest_m1,
+ * guest_f1) keeps them and the game lends them to the rest. Guests are small on screen and a park holds
+ * dozens, so their meshes keep about a third of the triangles.
+ */
+const GUESTS = {
+  'umm/Casual_2.gltf': 'guest_m1', 'umm/Casual_Hoodie.gltf': 'guest_m2', 'umm/Beach.gltf': 'guest_m3',
+  'umw/Casual.gltf': 'guest_f1', 'umw/Punk.gltf': 'guest_f3', 'umw/Suit.gltf': 'guest_f4',
 };
-for (const [src, out] of Object.entries(PEOPLE)) {
-  const troop = out.startsWith('ranger') || out === 'heavy';
-  await build(src, `people/${out}.glb`, { clips: troop ? TROOP_CLIPS : GUEST_CLIPS, compress: true });
+// Sloppy: the models are flat shaded, so every edge is a seam and the careful mode can't remove anything.
+// Hair is the busiest part and the least missed at this size.
+const GUEST_DETAIL = [
+  [/Hair/, 0.25, 0.3, true],
+  [/./, 0.3, 0.1, true],
+];
+if (want('people')) {
+  for (const [src, out] of Object.entries(TROOPS)) await build(src, `people/${out}.glb`, { clips: TROOP_CLIPS, compress: true });
+  for (const [src, out] of Object.entries(GUESTS)) {
+    const donor = out === 'guest_m1' || out === 'guest_f1';
+    await build(src, `people/${out}.glb`, { clips: donor ? GUEST_CLIPS : [], compress: true, detail: GUEST_DETAIL });
+  }
 }
 
 const NATURE = ['CommonTree_1', 'CommonTree_2', 'CommonTree_3', 'CommonTree_4', 'CommonTree_5', 'Pine_1', 'Pine_2', 'Pine_3', 'TwistedTree_1', 'TwistedTree_3', 'DeadTree_1',
   'Bush_Common', 'Bush_Common_Flowers', 'Fern_1', 'Plant_1_Big', 'Plant_7_Big', 'Grass_Common_Short', 'Grass_Common_Tall', 'Grass_Wispy_Short', 'Grass_Wispy_Tall',
   'Flower_3_Group', 'Flower_4_Group', 'Rock_Medium_1', 'Rock_Medium_2', 'Rock_Medium_3', 'Pebble_Round_1', 'Pebble_Round_3', 'Pebble_Square_2', 'Clover_1', 'Mushroom_Common'];
 // Separate .gltf files so trees and plants share one copy of each texture.
-for (const n of NATURE) await build(`nature/${n}.gltf`, `nature/${n}.gltf`, { compress: true, detail: NATURE_DETAIL, cards: 0.45 });
+if (want('nature')) for (const n of NATURE) await build(`nature/${n}.gltf`, `nature/${n}.gltf`, { compress: true, detail: NATURE_DETAIL, cards: 0.45 });
 

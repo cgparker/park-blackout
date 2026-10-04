@@ -1,10 +1,10 @@
-// Turns the artifact build of the 3D slice (npm run build:3d-artifact) into an artifact page plus
+// Turns the artifact build of the 3D game (npm run build:3d-artifact) into an artifact page plus
 // the list of files it needs.
 // - The artifact host supplies <!doctype>, <html>, <head>, and <body>, so the page keeps only the
 //   title, its stylesheet and scripts, and the markup.
 // - The host serves no binary files, so every model becomes a GLB in base64 text (`.glb.txt`):
 //   .glb files as they are, and each .gltf packed with its .bin. Textures stay separate images.
-// - Only what the slice loads is listed: no guests, no stills.
+// - Only what the game loads is listed: no stills.
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -60,7 +60,7 @@ const asText = (rel, bytes) => {
   add(`${rel}.txt`);
 };
 for (const f of readdirSync(`${DIST}/dinos`)) if (f.endsWith('.glb')) asText(`dinos/${f}`, readFileSync(`${DIST}/dinos/${f}`));
-for (const f of ['ranger_m.glb', 'ranger_f.glb', 'heavy.glb']) asText(`people/${f}`, readFileSync(`${DIST}/people/${f}`));
+for (const f of readdirSync(`${DIST}/people`)) if (f.endsWith('.glb')) asText(`people/${f}`, readFileSync(`${DIST}/people/${f}`));
 for (const f of readdirSync(`${DIST}/nature`)) {
   if (f.endsWith('.gltf')) asText(`nature/${f.replace(/\.gltf$/, '.glb')}`, packGlb(`${DIST}/nature/${f}`));
   else if (/\.(png|jpg)$/.test(f)) add(`nature/${f}`);

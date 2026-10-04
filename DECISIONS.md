@@ -2,6 +2,20 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## 3D level 3
+
+Chosen by Chris: the blackout level in 3D too, after levels 1 and 2 played well there.
+
+78. **The same game, drawn in 3D.** Building, the blackout, guests, and the end screen use the 2D game's rules, HUD, panels, and tips. The 3D build now offers all three levels.
+79. **Building works as in 2D, with a preview on the ground.** Pick an exhibit or a tower and a preview appears near the middle of the view, green where it fits and red where it doesn't, showing the new path tiles and the viewing spot, or the tower's range. A tap on the map moves it; Build in the panel builds it. Tree tops thin out over the preview so it can be seen.
+80. **The lights go out with the power.** Level 3 starts by day. When the power is cut, the park switches to the night lighting; when the power comes back, so does the day. The Night button still switches by hand, for testing.
+81. **Building redraws only what changed.** The ground is redone just around the new pen, path, or tower, trees and plants are re-planned so they make room for it, and the shade under trees is redone a few tiles around it. HQ, the pond, and the nest are built once per park. Measured here, a build went from about 1.1 s of work to about 0.15 s; a phone is slower.
+82. **Shaders are prepared while the loading screen is up.** Every animal, troop, guest, tower, fence look, and kind of tree and plant is drawn once by day and once by night before play. Without it, the first pen or the moment the power goes out froze while the GPU compiled. Loading takes longer: in the software renderer used for tests, about 18 s instead of 5.
+83. **Guests are cheap to draw.** Six guest models instead of nine, each about a third of the triangles, with each guest's parts merged into one mesh in its own colours, so a guest is one draw call. The clips are shared within each pack. Guests cast no shadow of their own (a soft blob stands in, all of them in one draw call), and guests and animals off the screen aren't drawn or animated. In a busy test park with about 67 guests, a frame went from about 1,750 draw calls and 1.4 million triangles to about 400 and 0.7 million.
+84. **Dropped clips are really dropped.** The model build left the data of unused animation clips in the files. Without it, troop models are about a third smaller, and the artifact is about 9.3 MB with the guests, down from 9.5 MB without them.
+85. **Payments that land together show as one.** Guests often pay at the same deck at once, so a "+$" that would land on a fresh one adds to it instead of stacking.
+86. **A killed guest falls and stays down a few seconds**, like a troop, then sinks away. Dust rises where something is built or reinforced.
+
 ## Stampedes go around things
 
 Chosen by Chris, after playing the 3D slice: Triceratops got stuck in the terrain too easily, which made them easy to catch.

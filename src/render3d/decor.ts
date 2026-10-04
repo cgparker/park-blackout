@@ -2,7 +2,7 @@
 // Trees stay off the playfield (outside the map or in a thin band at its edge) so they never hide troops or block a build.
 import * as THREE from 'three';
 import { Tile } from '../core/grid';
-import { boxBlur, fenceRect, MARGIN, type Splat, type TerrainSource } from './terrain';
+import { boxBlur, fenceRect, MARGIN, type Splat, type TerrainSource, type TileWindow } from './terrain';
 import { foliageGradient } from './materials';
 import { clamp, col, mulberry32, smoothstep, UP, vnoise } from './util';
 
@@ -293,26 +293,44 @@ export function planDecor(src: TerrainSource, splat: Splat, opts: DecorOptions):
   return plan;
 }
 
-/** Soft shade on the ground under trees, bushes, and rocks, baked into the splat map's spare channel. */
-export function bakeDecorShade(splat: Splat, plan: DecorPlan): void {
-  const { w, h } = splat;
+/**
+ * Soft shade on the ground under trees, bushes, and rocks, baked into the splat map's spare channel.
+ * With a block of tiles, only the shade over that block (and a margin) is redone.
+ */
+export function bakeDecorShade(splat: Splat, plan: DecorPlan, win?: TileWindow): void {
+  const { w: W, h: H } = splat;
   const r = splat.region;
-  const ppt = w / r.z;
+  const ppt = W / r.z;
+  const blurR = Math.max(1, Math.round(ppt * 0.15));
+  const reach = blurR * 3 + 2;
+  // Pixels to write (inner) and to compute (outer, so the blur near the edge comes out right).
+  const ix0 = win ? clamp(Math.floor((win.x0 - r.x) * ppt), 0, W) : 0;
+  const iz0 = win ? clamp(Math.floor((win.z0 - r.y) * ppt), 0, H) : 0;
+  const ix1 = win ? clamp(Math.ceil((win.x1 - r.x) * ppt), 0, W) : W;
+  const iz1 = win ? clamp(Math.ceil((win.z1 - r.y) * ppt), 0, H) : H;
+  const ox0 = win ? Math.max(0, ix0 - reach) : 0;
+  const oz0 = win ? Math.max(0, iz0 - reach) : 0;
+  const ox1 = win ? Math.min(W, ix1 + reach) : W;
+  const oz1 = win ? Math.min(H, iz1 + reach) : H;
+  const w = ox1 - ox0;
+  const h = oz1 - oz0;
   const shade = new Float32Array(w * h);
   const radius: Partial<Record<DecorKind, number>> = { tree: 0.75 / 0.3, pine: 0.6 / 0.3, twisted: 0.5 / 0.14, bush: 0.32 / 0.26, bushFlower: 0.32 / 0.26, hedge: 0.3 / 0.26, rock: 0.55 / 0.3, log: 0.3 / 0.11, plantTall: 0.22 / 0.12 };
   for (const [kind, k] of Object.entries(radius) as [DecorKind, number][]) {
     for (const p of plan[kind]) {
       const rad = k * p.s * ppt;
-      const cx = (p.x - r.x) * ppt;
-      const cz = (p.z - r.y) * ppt;
+      const cx = (p.x - r.x) * ppt - ox0;
+      const cz = (p.z - r.y) * ppt - oz0;
+      if (cx + rad < 0 || cz + rad < 0 || cx - rad > w || cz - rad > h) continue;
       for (let y = Math.max(0, Math.floor(cz - rad)); y < Math.min(h, Math.ceil(cz + rad)); y++)
         for (let x = Math.max(0, Math.floor(cx - rad)); x < Math.min(w, Math.ceil(cx + rad)); x++)
           if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cz) ** 2 < rad * rad) shade[y * w + x] = 1;
     }
   }
-  const blurred = boxBlur(shade, w, h, Math.max(1, Math.round(ppt * 0.15)), 3);
+  const blurred = boxBlur(shade, w, h, blurR, 3);
   const data = splat.c.image.data as Uint8Array;
-  for (let i = 0; i < w * h; i++) data[i * 4 + 3] = clamp(Math.round(blurred[i] * 255), 0, 255);
+  for (let y = iz0; y < iz1; y++)
+    for (let x = ix0; x < ix1; x++) data[(y * W + x) * 4 + 3] = clamp(Math.round(blurred[(y - oz0) * w + (x - ox0)] * 255), 0, 255);
   splat.c.needsUpdate = true;
 }
 

@@ -17,6 +17,26 @@ canvas.view3d {
   pointer-events: none;
 }
 
+/* Words that rise from the map: money paid, Breach!, Secured, Charge! */
+.float-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.float-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  will-change: transform, opacity;
+}
+
 .press-ring {
   position: absolute;
   z-index: 5;

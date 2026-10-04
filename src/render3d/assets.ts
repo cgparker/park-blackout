@@ -205,7 +205,12 @@ class Kit {
  * draw call. Every part moves into the first part's packed space (each packed part keeps its own
  * scale in its bind matrices), which stays exact in every pose. Returns null if a part has a texture.
  */
-function mergePerson(root: THREE.Object3D, rim: Rim, roughness: number): THREE.SkinnedMesh | null {
+/**
+ * Merges a character's skinned parts into one skinned mesh with vertex colours: one draw call. With
+ * `slotOf`, each vertex also remembers which kind of part it came from (skin, hair, top...), by material
+ * name, so a copy can be recoloured.
+ */
+function mergePerson(root: THREE.Object3D, rim: Rim, roughness: number, slotOf?: (material: string) => number): THREE.SkinnedMesh | null {
   root.updateMatrixWorld(true);
   const parts = skinned(root);
   if (!parts.length) return null;
@@ -223,6 +228,7 @@ function mergePerson(root: THREE.Object3D, rim: Rim, roughness: number): THREE.S
   const pos = new Float32Array(count * 3);
   const nor = new Float32Array(count * 3);
   const rgb = new Float32Array(count * 3);
+  const slots = new Uint8Array(count);
   const si = new Uint16Array(count * 4);
   const sw = new Float32Array(count * 4);
   const index = new Uint32Array(icount);
@@ -258,7 +264,9 @@ function mergePerson(root: THREE.Object3D, rim: Rim, roughness: number): THREE.S
         nor[(vb + i) * 3 + 1] = v.y;
         nor[(vb + i) * 3 + 2] = v.z;
       }
-      const c = (mats[matOf[i]] ?? mats[0]).color;
+      const mm = mats[matOf[i]] ?? mats[0];
+      const c = mm.color;
+      if (slotOf) slots[vb + i] = slotOf(mm.name);
       rgb[(vb + i) * 3] = c.r;
       rgb[(vb + i) * 3 + 1] = c.g;
       rgb[(vb + i) * 3 + 2] = c.b;
@@ -280,6 +288,7 @@ function mergePerson(root: THREE.Object3D, rim: Rim, roughness: number): THREE.S
   geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
   geo.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
   geo.setIndex(new THREE.BufferAttribute(index, 1));
+  if (slotOf) geo.userData.slots = slots;
   const mat = addRim(new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness: 0, envMapIntensity: 0.55 }), rim);
   const body = new THREE.SkinnedMesh(geo, mat);
   body.name = 'Body';
@@ -652,17 +661,36 @@ function prepHeavy(g: GLTF, M: Mats): PersonTemplate {
   return { gltf: g, clips: clipMap(g) };
 }
 
-function prepGuest(g: GLTF): PersonTemplate {
-  for (const m of skinned(g.scene)) {
-    m.castShadow = true;
-    m.receiveShadow = true;
-    m.frustumCulled = false;
-  }
+/** Which colour a guest's part takes: 0 keeps the model's own, then skin, darker skin, hair, top, and bottom. */
+export const GUEST_SLOT = { own: 0, skin: 1, skinDark: 2, hair: 3, top: 4, bottom: 5 } as const;
+
+function guestSlot(name: string): number {
+  if (/^Skin/.test(name)) return name === 'Skin_Darker' ? GUEST_SLOT.skinDark : GUEST_SLOT.skin;
+  if (/Hair|Eyebrows|Moustache/.test(name)) return GUEST_SLOT.hair;
+  if (/Shirt|Purple|^Red$|LimeGreen|Orange|Pink|^White$|LightBlue|^Green$|LightGreen|Main/.test(name)) return GUEST_SLOT.top;
+  if (/Pants|LightBrown|^Brown$|Suit|DarkBrown|Red_Dark/.test(name)) return GUEST_SLOT.bottom;
+  return GUEST_SLOT.own;
+}
+
+/**
+ * A park guest: one skinned mesh that each guest recolours (see Actors). Guests cast no shadow of their
+ * own (a soft blob stands in), since a park holds dozens. Models without clips borrow their pack's.
+ */
+function prepGuest(g: GLTF, clips: THREE.AnimationClip[]): PersonTemplate {
   g.scene.traverse((o) => {
     if (/Pistol/.test(o.name)) o.visible = false;
   });
+  const body = mergePerson(g.scene, { color: '#b4c8ff', power: 3.5, strength: 0.22 }, 0.8, guestSlot);
+  if (body) {
+    body.castShadow = false;
+    (body.material as THREE.MeshStandardMaterial).envMapIntensity = 0.5;
+  }
+  if (!g.animations.length) g.animations = clips;
   return { gltf: g, clips: clipMap(g) };
 }
+
+/** Guests: the first of each pack carries the clips for the rest of its pack. */
+const GUEST_FILES = { men: ['guest_m1', 'guest_m2', 'guest_m3'], women: ['guest_f1', 'guest_f3', 'guest_f4'] };
 
 // ------------------------------------------------------------------ nature
 
@@ -707,7 +735,11 @@ export async function loadAssets(M: Mats, o: LoadOptions): Promise<Assets> {
   const dinoP = Promise.all((['trex', 'raptor', 'triceratops'] as AnimalKind[]).map(async (k) => [k, prepDino(k, await load(`dinos/${k}.glb`))] as const));
   const lightP = Promise.all(['ranger_m', 'ranger_f'].map(async (n) => prepLight(await load(`people/${n}.glb`), M)));
   const heavyP = load('people/heavy.glb').then((g) => prepHeavy(g, M));
-  const guestP = o.guests ? Promise.all(['guest_m1', 'guest_m2', 'guest_m3', 'guest_m4', 'guest_m5', 'guest_f1', 'guest_f2', 'guest_f3', 'guest_f4'].map(async (n) => prepGuest(await load(`people/${n}.glb`)))) : Promise.resolve([]);
+  const pack = async (names: string[]) => {
+    const files = await Promise.all(names.map((n) => load(`people/${n}.glb`)));
+    return files.map((g) => prepGuest(g, files[0].animations));
+  };
+  const guestP = o.guests ? Promise.all([pack(GUEST_FILES.men), pack(GUEST_FILES.women)]).then(([m, f]) => m.flatMap((x, i) => [x, f[i]])) : Promise.resolve([]);
   const natP = Promise.all(
     (Object.entries(NATURE_FILES) as [DecorKind, (typeof NATURE_FILES)[DecorKind]][]).map(async ([kind, spec]) => {
       const variants = await Promise.all(spec.files.map(async (f, i) => natureParts((await load(`nature/${f}.gltf`)).scene, spec.tint ? spec.tint[i % spec.tint.length] : null)));

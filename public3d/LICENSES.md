@@ -17,10 +17,12 @@ The copies used were taken from public GitHub projects that include these packs 
 What the build changes, so nobody mistakes these for the originals:
 
 - Only the animation clips the game uses are kept, and they are renamed (for example `Velociraptor_Run` becomes `Run`).
+- Guests: six of the pack's characters, simplified to about a third of their triangles. Every character in a pack moves with the same clips, so only the first of each (`guest_m1`, `guest_f1`) keeps them, and the game lends them to the rest.
 - Dinosaur normals are smoothed. Dinosaur colours come from the game's own skin shader, not the pack's materials.
 - Vertex data is packed (KHR_mesh_quantization). Tree trunks are simplified, and leaf cards are thinned (about half kept, each grown to cover the gap).
 - Tree leaves use white versions of the pack's leaf textures, tinted in the game.
 - Troop gear (caps, armour, guns) is built by the game from simple shapes and is not part of any pack.
+- In the game, each character's parts are merged into one mesh, and each guest is given its own colours.
 
 ## Made for this project
 

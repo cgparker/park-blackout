@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DINO_AI, DINOS, UNITS, type AnimalKind, type UnitKind } from '../config';
 import type { DinoState } from '../core/dinos';
 import type { VisitorMode } from '../core/visitors';
-import { SCALE, type Assets, type DinoTemplate, type PersonTemplate } from './assets';
+import { GUEST_SLOT, SCALE, type Assets, type DinoTemplate, type PersonTemplate } from './assets';
 import { TEX, type Mats } from './materials';
 import { buildTower, TOWER_DECK, type TowerBuild } from './structures';
 import { clamp, col, facingToRotY, hdr, mulberry32, turnToward } from './util';
@@ -23,6 +23,10 @@ export interface DinoView {
   cooldown: number;
   windup?: number;
   charge?: number;
+  /** T. rex only: the troop or tower it is locked onto, and the direction of its charge. */
+  lockId?: number;
+  cdx?: number;
+  cdy?: number;
   removed?: boolean;
   /** Stills only: play this clip instead of inferring one from movement. */
   pose?: string;
@@ -175,13 +179,23 @@ interface TowerActor {
 interface GuestActor {
   obj: THREE.Object3D;
   anim: Anim;
+  /** Which guest model, so a guest who leaves can come back as another guest of the same model. */
+  tpl: number;
+  /** This guest's own copy of the model's colours. The rest of the mesh is shared. */
+  colors: THREE.BufferAttribute;
   rotY: number;
   lastX: number;
   lastZ: number;
   speed: number;
+  /** Seconds since this guest was killed, or -1. */
   dying: number;
-  phone: THREE.Mesh | null;
+  /** Drawn this frame: near the view. */
+  shown: boolean;
 }
+
+/** Most guests drawn at once, for the shared blob and phone meshes. */
+const MAX_GUESTS = 200;
+const tmpM = new THREE.Matrix4();
 
 export interface ActorFrame {
   T: number;
@@ -193,6 +207,8 @@ export interface ActorFrame {
   dt: number;
   /** Seconds, for one-shot timing. */
   now: number;
+  /** Ground near the view, in tiles. Guests and animals outside it are neither drawn nor animated. */
+  view?: { x0: number; z0: number; x1: number; z1: number };
 }
 
 const tmpV = new THREE.Vector3();
@@ -204,6 +220,12 @@ export class Actors {
   private readonly towers = new Map<number, TowerActor>();
   private readonly guests = new Map<number, GuestActor>();
   private readonly corpses: TroopActor[] = [];
+  private readonly fallen: GuestActor[] = [];
+  /** Guests who left, kept hidden for the next guest of the same model. */
+  private readonly guestPool: GuestActor[] = [];
+  /** Every guest's contact shadow in one mesh, and the glow of the phones guests hold up at night. */
+  private readonly guestBlobs = new THREE.InstancedMesh(blobGeo, blobMat, MAX_GUESTS);
+  private readonly phones: THREE.Points;
   private readonly rnd = mulberry32(7);
   private readonly eyeMatDay = new THREE.MeshStandardMaterial({ color: col('#1a1206'), roughness: 0.15, metalness: 0.2 });
   private readonly eyeMats: Record<string, THREE.MeshBasicMaterial> = {
@@ -213,7 +235,17 @@ export class Actors {
   /** Shooters this frame (unit ids), from dart events, for the shooting pose. */
   readonly firedBy = new Set<number>();
 
-  constructor(private readonly assets: Assets, private readonly M: Mats) {}
+  constructor(private readonly assets: Assets, private readonly M: Mats) {
+    this.guestBlobs.count = 0;
+    this.guestBlobs.renderOrder = 1;
+    this.guestBlobs.frustumCulled = false;
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_GUESTS * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    pg.setDrawRange(0, 0);
+    this.phones = new THREE.Points(pg, new THREE.PointsMaterial({ map: TEX.glow, color: hdr('#e9f1ff', 6), size: 0.07, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.phones.frustumCulled = false;
+    this.root.add(this.guestBlobs, this.phones);
+  }
 
   // ---------------------------------------------- queries for effects and picking
 
@@ -249,17 +281,33 @@ export class Actors {
     for (const a of this.dinos.values()) this.root.remove(a.obj, a.bar.group, a.blob);
     for (const a of this.troops.values()) this.root.remove(a.obj, a.ring, a.bar.group, a.blob);
     for (const t of this.towers.values()) this.root.remove(t.build.group, t.bar.group);
-    for (const g of this.guests.values()) {
-      this.root.remove(g.obj);
-      if (g.phone) this.root.remove(g.phone);
-    }
+    for (const g of [...this.guests.values(), ...this.fallen, ...this.guestPool]) this.root.remove(g.obj);
     for (const c of this.corpses) this.root.remove(c.obj);
+    this.fallen.length = 0;
+    this.guestPool.length = 0;
+    this.guestBlobs.count = 0;
+    this.phones.geometry.setDrawRange(0, 0);
     this.dinos.clear();
     this.troops.clear();
     this.towers.clear();
     this.guests.clear();
     this.corpses.length = 0;
     this.firedBy.clear();
+  }
+
+  /** A guest was killed at this spot (tiles): the nearest one falls and stays down a few seconds. */
+  guestDown(x: number, z: number): void {
+    let best: GuestActor | null = null;
+    let bd = 0.8;
+    for (const g of this.guests.values()) {
+      if (g.dying >= 0) continue;
+      const d = Math.hypot(g.obj.position.x - x, g.obj.position.z - z);
+      if (d < bd) {
+        bd = d;
+        best = g;
+      }
+    }
+    if (best) best.dying = 0;
   }
 
   // ---------------------------------------------- creation
@@ -298,7 +346,8 @@ export class Actors {
 
   private makeTroop(u: UnitView): TroopActor {
     const heavy = u.kind === 'heavy';
-    const tpl: PersonTemplate = heavy ? this.assets.heavy : this.assets.light[u.id % this.assets.light.length];
+    const n = this.assets.light.length;
+    const tpl: PersonTemplate = heavy ? this.assets.heavy : this.assets.light[((u.id % n) + n) % n];
     const obj = SkeletonUtils.clone(tpl.gltf.scene);
     obj.scale.setScalar(heavy ? SCALE.heavy : SCALE.light);
     const anim = makeAnim(obj, tpl.gltf.animations);
@@ -314,35 +363,92 @@ export class Actors {
     return { obj, anim, heavy, rotY: facingToRotY(u.facing), lastX: u.x, lastZ: u.y, speed: 0, lastCooldown: u.cooldown, lastHurt: u.hurtAt ?? -1, ring, bar, blob, dying: -1 };
   }
 
+  /** A guest: a free one of the same model from the pool, or a new copy, in this guest's own colours. */
   private makeGuest(v: GuestView): GuestActor {
     const list = this.assets.guests;
-    const tpl = list[v.id % list.length];
-    const obj = SkeletonUtils.clone(tpl.gltf.scene);
-    obj.scale.setScalar(SCALE.guest);
+    const ti = ((v.id % list.length) + list.length) % list.length;
     const r = mulberry32(v.id * 13 + 5);
-    const pick = <T>(a: T[]) => a[Math.floor(r() * a.length)];
-    const skin = pick(['#f1c9a5', '#e0ac85', '#c68863', '#9a6544', '#6d452c', '#4a2f1f']);
-    const hair = pick(['#1c1410', '#3b2516', '#6b4424', '#a87a46', '#d6b77a', '#8d8d8d']);
-    const c1 = pick(['#d94a3a', '#e88a2c', '#efd04a', '#4fae5b', '#2f8ccf', '#7a55c7', '#e86aa6', '#f2f2ee', '#22272e', '#3c6e91']);
-    const c2 = pick(['#22272e', '#3c4a5e', '#5a4a3a', '#c8b48a', '#2f3b52', '#6b6b6b']);
-    obj.traverse((o) => {
-      const m = o as THREE.SkinnedMesh;
-      if (!m.isSkinnedMesh) return;
-      const list2 = (Array.isArray(m.material) ? m.material : [m.material]).map((mm) => {
-        const c = (mm as THREE.MeshStandardMaterial).clone();
-        c.envMapIntensity = 0.5;
-        if (/^Skin/.test(c.name)) c.color.set(skin).multiplyScalar(c.name === 'Skin_Darker' ? 0.85 : 1);
-        else if (/Hair|Eyebrows|Moustache/.test(c.name)) c.color.set(hair);
-        else if (/Shirt|Purple|^Red$|LimeGreen|Orange|Pink|^White$|LightBlue|^Green$|LightGreen|Main/.test(c.name)) c.color.set(c1);
-        else if (/Pants|LightBrown|^Brown$|Suit|DarkBrown|Red_Dark/.test(c.name)) c.color.set(c2);
-        return c;
+    let a: GuestActor | undefined;
+    const at = this.guestPool.findIndex((p) => p.tpl === ti);
+    if (at >= 0) {
+      a = this.guestPool.splice(at, 1)[0];
+      a.obj.visible = true;
+      a.obj.position.y = 0;
+      a.dying = -1;
+      a.speed = 0;
+      a.anim.current = '';
+      a.anim.mixer.stopAllAction();
+    } else {
+      const tpl = list[ti];
+      const obj = SkeletonUtils.clone(tpl.gltf.scene);
+      obj.scale.setScalar(SCALE.guest);
+      // Share the merged mesh's shape and skinning; give this guest its own colours.
+      let colors: THREE.BufferAttribute | null = null;
+      obj.traverse((o) => {
+        const m = o as THREE.SkinnedMesh;
+        if (!m.isSkinnedMesh || colors) return;
+        const base = m.geometry;
+        const geo = new THREE.BufferGeometry();
+        for (const [name, attr] of Object.entries(base.attributes)) geo.setAttribute(name, attr);
+        geo.setIndex(base.index);
+        geo.userData.slots = base.userData.slots;
+        geo.userData.base = base.attributes.color;
+        colors = new THREE.BufferAttribute(new Float32Array((base.attributes.color as THREE.BufferAttribute).array), 3);
+        geo.setAttribute('color', colors);
+        m.geometry = geo;
       });
-      m.material = list2.length === 1 ? list2[0] : list2;
+      a = { obj, anim: makeAnim(obj, tpl.gltf.animations), tpl: ti, colors: colors ?? new THREE.BufferAttribute(new Float32Array(3), 3), rotY: 0, lastX: v.x, lastZ: v.y, speed: 0, dying: -1, shown: true };
+      this.root.add(obj);
+    }
+    this.paintGuest(a, r);
+    a.rotY = facingToRotY(v.facing ?? 0);
+    a.lastX = v.x;
+    a.lastZ = v.y;
+    play(a.anim, 'Walk', { fade: 0, at: r() * 1.5 });
+    return a;
+  }
+
+  /** Skin, hair, top, and bottom colours, picked from the guest's id so they stay the same. */
+  private paintGuest(a: GuestActor, r: () => number): void {
+    const pick = <T>(list: T[]) => list[Math.floor(r() * list.length)];
+    const skin = col(pick(['#f1c9a5', '#e0ac85', '#c68863', '#9a6544', '#6d452c', '#4a2f1f']));
+    const palette: Record<number, THREE.Color> = {
+      [GUEST_SLOT.skin]: skin,
+      [GUEST_SLOT.skinDark]: skin.clone().multiplyScalar(0.85),
+      [GUEST_SLOT.hair]: col(pick(['#1c1410', '#3b2516', '#6b4424', '#a87a46', '#d6b77a', '#8d8d8d'])),
+      [GUEST_SLOT.top]: col(pick(['#d94a3a', '#e88a2c', '#efd04a', '#4fae5b', '#2f8ccf', '#7a55c7', '#e86aa6', '#f2f2ee', '#22272e', '#3c6e91'])),
+      [GUEST_SLOT.bottom]: col(pick(['#22272e', '#3c4a5e', '#5a4a3a', '#c8b48a', '#2f3b52', '#6b6b6b'])),
+    };
+    let geo: THREE.BufferGeometry | null = null;
+    a.obj.traverse((o) => {
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh && !geo) geo = (o as THREE.SkinnedMesh).geometry;
     });
-    const anim = makeAnim(obj, tpl.gltf.animations);
-    play(anim, 'Walk', { fade: 0, at: r() * 1.5 });
-    this.root.add(obj);
-    return { obj, anim, rotY: facingToRotY(v.facing ?? 0), lastX: v.x, lastZ: v.y, speed: 0, dying: -1, phone: null };
+    const g = geo as THREE.BufferGeometry | null;
+    const slots = g?.userData.slots as Uint8Array | undefined;
+    const base = g?.userData.base as THREE.BufferAttribute | undefined;
+    if (!slots || !base) return;
+    const out = a.colors.array as Float32Array;
+    const src = base.array as Float32Array;
+    for (let i = 0; i < slots.length; i++) {
+      const c = palette[slots[i]];
+      if (c) {
+        out[i * 3] = c.r;
+        out[i * 3 + 1] = c.g;
+        out[i * 3 + 2] = c.b;
+      } else {
+        out[i * 3] = src[i * 3];
+        out[i * 3 + 1] = src[i * 3 + 1];
+        out[i * 3 + 2] = src[i * 3 + 2];
+      }
+    }
+    a.colors.needsUpdate = true;
+  }
+
+  /** A guest leaves the scene: hidden and kept for reuse. */
+  private poolGuest(a: GuestActor): void {
+    a.obj.visible = false;
+    a.anim.mixer.stopAllAction();
+    this.guestPool.push(a);
   }
 
   // ---------------------------------------------- per frame
@@ -367,6 +473,10 @@ export class Actors {
       a.lastZ = d.y;
       a.obj.position.set(x, 0, z);
       a.blob.position.set(x, 0.015, z);
+      // Off the view: not drawn, and its animation waits.
+      const vr = f.view;
+      const shown = !vr || (x > vr.x0 - 1 && x < vr.x1 + 1 && z > vr.z0 - 1 && z < vr.z1 + 1);
+      a.obj.visible = shown;
       const target = facingToRotY(d.facing);
       a.rotY = moved > 2 ? target : turnToward(a.rotY, target, ((d.charge ?? 0) > 0 ? 14 : 7) * dt);
       a.obj.rotation.y = a.rotY;
@@ -414,7 +524,7 @@ export class Actors {
         a.bar.set(d.sedation / cfg.sedation);
         a.bar.group.position.set(x, (d.kind === 'trex' ? 1.35 : d.kind === 'raptor' ? 0.62 : 0.95), z);
       }
-      a.anim.mixer.update(dt);
+      if (shown) a.anim.mixer.update(dt);
     }
     for (const [id, a] of this.dinos) {
       if (seenD.has(id)) continue;
@@ -515,8 +625,13 @@ export class Actors {
       }
     }
 
-    // Guests.
+    // Guests. Only those near the view are drawn and animated; a park can hold dozens.
+    const vr = f.view;
+    const near = (x: number, z: number) => !vr || (x > vr.x0 && x < vr.x1 && z > vr.z0 && z < vr.z1);
     const seenG = new Set<number>();
+    let blobs = 0;
+    let lit = 0;
+    const phonePos = this.phones.geometry.attributes.position as THREE.BufferAttribute;
     for (const v of f.guests) {
       if (v.done) continue;
       seenG.add(v.id);
@@ -532,6 +647,9 @@ export class Actors {
       else if (v.facing !== undefined) a.rotY = facingToRotY(v.facing);
       a.lastX = v.x;
       a.lastZ = v.y;
+      a.shown = near(x, z);
+      a.obj.visible = a.shown;
+      if (!a.shown) continue;
       a.obj.position.set(x, 0, z);
       a.obj.rotation.y = a.rotY;
       if (v.pose) {
@@ -539,21 +657,38 @@ export class Actors {
       } else if (a.speed > 1.4 || v.mode === 'fleeing') play(a.anim, 'Run', { speed: clamp(a.speed / 2.4, 0.7, 1.5) });
       else if (a.speed > 0.1 || v.mode === 'walking' || v.mode === 'leaving') play(a.anim, 'Walk', { speed: clamp(a.speed / 1.1, 0.6, 1.4) });
       else play(a.anim, v.id % 4 === 0 ? 'Wave' : 'Idle');
-      if (f.night && !a.phone && v.id % 2 === 0) {
-        a.phone = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 4), new THREE.MeshBasicMaterial({ color: hdr('#e9f1ff', 8) }));
-        this.root.add(a.phone);
-      }
-      if (a.phone) {
-        tmpV.set(Math.sin(a.rotY) * 0.08 + Math.cos(a.rotY) * 0.05, 0.25, Math.cos(a.rotY) * 0.08 - Math.sin(a.rotY) * 0.05);
-        a.phone.position.set(x + tmpV.x, tmpV.y, z + tmpV.z);
-      }
       a.anim.mixer.update(dt);
+      if (blobs < MAX_GUESTS) this.guestBlobs.setMatrixAt(blobs++, tmpM.makeScale(0.36, 1, 0.36).setPosition(x, 0.014, z));
+      // At night every other guest holds up a phone.
+      if (f.night && v.id % 2 === 0 && lit < MAX_GUESTS) {
+        tmpV.set(Math.sin(a.rotY) * 0.08 + Math.cos(a.rotY) * 0.05, 0.25, Math.cos(a.rotY) * 0.08 - Math.sin(a.rotY) * 0.05);
+        phonePos.setXYZ(lit++, x + tmpV.x, tmpV.y, z + tmpV.z);
+      }
     }
+    this.guestBlobs.count = blobs;
+    this.guestBlobs.instanceMatrix.needsUpdate = true;
+    this.phones.geometry.setDrawRange(0, lit);
+    phonePos.needsUpdate = true;
     for (const [id, a] of this.guests) {
       if (seenG.has(id)) continue;
       this.guests.delete(id);
-      if (a.phone) this.root.remove(a.phone);
-      this.root.remove(a.obj);
+      if (a.dying < 0) {
+        this.poolGuest(a);
+        continue;
+      }
+      a.obj.visible = true;
+      play(a.anim, 'Death', { once: true, fade: 0.08 });
+      this.fallen.push(a);
+    }
+    for (let i = this.fallen.length - 1; i >= 0; i--) {
+      const g = this.fallen[i];
+      g.dying += dt;
+      g.anim.mixer.update(dt);
+      if (g.dying > 3) g.obj.position.y -= dt * 0.1;
+      if (g.dying > 4.5) {
+        this.fallen.splice(i, 1);
+        this.poolGuest(g);
+      }
     }
     this.firedBy.clear();
   }

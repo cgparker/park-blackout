@@ -8,16 +8,19 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { VIEW3D } from '../config';
+import { buildSegments } from '../core/exhibit';
 import { Tile, type Point, type Rect, type TileType } from '../core/grid';
 import type { GameEvent } from '../core/world';
 import { Actors, type DinoView, type GuestView, type UnitView } from './actors';
 import { loadAssets, type Assets } from './assets';
+import { Cues } from './cues';
 import { bakeDecorShade, instanceParts, planDecor, type DecorKind } from './decor';
 import { Effects } from './effects';
 import { buildFence, fenceSignature, type FenceBuild, type FenceExhibitView } from './fences';
+import { Ghost, type GhostView } from './ghost';
 import { addReveal, applyLighting, makeMaterials, REVEAL, setRims, TEX, type Mats } from './materials';
 import { buildHQ, buildNest, buildSite, TOWER_DECK, type HqBuild } from './structures';
-import { buildSplat, makeGround, makeWater, type TerrainSource } from './terrain';
+import { buildSplat, makeGround, makeWater, type Splat, type TerrainSource, type TileWindow } from './terrain';
 import { clamp, col, disposeTree, hdr, V3 } from './util';
 
 export interface ViewWorld {
@@ -118,12 +121,22 @@ export class View3D {
   private envDay!: THREE.Texture;
   private envNight!: THREE.Texture;
   private statics = new THREE.Group();
+  /** Built once per park: the ground, the pond, HQ, and the nest. */
+  private fixed = new THREE.Group();
+  /** Rebuilt whenever something is built: trees and plants, decks, lamps, and the gate. */
+  private dynamic = new THREE.Group();
   private staticKey = '';
+  private worldKey = '';
+  private splat: Splat | null = null;
+  /** Tile types at the last rebuild, to find the block that changed. */
+  private lastTiles: Uint8Array | null = null;
   /** Every decor instance, so only the ones near the view are drawn. */
   private decor: { mesh: THREE.InstancedMesh; xs: Float32Array; zs: Float32Array; mats: Float32Array; cols: Float32Array | null }[] = [];
   private cullKey = '';
   private hq: HqBuild | null = null;
   private fences = new Map<number, { sig: string; build: FenceBuild }>();
+  private readonly ghost = new Ghost();
+  private readonly cues = new Cues();
   private cssW = 1;
   private cssH = 1;
   private readonly raycaster = new THREE.Raycaster();
@@ -140,7 +153,8 @@ export class View3D {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.camera = new THREE.PerspectiveCamera(VIEW3D.fov, 1, 0.5, 160);
     this.M = makeMaterials();
-    this.scene.add(this.statics);
+    this.statics.add(this.fixed, this.dynamic);
+    this.scene.add(this.statics, this.ghost.group, this.cues.group);
   }
 
   get pixelRatio(): number {
@@ -173,6 +187,79 @@ export class View3D {
     this.effects.setupNightLights(q === 'low' ? 3 : 6, this.hq?.floods ?? [], 2, shadowLights);
     this.setupPost();
     this.setNight(this.night);
+    if (this.opts.quality !== 'still') {
+      try {
+        await this.warmUp();
+      } catch (e) {
+        // Only a slower first build or blackout; never a reason not to start.
+        console.warn('Shader warm-up failed', e);
+      }
+    }
+  }
+
+  /**
+   * Compiles every material that can turn up later in a game (each animal, troop, guest, and tower, fences
+   * in every state, decks, lamps, and the nest), by day and by night, while the loading screen is up. Without
+   * it, the first pen built or the moment the power goes out stalls while the GPU compiles shaders.
+   */
+  private async warmUp(): Promise<void> {
+    const T = 40;
+    const cx = this.rig.x;
+    const cz = this.rig.z;
+    this.setRig(cx, cz, this.rig.dist);
+    const at = (dx: number, dz: number) => ({ x: (cx + dx) * T, y: (cz + dz) * T });
+    const actors = new Actors(this.assets, this.M);
+    const group = new THREE.Group();
+    group.add(actors.root);
+    const dinos: DinoView[] = (['trex', 'raptor', 'triceratops'] as const).map((kind, i) => ({ id: -1 - i, kind, ...at(i - 1, 0), facing: 0, state: 'loose', sedation: 1, fade: 0, cooldown: 0 }));
+    const units: UnitView[] = [
+      { id: -10, kind: 'tranq', ...at(-1, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
+      { id: -11, kind: 'heavy', ...at(0, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
+      { id: -12, kind: 'tower', ...at(1, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
+    ];
+    const guests: GuestView[] = this.assets.guests.length ? [{ id: -20, ...at(0, -1), mode: 'walking' }] : [];
+    // Fences in every look: chain-link and concrete, with and without razor wire, powered or not, intact to wrecked.
+    const looks = [['pasture', false], ['raptor', true], ['trex', true], ['trex', false]] as const;
+    looks.forEach(([kind, reinforced], i) => {
+      const footprint = { x: Math.floor(cx) - 3 + i, y: Math.floor(cz) - 2, w: 3, h: 3 };
+      const segments = buildSegments(footprint).map((s, k) => ({ ...s, maxHp: 100, hp: [100, 50, 20, 0][k % 4] }));
+      for (const power of [true, false]) group.add(buildFence({ id: -30 - i, kind, footprint, segments, reinforced }, power, this.M, this.scuffMat).group);
+    });
+    // One of every tree, plant, and rock, set up as the park's decor is: pens bring kinds the open park lacks.
+    for (const [kind, variants] of Object.entries(this.assets.nature) as [DecorKind, NonNullable<Assets['nature'][DecorKind]>][]) {
+      variants.forEach((parts, i) => {
+        for (const m of instanceParts(parts, [{ x: cx + i * 0.3, z: cz, rot: 0, s: 0.1 }], { cast: this.casts(kind), seed: 1 })) {
+          if (CANOPY.includes(kind)) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) addReveal(mat);
+          m.userData.sharedGeometry = true;
+          group.add(m);
+        }
+      });
+    }
+    const site = buildSite({ cols: 6, rows: 6, tileAt: (_x, y) => (y === 2 ? Tile.Path : Tile.Grass), gate: { x: 1, y: 2 }, exhibits: [{ footprint: { x: 1, y: 3, w: 3, h: 3 }, viewingSpot: { x: 2, y: 2 } }] }, this.M);
+    site.position.set(cx - 3, 0, cz - 3);
+    group.add(site, buildNest(cx, cz, this.M));
+    this.scene.add(group);
+    const night = this.night;
+    for (const n of [false, true]) {
+      this.setNight(n);
+      actors.update({ T, dinos, units, guests, selected: new Set([-10]), night: n, dt: 0.016, now: 0 });
+      await this.renderer.compileAsync(this.scene, this.camera);
+      // One frame as well, for the shadow and post passes.
+      this.followShadow();
+      this.composer.render(0.016);
+    }
+    this.setNight(night);
+    actors.clear();
+    this.scene.remove(group);
+    group.remove(actors.root);
+    for (const o of [...group.children]) {
+      const im = o as THREE.InstancedMesh;
+      if (im.isInstancedMesh) {
+        im.dispose();
+        group.remove(im);
+      }
+    }
+    disposeTree(group);
   }
 
   private setupPost(): void {
@@ -253,12 +340,15 @@ export class View3D {
   reset(): void {
     this.actors.clear();
     this.effects.clear();
+    this.ghost.set(null);
+    this.cues.clear();
     for (const f of this.fences.values()) {
       this.scene.remove(f.build.group);
       disposeTree(f.build.group);
     }
     this.fences.clear();
     this.staticKey = '';
+    this.worldKey = '';
   }
 
   // ---------------------------------------------- camera
@@ -312,17 +402,75 @@ export class View3D {
     return `${w.cols}x${w.rows}|${w.nest ? `${w.nest.x},${w.nest.y}` : '-'}|${w.exhibits.map((e) => `${e.id}:${e.kind}:${e.footprint.x},${e.footprint.y},${e.footprint.w}`).join('|')}#${towers}`;
   }
 
+  /** What only a new park changes: its size, HQ, the gate, and the nest. */
+  private worldKeyOf(w: ViewWorld): string {
+    return `${w.cols}x${w.rows}|${w.hq.x},${w.hq.y}|${w.gate.x},${w.gate.y}|${w.nest ? `${w.nest.x},${w.nest.y}` : '-'}`;
+  }
+
+  /** The block of tiles that changed since the last rebuild, grown by a tile, or null. */
+  private changedTiles(w: ViewWorld): TileWindow | null {
+    const last = this.lastTiles;
+    if (!last || last.length !== w.cols * w.rows) return { x0: 0, z0: 0, x1: w.cols, z1: w.rows };
+    let x0 = Infinity;
+    let z0 = Infinity;
+    let x1 = -Infinity;
+    let z1 = -Infinity;
+    for (let z = 0; z < w.rows; z++)
+      for (let x = 0; x < w.cols; x++) {
+        if (last[z * w.cols + x] === w.tileAt(x, z)) continue;
+        x0 = Math.min(x0, x);
+        z0 = Math.min(z0, z);
+        x1 = Math.max(x1, x + 1);
+        z1 = Math.max(z1, z + 1);
+      }
+    return x0 === Infinity ? null : { x0: x0 - 1, z0: z0 - 1, x1: x1 + 1, z1: z1 + 1 };
+  }
+
   private buildStatics(w: ViewWorld): void {
-    disposeTree(this.statics);
-    this.statics.clear();
     const src = this.terrainSource(w);
-    const splat = buildSplat(src);
-    this.statics.add(makeGround(splat, this.assets.terrain), makeWater(splat));
+    const wk = this.worldKeyOf(w);
+    // The block that changed, or null for the whole park.
+    let changed: TileWindow | null = null;
+    if (wk !== this.worldKey || !this.splat) {
+      // A new park: everything, fences included.
+      disposeTree(this.fixed);
+      this.fixed.clear();
+      if (this.splat) for (const t of [this.splat.a, this.splat.b, this.splat.c]) t.dispose();
+      this.splat = buildSplat(src);
+      this.fixed.add(makeGround(this.splat, this.assets.terrain), makeWater(this.splat));
+      this.hq = buildHQ(w.hq, this.M);
+      this.fixed.add(this.hq.group);
+      if (w.nest) this.fixed.add(buildNest(w.nest.x / w.T, w.nest.y / w.T, this.M));
+      for (const f of this.fences.values()) {
+        this.scene.remove(f.build.group);
+        disposeTree(f.build.group);
+      }
+      this.fences.clear();
+      this.worldKey = wk;
+    } else {
+      // Something was built: only the ground around it is redone.
+      changed = this.changedTiles(w);
+      if (changed) buildSplat(src, this.splat, changed);
+    }
+    const tiles = new Uint8Array(w.cols * w.rows);
+    for (let z = 0; z < w.rows; z++) for (let x = 0; x < w.cols; x++) tiles[z * w.cols + x] = w.tileAt(x, z);
+    this.lastTiles = tiles;
+    const splat = this.splat;
+
+    // Decor and site props follow every change. Decor shares its models' geometry, so only its own
+    // instance buffers are let go.
+    for (const o of this.dynamic.children) {
+      const im = o as THREE.InstancedMesh;
+      if (im.isInstancedMesh) im.dispose();
+      else disposeTree(o);
+    }
+    this.dynamic.clear();
     // Only the decor near the view is drawn (see cullDecor), so the whole park can have it.
     const q = this.opts.quality;
     const tufts = q === 'still' ? 6500 : q === 'high' ? 3200 : 1300;
     const plan = planDecor(src, splat, { grassTufts: tufts, treeDensity: q === 'still' ? 6.6 : q === 'high' ? 5 : 3.8 });
-    bakeDecorShade(splat, plan);
+    // Trees near a change can shift a little as spacing works out, so the shade is redone a few tiles around it.
+    bakeDecorShade(splat, plan, changed ? { x0: changed.x0 - 3, z0: changed.z0 - 3, x1: changed.x1 + 3, z1: changed.z1 + 3 } : undefined);
     this.decor = [];
     this.cullKey = '';
     let seed = 1;
@@ -331,24 +479,22 @@ export class View3D {
       if (!variants || !items.length) continue;
       const groups: (typeof items)[] = variants.map(() => []);
       items.forEach((it, i) => groups[i % variants.length].push(it));
-      // Low quality keeps shadows for trees only: every caster is drawn a second time for the shadow map.
-      const cast = q === 'low' ? CANOPY.includes(kind) : !['grass', 'grassTall', 'wispy', 'clover', 'pebble', 'mushroom', 'flower', 'fern', 'reed'].includes(kind);
+      const cast = this.casts(kind);
       variants.forEach((parts, i) => {
         for (const m of instanceParts(parts, groups[i], { cast, seed: seed++, vary: kind === 'hedge' ? 0.05 : 0.12 })) {
           if (CANOPY.includes(kind)) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) addReveal(mat);
-          this.statics.add(m);
+          this.dynamic.add(m);
           this.trackDecor(m);
         }
       });
     }
-    this.statics.add(buildSite({ cols: w.cols, rows: w.rows, tileAt: src.tileAt, gate: w.gate, exhibits: w.exhibits }, this.M));
-    this.hq = buildHQ(w.hq, this.M);
-    this.statics.add(this.hq.group);
-    if (w.nest) this.statics.add(buildNest(w.nest.x / w.T, w.nest.y / w.T, this.M));
-    // Fences rebuild on their own schedule.
-    for (const f of this.fences.values()) this.scene.remove(f.build.group);
-    this.fences.clear();
+    this.dynamic.add(buildSite({ cols: w.cols, rows: w.rows, tileAt: src.tileAt, gate: w.gate, exhibits: w.exhibits }, this.M));
     this.staticKey = this.keyOf(w);
+  }
+
+  /** Whether a kind of decor casts shadows. Low quality keeps them for trees only: every caster is drawn again for the shadow map. */
+  private casts(kind: DecorKind): boolean {
+    return this.opts.quality === 'low' ? CANOPY.includes(kind) : !['grass', 'grassTall', 'wispy', 'clover', 'pebble', 'mushroom', 'flower', 'fern', 'reed'].includes(kind);
   }
 
   private trackDecor(m: THREE.InstancedMesh): void {
@@ -464,17 +610,46 @@ export class View3D {
         case 'fenceHit':
           this.effects.puff(e.x / T, e.y / T, 0.25, w.powerOn ? '#bff3ff' : '#b8ad9a', 0.5, 0.35);
           break;
+        case 'built':
+        case 'reinforced': {
+          // Dust where the crew worked: over the new pen, or along a fence that was rebuilt.
+          const ex = w.exhibits.find((x) => x.id === e.exhibitId);
+          if (!ex) break;
+          const f = ex.footprint;
+          for (let i = 0; i < 10; i++) {
+            const t = i / 10;
+            const side = i % 4;
+            const along = side < 2 ? f.x + 0.5 + t * (f.w - 1) : f.y + 0.5 + t * (f.h - 1);
+            const x = side < 2 ? along : side === 2 ? f.x + 0.5 : f.x + f.w - 0.5;
+            const z = side < 2 ? (side === 0 ? f.y + 0.5 : f.y + f.h - 0.5) : along;
+            this.effects.puff(x, z, 0.3, '#cdbf9f', 1.6, 1.1);
+          }
+          break;
+        }
+        case 'towerBuilt': {
+          const u = w.units.find((x) => x.id === e.unitId);
+          if (u) this.effects.puff(Math.floor(u.x / T) + 0.5, Math.floor(u.y / T) + 0.5, 0.3, '#cdbf9f', 1.6, 1.1);
+          break;
+        }
         case 'breach':
           this.effects.puff(e.x / T, e.y / T, 0.3, '#c9bba2', 1.4, 0.9);
           break;
         case 'bite':
+          this.effects.puff(e.x / T, e.y / T, 0.3, '#ff4a3a', 0.45, 0.35);
+          break;
         case 'casualty':
           this.effects.puff(e.x / T, e.y / T, 0.3, '#ff4a3a', 0.45, 0.35);
+          this.actors.guestDown(e.x / T, e.y / T);
           break;
         default:
           break;
       }
     }
+  }
+
+  /** The placement preview, or null to hide it. */
+  setGhost(g: GhostView | null): void {
+    this.ghost.set(g);
   }
 
   markMove(x: number, z: number): void {
@@ -491,7 +666,8 @@ export class View3D {
     this.time += dt;
     if (this.keyOf(w) !== this.staticKey) this.buildStatics(w);
     this.updateFences(w);
-    this.actors.update({ T: w.T, dinos: w.dinos, units: w.units, guests: w.guests, selected: ui.selected, night: this.night, dt, now: this.time });
+    this.actors.update({ T: w.T, dinos: w.dinos, units: w.units, guests: w.guests, selected: ui.selected, night: this.night, dt, now: this.time, view: this.opts.quality === 'still' ? undefined : this.viewRect(1.5) });
+    this.cues.update(w.T, w.dinos, w.units);
     if (this.night) {
       const troops: { pos: THREE.Vector3; dir: THREE.Vector3 }[] = [];
       for (const u of w.units) {
@@ -544,6 +720,9 @@ export class View3D {
     };
     for (const u of w.units) if (u.kind !== 'tower' && !u.dead) push(u.kind, u.x, u.y, ui.selected.has(u.id) ? 0 : 1);
     for (const d of w.dinos) if (!d.removed && d.fade < 0.9) push(d.kind, d.x, d.y, d.state === 'loose' ? 1 : 2);
+    // A placement preview comes first, so the player sees where the pen or tower would go.
+    const gf = this.ghost.focus;
+    if (gf) cands.push({ x: gf.x, z: gf.z, h: 0, r: gf.r, pri: -1, d: 0 });
     cands.sort((a, b) => a.pri - b.pri || a.d - b.d);
     const cot = 1 / Math.tan(THREE.MathUtils.degToRad(VIEW3D.elevationDeg));
     const pts = REVEAL.pts.value;

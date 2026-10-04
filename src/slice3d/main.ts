@@ -1,4 +1,4 @@
-// Entry for the 3D slice (slice.html): levels 1 and 2 in real 3D, for testing the look and frame rate on phones.
+// Entry for the 3D build (slice.html): every level in real 3D, for testing the look and frame rate on phones.
 import '../style.css';
 import './slice.css';
 import { readParams } from '../params';

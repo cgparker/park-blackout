@@ -108,16 +108,6 @@ export function boxBlur(src: Float32Array<ArrayBuffer>, w: number, h: number, r:
   return a;
 }
 
-function pack(channels: Float32Array[], w: number, h: number): THREE.DataTexture {
-  const data = new Uint8Array(w * h * 4);
-  for (let i = 0; i < w * h; i++) for (let c = 0; c < 4; c++) data[i * 4 + c] = clamp(Math.round((channels[c]?.[i] ?? 0) * 255), 0, 255);
-  const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat);
-  t.minFilter = THREE.LinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  t.needsUpdate = true;
-  return t;
-}
-
 export interface Splat {
   a: THREE.DataTexture;
   b: THREE.DataTexture;
@@ -132,13 +122,41 @@ export interface Splat {
 /** Fence line of an exhibit: through the middle of its border tiles. */
 export const fenceRect = (fp: Rect) => ({ x0: fp.x + 0.5, z0: fp.y + 0.5, x1: fp.x + fp.w - 0.5, z1: fp.y + fp.h - 0.5 });
 
-export function buildSplat(src: TerrainSource): Splat {
+/** A block of tiles, as tile coordinates (x1, z1 exclusive). */
+export interface TileWindow {
+  x0: number;
+  z0: number;
+  x1: number;
+  z1: number;
+}
+
+/** Splat pixels around a changed block that are recomputed too, so every blur inside it comes out the same. */
+const SPLAT_REACH = 20;
+
+/**
+ * The splat map: how much of each ground type covers each spot. With `into` and `win`, only the pixels
+ * over that block of tiles are recomputed and written into the existing map, which is far quicker than
+ * a whole map when a pen, a path, or a tower is built.
+ */
+export function buildSplat(src: TerrainSource, into?: Splat, win?: TileWindow): Splat {
   const X0 = -MARGIN.x;
   const Z0 = -MARGIN.z;
   const TW = src.cols + MARGIN.x * 2;
   const TH = src.rows + MARGIN.z * 2;
-  const w = TW * PPT;
-  const h = TH * PPT;
+  const W = TW * PPT;
+  const H = TH * PPT;
+  // The pixels to write (inner), and the pixels to compute so blurs near its edge are right (outer).
+  const part = !!(into && win);
+  const ix0 = part ? clamp(Math.floor((win!.x0 - X0) * PPT), 0, W) : 0;
+  const iz0 = part ? clamp(Math.floor((win!.z0 - Z0) * PPT), 0, H) : 0;
+  const ix1 = part ? clamp(Math.ceil((win!.x1 - X0) * PPT), 0, W) : W;
+  const iz1 = part ? clamp(Math.ceil((win!.z1 - Z0) * PPT), 0, H) : H;
+  const ox0 = part ? Math.max(0, ix0 - SPLAT_REACH) : 0;
+  const oz0 = part ? Math.max(0, iz0 - SPLAT_REACH) : 0;
+  const ox1 = part ? Math.min(W, ix1 + SPLAT_REACH) : W;
+  const oz1 = part ? Math.min(H, iz1 + SPLAT_REACH) : H;
+  const w = ox1 - ox0;
+  const h = oz1 - oz0;
   const n = w * h;
   const path = new Float32Array(n);
   const water = new Float32Array(n);
@@ -152,26 +170,25 @@ export function buildSplat(src: TerrainSource): Splat {
   const mud = new Float32Array(n);
   const road = new Float32Array(n);
 
-  const tileOf = (px: number, pz: number) => {
-    const x = Math.floor(X0 + (px + 0.5) / PPT);
-    const z = Math.floor(Z0 + (pz + 0.5) / PPT);
-    if (x < 0 || z < 0 || x >= src.cols || z >= src.rows) return -1;
-    return src.tileAt(x, z);
-  };
+  // Local pixel (px, pz) is image pixel (ox0 + px, oz0 + pz).
+  const wx = (px: number) => X0 + (ox0 + px + 0.5) / PPT;
+  const wz = (pz: number) => Z0 + (oz0 + pz + 0.5) / PPT;
   const g = src.gate;
   for (let pz = 0; pz < h; pz++) {
-    const z = Z0 + (pz + 0.5) / PPT;
+    const z = wz(pz);
+    const tz = Math.floor(z);
     for (let px = 0; px < w; px++) {
-      const x = X0 + (px + 0.5) / PPT;
+      const x = wx(px);
+      const tx = Math.floor(x);
       const i = pz * w + px;
-      const t = tileOf(px, pz);
+      const t = tx < 0 || tz < 0 || tx >= src.cols || tz >= src.rows ? -1 : src.tileAt(tx, tz);
       if (t === Tile.Path || t === Tile.Gate) path[i] = 1;
       else if (t === Tile.Water) water[i] = 1;
       else if (t === Tile.Rock) rock[i] = 1;
       else if (t === Tile.HQ) block[i] = 1;
       else if (t === Tile.Tower) {
-        const fx = x - Math.floor(x) - 0.5;
-        const fz = z - Math.floor(z) - 0.5;
+        const fx = x - tx - 0.5;
+        const fz = z - tz - 0.5;
         if (Math.abs(fx) < 0.42 && Math.abs(fz) < 0.42) concrete[i] = 1;
       }
       // Outside the gate: a paved plaza and the road the guests arrive on.
@@ -181,23 +198,24 @@ export function buildSplat(src: TerrainSource): Splat {
   }
   const hq = src.hq;
   for (let pz = 0; pz < h; pz++) {
-    const z = Z0 + (pz + 0.5) / PPT;
+    const z = wz(pz);
+    if (z <= hq.y - 0.3 || z >= hq.y + hq.h + 0.3) continue;
     for (let px = 0; px < w; px++) {
-      const x = X0 + (px + 0.5) / PPT;
-      if (x > hq.x - 0.3 && x < hq.x + hq.w + 0.3 && z > hq.y - 0.3 && z < hq.y + hq.h + 0.3) concrete[pz * w + px] = 1;
+      const x = wx(px);
+      if (x > hq.x - 0.3 && x < hq.x + hq.w + 0.3) concrete[pz * w + px] = 1;
     }
   }
   for (const ex of src.exhibits) {
     const f = fenceRect(ex.footprint);
-    const px0 = Math.floor((f.x0 - 0.3 - X0) * PPT);
-    const px1 = Math.ceil((f.x1 + 0.3 - X0) * PPT);
-    const pz0 = Math.floor((f.z0 - 0.3 - Z0) * PPT);
-    const pz1 = Math.ceil((f.z1 + 0.3 - Z0) * PPT);
+    const px0 = Math.floor((f.x0 - 0.3 - X0) * PPT) - ox0;
+    const px1 = Math.ceil((f.x1 + 0.3 - X0) * PPT) - ox0;
+    const pz0 = Math.floor((f.z0 - 0.3 - Z0) * PPT) - oz0;
+    const pz1 = Math.ceil((f.z1 + 0.3 - Z0) * PPT) - oz0;
     const floor = ex.kind === 'pasture' ? meadow : ex.kind === 'raptor' ? dirt : jungle;
     for (let pz = Math.max(0, pz0); pz < Math.min(h, pz1); pz++) {
-      const z = Z0 + (pz + 0.5) / PPT;
+      const z = wz(pz);
       for (let px = Math.max(0, px0); px < Math.min(w, px1); px++) {
-        const x = X0 + (px + 0.5) / PPT;
+        const x = wx(px);
         const i = pz * w + px;
         const inside = x > f.x0 && x < f.x1 && z > f.z0 && z < f.z1;
         if (inside) {
@@ -219,9 +237,9 @@ export function buildSplat(src: TerrainSource): Splat {
   if (src.nest) {
     const { x: nx, y: nz } = src.nest;
     for (let pz = 0; pz < h; pz++) {
-      const z = Z0 + (pz + 0.5) / PPT;
+      const z = wz(pz);
       for (let px = 0; px < w; px++) {
-        const x = X0 + (px + 0.5) / PPT;
+        const x = wx(px);
         const d = Math.hypot(x - nx, z - nz);
         if (d < 1.7) dirt[pz * w + px] = Math.max(dirt[pz * w + px], 1 - d / 1.7 > 0.25 ? 1 : (1 - d / 1.7) * 4);
       }
@@ -245,15 +263,49 @@ export function buildSplat(src: TerrainSource): Splat {
   const ao = new Float32Array(n);
   for (let i = 0; i < n; i++) ao[i] = clamp(aoB[i] * (1 - pathB[i]) * (1 - concrete[i]) * 0.9, 0, 1);
 
-  return {
-    a: pack([pathB, dirtB, jungleB, meadowB], w, h),
-    b: pack([waterB, new Float32Array(n), concB, gravelB], w, h),
-    c: pack([ao, mud, roadB, new Float32Array(n)], w, h),
+  const out: Splat = into ?? {
+    a: newSplatTexture(W, H),
+    b: newSplatTexture(W, H),
+    c: newSplatTexture(W, H),
     region: new THREE.Vector4(X0, Z0, TW, TH),
-    water: waterB,
-    w,
-    h,
+    water: new Float32Array(W * H),
+    w: W,
+    h: H,
   };
+  // Write the inner pixels. The spare channels stay as they are: C's alpha holds the baked decor shade.
+  const A = out.a.image.data as Uint8Array;
+  const B = out.b.image.data as Uint8Array;
+  const C = out.c.image.data as Uint8Array;
+  const q = (v: number) => clamp(Math.round(v * 255), 0, 255);
+  for (let z = iz0; z < iz1; z++) {
+    for (let x = ix0; x < ix1; x++) {
+      const i = (z - oz0) * w + (x - ox0);
+      const o = (z * W + x) * 4;
+      A[o] = q(pathB[i]);
+      A[o + 1] = q(dirtB[i]);
+      A[o + 2] = q(jungleB[i]);
+      A[o + 3] = q(meadowB[i]);
+      B[o] = q(waterB[i]);
+      B[o + 1] = 0;
+      B[o + 2] = q(concB[i]);
+      B[o + 3] = q(gravelB[i]);
+      C[o] = q(ao[i]);
+      C[o + 1] = q(mud[i]);
+      C[o + 2] = q(roadB[i]);
+      out.water[z * W + x] = waterB[i];
+    }
+  }
+  out.a.needsUpdate = true;
+  out.b.needsUpdate = true;
+  out.c.needsUpdate = true;
+  return out;
+}
+
+function newSplatTexture(w: number, h: number): THREE.DataTexture {
+  const t = new THREE.DataTexture(new Uint8Array(w * h * 4), w, h, THREE.RGBAFormat);
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  return t;
 }
 
 // ------------------------------------------------------------------ ground material
@@ -362,8 +414,15 @@ export function makeGround(splat: Splat, tex: TerrainTextures): THREE.Mesh {
   return mesh;
 }
 
-/** Tileable ripples: many short waves with whole-number frequencies, so it wraps. */
+let ripples: THREE.DataTexture | null = null;
+
+/** Tileable ripples: many short waves with whole-number frequencies, so it wraps. Made once. */
 function rippleNormal(): THREE.DataTexture {
+  ripples ??= makeRipples();
+  return ripples;
+}
+
+function makeRipples(): THREE.DataTexture {
   const N = 256;
   const rnd = mulberry32(3);
   const data = new Uint8Array(N * N * 4);

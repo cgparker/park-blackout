@@ -1,6 +1,7 @@
-// Checks the 3D slice in a phone-sized browser: it loads, a level starts, a troop trains, takes a tap
-// to select, and takes an order. Saves screenshots along the way. Uses a software GPU, so frame
-// rates here say nothing about a phone.
+// Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
+// and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
+// out at the blackout and come back with the power. Saves screenshots along the way. Uses a software
+// GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -31,7 +32,7 @@ await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 6000
 step('loaded');
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/1-briefing.png`, timeout: 240000 });
-if ((await page.locator('.level-btn').count()) !== 2) fail('the briefing should offer levels 1 and 2 only');
+if ((await page.locator('.level-btn').count()) !== 3) fail('the briefing should offer all three levels');
 
 await page.click('button.start');
 await page.waitForTimeout(3000);
@@ -142,6 +143,89 @@ await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/5-night.png`, timeout: 240000 });
 s = await state();
 step(`night: ${s.fps}`);
+
+// ---------------------------------------------------------------- level 3
+// Only the hash changes, so reload to start fresh on level 3. A software GPU makes loading slow.
+await page.goto(`${url}#debug.level-3.${quality}`, { timeout: 300000 });
+await page.reload({ timeout: 300000, waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 600000 });
+step('level 3 loaded');
+if ((await page.getAttribute('.level-btn[data-level="3"]', 'aria-pressed')) !== 'true') fail('#level-3 should open on level 3');
+if (await page.isChecked('#opt-tips')) await page.click('#opt-tips');
+await page.click('#opt-quick');
+await page.click('button.start');
+await page.waitForTimeout(1500);
+const w3 = () => page.evaluate(() => {
+  const g = window.__pb3d;
+  const w = g.world;
+  return { phase: w.phase, money: w.money, exhibits: w.exhibits.length, towers: w.units.filter((u) => u.kind === 'tower').length, guests: w.visitors.filter((v) => !v.done).length, night: g.view.night, plan: g.plan && { valid: g.plan.valid, cost: g.plan.totalCost }, ghost: !!g.view.ghost.focus };
+});
+s = await w3();
+step(`level 3: ${s.phase}, $${s.money}`);
+if (s.phase !== 'build') fail('level 3 should start in the build phase');
+// A raptor pen, placed and built with the build bar.
+await look(9.5 * 40, 8.5 * 40);
+await page.waitForTimeout(300);
+await page.click('.build-btn[data-kind="raptor"]');
+await page.waitForTimeout(300);
+if (!(await w3()).ghost) fail('picking an exhibit should show a placement preview');
+const spot = await screenOf(9.5 * 40, 8.5 * 40, 0);
+await page.touchscreen.tap(spot.x, spot.y);
+await page.waitForTimeout(400);
+const placed = await w3();
+step(`placed: ${JSON.stringify(placed.plan)}`);
+if (!placed.plan?.valid) fail('tapping open grass should place a valid preview');
+await page.screenshot({ path: `${out}/6-placing.png`, timeout: 240000 });
+await page.click('.place-panel .primary');
+await page.waitForTimeout(400);
+s = await w3();
+if (s.exhibits !== 1 || s.money !== placed.money - placed.plan.cost) fail(`Build should add the pen and charge for it: ${JSON.stringify(s)}`);
+if (s.ghost) fail('the preview should go once the pen is built');
+// Reinforce it from its panel.
+await page.evaluate(() => (window.__pb3d.world.money += 20000));
+const pen = await page.evaluate(() => window.__pb3d.world.exhibits[0].footprint);
+const pc = await screenOf((pen.x + pen.w / 2) * 40, (pen.y + pen.h / 2) * 40, 0);
+await page.touchscreen.tap(pc.x, pc.y);
+await page.waitForTimeout(400);
+if (!(await page.isVisible('.exhibit-panel .reinforce'))) fail('tapping the pen should open its panel with Reinforce');
+await page.click('.exhibit-panel .reinforce');
+await page.waitForTimeout(300);
+if (!(await page.evaluate(() => window.__pb3d.world.exhibits[0].reinforced))) fail('Reinforce should make the fence concrete');
+await page.click('.exhibit-panel .close');
+// A tower on open grass.
+await look(9.5 * 40, 16.5 * 40);
+await page.waitForTimeout(300);
+await page.click('.build-btn[data-kind="tower"]');
+await page.waitForTimeout(300);
+const tp3 = await screenOf(9.5 * 40, 16.5 * 40, 0);
+await page.touchscreen.tap(tp3.x, tp3.y);
+await page.waitForTimeout(400);
+await page.click('.place-panel .primary');
+await page.waitForTimeout(400);
+s = await w3();
+step(`built: ${s.exhibits} exhibit, ${s.towers} tower`);
+if (s.towers !== 1) fail('Build should put up a tower');
+// Guests come during the build phase; the lights go out at the blackout.
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  while (w.phase === 'build') w.update(1 / 60);
+  for (let i = 0; i < 300; i++) w.update(1 / 60);
+});
+await page.waitForTimeout(2500);
+s = await w3();
+step(`blackout: ${s.phase}, ${s.guests} guests, night ${s.night}`);
+if (s.phase !== 'blackout' || !s.night) fail('the blackout should turn the lights out');
+await page.screenshot({ path: `${out}/7-blackout.png`, timeout: 240000 });
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  w.restorePower();
+  for (let i = 0; i < 30; i++) w.update(1 / 60);
+});
+await page.waitForTimeout(2500);
+s = await w3();
+step(`power back: ${s.phase}, night ${s.night}`);
+if (s.night) fail('the lights should come back with the power');
+await page.screenshot({ path: `${out}/8-power-back.png`, timeout: 240000 });
 
 if (errors.length) fail(`page errors:\n${errors.join('\n')}`);
 await browser.close();

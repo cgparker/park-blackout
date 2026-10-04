@@ -290,19 +290,23 @@ In levels 1 and 2 the end screen has the same stars, goals, Next time line, and 
 - The T. rex's locked-on target gets an orange ring. Before a charge, an orange arc fills around the T. rex and "Charge!" floats up; while charging it has an orange ring and streak.
 - Level 2's nest: a brown disc ringed with twigs, with three pale eggs.
 
-### 3D slice (levels 1 and 2)
+### 3D build (all three levels)
 
-A test build, `slice.html`, draws levels 1 and 2 in real 3D with three.js, to try the look and the frame rate on phones. The rules, HUD, and controls are the same game; only the drawing changes. Level 3 stays 2D for now.
+A test build, `slice.html`, draws every level in real 3D with three.js, to try the look and the frame rate on phones. The rules, HUD, and controls are the same game; only the drawing changes.
 
 - Camera: looks down at 56 degrees from the south. Drag pans, pinch or the wheel zooms, and it never shows past the ground around the park.
-- The park: textured ground, paths, a pond, trees and plants (thick at the edges, thin in the middle), viewing decks, lamps, and the gate. Tree tops fade where they would hide a troop or an animal.
+- The park: textured ground, paths, a pond, trees and plants (thick at the edges, thin in the middle), viewing decks, lamps, and the gate. Tree tops fade where they would hide a troop, an animal, or a building preview.
 - Pens: pastures are meadow, raptor pens are dirt, and the T. rex paddock is jungle.
 - Fences: standard is galvanised chain-link with live wires; reinforced is a concrete wall with steel bars and, for raptors and the T. rex, razor wire. Each segment looks intact, dented, badly damaged, or wrecked by its HP, and a wrecked one leaves debris.
 - HQ: a two-storey security block with a glass control room and radar, a SECURITY sign, a shield on the roof, a flag, floodlights, and a patrol car.
 - Tranq Tower: a steel watchtower with an armoured deck above head height and a twin-barrel dart turret.
 - Tranq Squad: regular troops in fatigues and blue berets with dart carbines. Heavy Team: mostly white power armour with blue accents and a heavy dart cannon.
 - Dinosaurs: animated models with patterned skin. At night their eyes catch the light faintly.
-- Night: a test switch turns on the blackout lighting (moonlight, flashlights, floodlights, searchlights) without changing the rules.
+- Building (level 3): picking an exhibit or a tower shows a preview on the ground, green where it fits and red where it doesn't, with the new path tiles and the viewing spot, or the tower's range. Tap the map to move it. Dust rises where something is built or reinforced.
+- Guests (level 3): six models in their own colours of skin, hair, and clothes. They walk the paths, wave, hold up glowing phones in the dark, and run when they see danger. A guest who is killed falls and stays down a few seconds.
+- The blackout: level 3 starts by day. When the power is cut, the park goes dark: moonlight, troop flashlights, HQ floodlights, and tower searchlights. When the power comes back, so does the day.
+- Words float up as in the 2D game: money paid (payments that land together show as one sum), Breach!, Secured, and Charge!. The T. rex's intent shows on the ground as in the 2D game: an orange ring under its target, a filling arc and a line during the wind-up, and a ring and streak while it charges.
+- Night: a test switch turns the blackout lighting on and off by hand, without changing the rules.
 - Assets: Quaternius models (CC0) and textures generated for the project. `public3d/LICENSES.md` lists them.
 
 ## 11. Debug tools
