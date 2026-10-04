@@ -131,6 +131,25 @@ export const CAMERA = {
   breachArrowSeconds: 4,
 };
 
+/** The 3D view (the 3d-slice build). Distances are in tiles. */
+export const VIEW3D = {
+  /** Vertical field of view, degrees. */
+  fov: 30,
+  /** How steeply the camera looks down, degrees above the horizon. */
+  elevationDeg: 56,
+  /** Closest and farthest camera distance from the point it looks at. */
+  minDist: 7,
+  maxDist: 44,
+  /** Distance at the start of a level, before it frames the action. */
+  defaultDist: 22,
+  /** How far past the map edge the camera's focus can go. */
+  edgeMarginTiles: 2,
+  /** Wheel zoom sensitivity. */
+  wheelZoomFactor: 0.0015,
+  /** Taps within this many CSS px of a troop or animal pick it. */
+  pickRadiusPx: 30,
+};
+
 export const INPUT = {
   /** How far (CSS px) a finger can move and still count as a tap. */
   tapMoveThreshold: 10,

@@ -1,0 +1,112 @@
+/* The 3D slice: the canvas sits between the top and bottom bars. */
+
+canvas.view3d {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.select-box {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  background: rgba(63, 224, 255, 0.12);
+  pointer-events: none;
+}
+
+.press-ring {
+  position: absolute;
+  z-index: 5;
+  width: 56px;
+  height: 56px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  pointer-events: none;
+}
+
+/* Frame rate, day and night, and quality, for testing on a phone. */
+.test-bar {
+  position: absolute;
+  top: calc(var(--top-h) + var(--safe-t) + 8px);
+  right: calc(8px + var(--safe-r));
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.test-fps {
+  min-width: 46px;
+  padding-left: 2px;
+  color: var(--good);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.test-btn {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.test-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#loading {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+  text-align: center;
+}
+
+#loading .load-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+#loading .load-bar {
+  width: 220px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+#loading .load-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+#loading .load-text {
+  max-width: 80vw;
+  color: var(--muted);
+  font-size: 13px;
+}

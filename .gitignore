@@ -5,3 +5,9 @@ test-results/
 *.log
 .DS_Store
 dist-artifact/
+
+# 3D source packs (download from Quaternius; see public3d/LICENSES.md)
+assets-src
+.tex-tmp
+dist-slice
+.dbg

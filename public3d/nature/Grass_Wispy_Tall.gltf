@@ -1,0 +1,160 @@
+{
+  "asset": {
+    "generator": "glTF-Transform v4.5.1",
+    "version": "2.0"
+  },
+  "accessors": [
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 744,
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC4",
+      "componentType": 5121,
+      "count": 298,
+      "normalized": true,
+      "bufferView": 1,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5122,
+      "count": 298,
+      "max": [
+        30315,
+        32767,
+        31367
+      ],
+      "min": [
+        -30315,
+        -32767,
+        -31367
+      ],
+      "normalized": true,
+      "bufferView": 1,
+      "byteOffset": 4
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5122,
+      "count": 298,
+      "normalized": true,
+      "bufferView": 1,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5123,
+      "count": 298,
+      "normalized": true,
+      "bufferView": 1,
+      "byteOffset": 20
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 1488,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1488,
+      "byteLength": 7152,
+      "byteStride": 24,
+      "target": 34962
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    }
+  ],
+  "images": [
+    {
+      "name": "Grass",
+      "mimeType": "image/jpeg",
+      "uri": "Grass.jpg"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "Grass_Wispy_Tall.bin",
+      "byteLength": 8640
+    }
+  ],
+  "materials": [
+    {
+      "name": "Grass",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0,
+        "baseColorTexture": {
+          "index": 0
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Plane.017",
+      "primitives": [
+        {
+          "attributes": {
+            "COLOR_0": 1,
+            "POSITION": 2,
+            "NORMAL": 3,
+            "TEXCOORD_0": 4
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 0
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Grass_Wispy_Tall",
+      "translation": [
+        0.030791640281677246,
+        0.8033727817237377,
+        -0.02173265814781189
+      ],
+      "scale": [
+        0.8323777504265308,
+        0.8323777504265308,
+        0.8323777504265308
+      ],
+      "mesh": 0
+    }
+  ],
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "extensionsUsed": [
+    "KHR_mesh_quantization"
+  ],
+  "extensionsRequired": [
+    "KHR_mesh_quantization"
+  ]
+}

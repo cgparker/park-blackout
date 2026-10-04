@@ -12,12 +12,23 @@
     "smoke": "node scripts/smoke.mjs",
     "build:artifact": "npm run build:single && node scripts/make-artifact.mjs",
     "balance": "BALANCE=1 vitest run tests/balance.test.ts --silent=false",
-    "stress": "STRESS=1 vitest run tests/stress.test.ts --silent=false"
+    "stress": "STRESS=1 vitest run tests/stress.test.ts --silent=false",
+    "dev:3d": "vite --config vite.slice.config.ts --host",
+    "build:3d": "tsc --noEmit && vite build --config vite.slice.config.ts",
+    "smoke3d": "node scripts/smoke3d.mjs",
+    "stills3d": "node scripts/stills3d.mjs",
+    "assets3d": "node scripts/assets3d.mjs"
   },
   "dependencies": {
-    "phaser": "^4.2.1"
+    "phaser": "^4.2.1",
+    "three": "^0.186.1"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "@types/three": "^0.186.0",
+    "meshoptimizer": "^1.3.0",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",

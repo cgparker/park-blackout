@@ -289,6 +289,21 @@ In levels 1 and 2 the end screen has the same stars, goals, Next time line, and 
 - The T. rex's locked-on target gets an orange ring. Before a charge, an orange arc fills around the T. rex and "Charge!" floats up; while charging it has an orange ring and streak.
 - Level 2's nest: a brown disc ringed with twigs, with three pale eggs.
 
+### 3D slice (levels 1 and 2)
+
+A test build, `slice.html`, draws levels 1 and 2 in real 3D with three.js, to try the look and the frame rate on phones. The rules, HUD, and controls are the same game; only the drawing changes. Level 3 stays 2D for now.
+
+- Camera: looks down at 56 degrees from the south. Drag pans, pinch or the wheel zooms, and it never shows past the ground around the park.
+- The park: textured ground, paths, a pond, trees and plants (thick at the edges, thin in the middle), viewing decks, lamps, and the gate. Tree tops fade where they would hide a troop or an animal.
+- Pens: pastures are meadow, raptor pens are dirt, and the T. rex paddock is jungle.
+- Fences: standard is galvanised chain-link with live wires; reinforced is a concrete wall with steel bars and, for raptors and the T. rex, razor wire. Each segment looks intact, dented, badly damaged, or wrecked by its HP, and a wrecked one leaves debris.
+- HQ: a two-storey security block with a glass control room and radar, a SECURITY sign, a shield on the roof, a flag, floodlights, and a patrol car.
+- Tranq Tower: a steel watchtower with an armoured deck above head height and a twin-barrel dart turret.
+- Tranq Squad: regular troops in fatigues and blue berets with dart carbines. Heavy Team: mostly white power armour with blue accents and a heavy dart cannon.
+- Dinosaurs: animated models with patterned skin. At night their eyes catch the light faintly.
+- Night: a test switch turns on the blackout lighting (moonlight, flashlights, floodlights, searchlights) without changing the rules.
+- Assets: Quaternius models (CC0) and textures generated for the project. `public3d/LICENSES.md` lists them.
+
 ## 11. Debug tools
 
 Enabled with `?debug=1` in the URL:

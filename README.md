@@ -79,6 +79,23 @@ GitHub Actions (`.github/workflows/build.yml`) tests and builds every push to `m
 
 GitHub Pages on a private repo needs GitHub Pro or a team plan, and the site itself is public on the internet even though the repo is private (only GitHub Enterprise Cloud can publish privately).
 
+## 3D slice
+
+Levels 1 and 2 in real 3D, to test the look and the frame rate on phones (SPEC section 10). Same rules, HUD, and controls as the 2D game.
+
+- `npm run dev:3d`, then open `/slice.html` on the Network URL Vite prints.
+- The bar at the top right shows frames per second, switches **Night** lighting on and off, and switches between **High** and **Low quality** (the page reloads). Add `#debug` to also see draw calls and triangles.
+- `npm run build:3d` writes `dist-slice/`. `npm run smoke3d` checks it in a phone-sized browser (serve it first, on port 5180).
+- `npm run stills3d -- "mode=night" night.png 1280 720 1` saves review images from `still.html`: `mode` is `day` or `night` (a level 3 moment), `level1`, `level2`, `fences`, or `troops`. Add `shots=x,z,distance,elevation;...` for close-ups.
+- `npm run assets3d` rebuilds `public3d/` from the source packs (not in the repo). Sources and licenses: `public3d/LICENSES.md`.
+
+| Path | What |
+|---|---|
+| `src/render3d/` | The 3D view: terrain, decor, fences, buildings, actors, effects, materials |
+| `src/slice3d/` | The slice's controller: camera, touch input, HUD wiring |
+| `src/still3d/` | The stills page |
+| `public3d/` | Models and textures for the 3D builds |
+
 ## Builds
 
 - `npm run build` makes a static site in `dist/`.

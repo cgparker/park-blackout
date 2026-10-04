@@ -2,6 +2,22 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## 3D slice
+
+Chosen by Chris: move toward real 3D, starting with a playable slice of levels 1 and 2 to test the look and frame rate on a phone. His notes on the first stills: a jungle T. rex paddock, faint eyes at night (in the eye, not in front of it), a Heavy Team that reads as power armour next to regular troops (then mostly white with blue accents, no shoulder pads), an HQ that doesn't look like a hospital, a detailed tower, fences that look stronger when reinforced and wrecked when destroyed, and a subtle selection ring.
+
+64. **A separate build, not a replacement.** `slice.html` (`npm run dev:3d`, `npm run build:3d`) reuses the core, the HUD, and the controls, and draws with three.js. The 2D game is untouched, so both can be compared.
+65. **CC0 models only**, all by Quaternius, plus textures generated here and gear built in code. The patrol car is built from shapes too, because the downloaded car had no license file with it. `public3d/LICENSES.md` has the sources.
+66. **Gear is built per bone and skinned.** Caps, armour, and guns are made from smooth shells that follow each bone in the model's rest pose, then merged into one skinned mesh per kind of surface. A whole troop is three or four draw calls.
+67. **Trees grow on open ground inside the park too**, thinning toward the middle, as in the stills Chris approved. Where a tree top would hide a troop or an animal, it fades to a fine dither. Troops get a soft contact shadow so they read as on the ground.
+68. **The tower deck is 1.25 tiles up,** above a troop's head. At the old height a troop behind the tower seemed to float beside the gun.
+69. **Eyes sit on the side of the head**, found from the head's own shape (a set share back from the snout and up from the jaw), because the models have no eyeballs.
+70. **Only what the camera can see is drawn.** Trees, bushes, and grass outside the view (plus a margin on the sun's side for shadows) are skipped, and the shadow map is fitted to the view.
+71. **High and Low quality.** High: up to 2x pixel density, antialiasing, bloom, sharper shadows, more grass, and a few shadow-casting night lights. Low: about 1.25x, no antialiasing or bloom, shadows from trees only, less grass, and no shadows from night lights. Switching reloads the page. After 6 seconds under 24 fps on High, a toast suggests Low, once.
+72. **The Night switch is a test tool.** It changes the lighting only; levels 1 and 2 still play by day rules.
+73. **No meshopt compression.** The models use packed vertices (KHR_mesh_quantization), which needs no decoder, because the artifact page may refuse the WebAssembly that meshopt decoding needs. The files are about twice as big.
+74. **Panels stay on screen** when what they point at is off it (HQ scrolled away, say). This also applies to the 2D game.
+
 ## Levels 1 and 2
 
 Chosen by Chris: two levels before the blackout. Level 1 introduces training troops and moving them, by rounding up loose herbivores on a short clock. Level 2 introduces fighting, by clearing a nest of about six escaped raptors. Both start in a park that is already built. The blackout becomes level 3, which introduces building.

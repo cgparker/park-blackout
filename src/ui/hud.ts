@@ -317,7 +317,11 @@ export class Hud {
 
   private openPanel: Panel | null = null;
 
-  constructor(root: HTMLElement) {
+  /** Levels this build offers. The 3D slice has levels 1 and 2 only. */
+  private readonly levels: readonly LevelId[];
+
+  constructor(root: HTMLElement, opts: { levels?: readonly LevelId[] } = {}) {
+    this.levels = opts.levels ?? LEVEL_IDS;
     // ------------------------------------------------ top bar
     this.topBar = el('div', 'topbar');
     const stat = (cls: string, cap: string) => {
@@ -500,7 +504,7 @@ export class Hud {
     const levels = el('div', 'levels');
     levels.setAttribute('role', 'group');
     levels.setAttribute('aria-label', 'Level');
-    for (const level of LEVEL_IDS) {
+    for (const level of this.levels) {
       const info = LEVEL_INFO[level];
       const b = button('level-btn');
       b.dataset.level = String(level);
@@ -888,6 +892,8 @@ export class Hud {
     let left = target.right + gap;
     if (left + pw > vw - margin) left = target.left - gap - pw;
     if (left < margin) left = Math.min(Math.max(margin, vw - pw - margin), target.right + gap);
+    // Stay on screen even when the target is off it (HQ scrolled away, say).
+    left = Math.max(margin, Math.min(left, vw - pw - margin));
     const y = Math.max(top + margin, Math.min(target.top, vh - bottom - ph - margin));
     const t = `translate(${Math.round(left)}px, ${Math.round(y)}px)`;
     if (panel.style.transform !== t) panel.style.transform = t;
@@ -1146,7 +1152,7 @@ export class Hud {
     }
     b.append(...parts, grid);
     // After a win in level 1 or 2, the next level is the obvious step. Retry stays beside it.
-    const next = r.won && r.level !== 3;
+    const next = r.won && this.levels.includes((r.level + 1) as LevelId);
     this.nextBtn.classList.toggle('hidden', !next);
     this.retryBtn.classList.toggle('primary', !next);
     this.retryBtn.classList.toggle('secondary', next);
