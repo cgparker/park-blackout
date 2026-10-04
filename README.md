@@ -71,7 +71,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 ## Deploy
 
-GitHub Actions (`.github/workflows/build.yml`) tests and builds every push to `main`. To publish to GitHub Pages:
+GitHub Actions (`.github/workflows/build.yml`) checks every pull request to `main` and every push to `main`: it runs the unit tests and builds the 2D game, the 3D build, and the 3D artifact version. Only a push to `main` can deploy. To publish to GitHub Pages:
 
 1. Settings > Pages > Build and deployment > Source: **GitHub Actions**.
 2. Settings > Secrets and variables > Actions > Variables: add `PAGES_ENABLED` with the value `true`.
