@@ -1,23 +1,32 @@
 import { DINO_AI, type AnimalKind } from '../config';
 import type { Dino } from './dinos';
 import { Tile } from './grid';
+import { unload } from './jeep';
 import type { Unit } from './units';
 import type { World } from './world';
 
-/** `by` is the kind of animal that did it, so the screen can explain the loss. */
+/** `by` is the kind of animal that did it, so the screen can explain the loss. Troops riding in the 4x4 can't be hurt. */
 export function damageUnit(w: World, u: Unit, amount: number, by: AnimalKind | null = null): void {
-  if (u.dead) return;
+  if (u.dead || u.aboard) return;
   u.hp -= amount;
   u.hurtAt = w.time;
   if (u.hp > 0) return;
   u.hp = 0;
-  u.dead = true;
-  if (u.kind === 'tower') {
-    // The tile opens up again.
-    w.towersLost++;
-    w.grid.set(Math.floor(u.x / w.T), Math.floor(u.y / w.T), Tile.Grass);
+  if (u.kind === 'jeep') {
+    // Wrecked. Whoever was inside climbs out unhurt.
+    unload(w, u);
+    u.dead = true;
+    w.jeepsLost++;
   } else {
-    w.troopsLost++;
+    u.dead = true;
+    if (u.kind === 'tower') {
+      // The tile opens up again.
+      w.towersLost++;
+      w.grid.set(Math.floor(u.x / w.T), Math.floor(u.y / w.T), Tile.Grass);
+    } else {
+      w.troopsLost++;
+      if (u.kind === 'engineer') w.engineersLost++;
+    }
   }
   w.noteLoss(u.kind, u.x, u.y, by);
   w.events.push({ type: 'unitLost', unitId: u.id, kind: u.kind, x: u.x, y: u.y, by });
@@ -28,7 +37,7 @@ export function damageUnit(w: World, u: Unit, amount: number, by: AnimalKind | n
  * In levels 1 and 2 it then wakes up back in its pen (see updateDinos).
  */
 export function sedate(w: World, d: Dino, amount: number, unitId: number): void {
-  if (d.state === 'secured' || d.state === 'contained') return;
+  if (d.state === 'secured' || d.state === 'contained' || d.state === 'dead') return;
   d.sedation -= amount;
   d.lastHitBy = unitId;
   d.lastHitTime = w.time;

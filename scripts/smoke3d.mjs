@@ -1,7 +1,8 @@
 // Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
 // and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
-// out at the blackout and come back with the power. Saves screenshots along the way. Uses a software
-// GPU, so frame rates here say nothing about a phone.
+// out at the blackout and come back with the power. Level 4: night, raptors' view cones, a substation's
+// panel, and the Engineer sent to fix it. Level 5: troops loaded into the 4x4 and driven. Saves screenshots
+// along the way. Uses a software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -32,7 +33,7 @@ await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 6000
 step('loaded');
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/1-briefing.png`, timeout: 240000 });
-if ((await page.locator('.level-btn').count()) !== 3) fail('the briefing should offer all three levels');
+if ((await page.locator('.level-btn').count()) !== 5) fail('the briefing should offer all five levels');
 
 await page.click('button.start');
 await page.waitForTimeout(3000);
@@ -62,7 +63,7 @@ const state = () =>
   });
 let s = await state();
 step(`phase ${s.phase}, level ${s.level}, ${s.troops.length} troops, ${s.loose.length} loose, ${s.fps}`);
-if (s.phase !== 'hunt') fail('level 2 should be running');
+if (s.phase !== 'mission') fail('level 2 should be running');
 
 // Train a Tranq Squad at HQ, at 4x speed so the test is quick.
 await page.click('.dbg-btn[data-speed="4"]').catch(() => undefined);
@@ -92,9 +93,11 @@ const screenOf = (x, y, h) =>
     return { x: p.x + r.left, y: p.y + r.top };
   }, [x, y, h]);
 const troop = s.troops[s.troops.length - 1];
+// Like a pan: it stops any camera glide, such as the one that frames the level at the start.
 const look = (x, y) =>
   page.evaluate(([x, y]) => {
     const g = window.__pb3d;
+    g.camMove = null;
     g.cam.x = x / g.world.T;
     g.cam.z = y / g.world.T;
     g.applyCamera();
@@ -226,6 +229,142 @@ s = await w3();
 step(`power back: ${s.phase}, night ${s.night}`);
 if (s.night) fail('the lights should come back with the power');
 await page.screenshot({ path: `${out}/8-power-back.png`, timeout: 240000 });
+
+// ---------------------------------------------------------------- level 4
+await page.goto(`${url}#debug.level-4.${quality}`, { timeout: 300000 });
+await page.reload({ timeout: 300000, waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 600000 });
+step('level 4 loaded');
+if (await page.isChecked('#opt-tips')) await page.click('#opt-tips');
+await page.click('button.start');
+await page.waitForTimeout(1500);
+const w4 = () =>
+  page.evaluate(() => {
+    const g = window.__pb3d;
+    const w = g.world;
+    const raptors = w.dinos.filter((d) => d.state === 'loose');
+    let cones = 0;
+    g.view.scene.traverse((o) => {
+      if (o.isLineLoop && o.visible && o.geometry.drawRange.count > 2) cones++;
+    });
+    return {
+      phase: w.phase,
+      night: g.view.night,
+      raptors: raptors.length,
+      cones,
+      fixed: w.substations.filter((s) => s.fixed).length,
+      engineer: w.units.find((u) => u.kind === 'engineer'),
+      west: w.substations[0],
+      hq: !document.querySelector('.hq-btn')?.classList.contains('hidden'),
+    };
+  });
+s = await w4();
+step(`level 4: ${s.phase}, night ${s.night}, ${s.raptors} raptors, ${s.cones} cones`);
+if (s.phase !== 'mission' || !s.night) fail('level 4 should start at night');
+if (s.cones !== s.raptors || s.raptors !== 2) fail('each raptor on patrol should show its view cone');
+if (s.hq) fail('level 4 trains nothing, so the HQ button should be hidden');
+// Look at the south raptor and its cone.
+const south = await page.evaluate(() => {
+  const d = window.__pb3d.world.dinos.find((d) => d.state === 'loose');
+  return { x: d.x, y: d.y };
+});
+await look(south.x, south.y);
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/9-level4-cones.png`, timeout: 240000 });
+// A tap on the west substation with nothing selected opens its panel.
+const wc = { x: (s.west.x + 1) * 40, y: (s.west.y + 1) * 40 };
+await look(wc.x, wc.y);
+await page.waitForTimeout(400);
+const sp = await screenOf(wc.x, wc.y, 0);
+await page.touchscreen.tap(sp.x, sp.y);
+await page.waitForTimeout(500);
+if (!(await page.isVisible('.substation-panel'))) fail('tapping a substation should open its panel');
+await page.screenshot({ path: `${out}/10-level4-substation.png`, timeout: 240000 });
+await page.click('.substation-panel .close');
+// Tap the Engineer, then the substation.
+const ep = await screenOf(s.engineer.x, s.engineer.y, 0.25);
+await page.touchscreen.tap(ep.x, ep.y);
+await page.waitForTimeout(400);
+await page.touchscreen.tap(sp.x, sp.y);
+await page.waitForTimeout(400);
+const order = await page.evaluate(() => window.__pb3d.world.units.find((u) => u.kind === 'engineer').order);
+step(`Engineer order: ${order}`);
+if (order !== 'repair') fail('tapping the Engineer, then a substation, should send it to fix it');
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  for (let i = 0; i < 60 * 12; i++) w.update(1 / 60);
+});
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/11-level4-working.png`, timeout: 240000 });
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  for (let i = 0; i < 60 * 15 && !w.substations[0].fixed; i++) w.update(1 / 60);
+});
+await page.waitForTimeout(1500);
+s = await w4();
+step(`fixed ${s.fixed}`);
+if (s.fixed !== 1) fail('the Engineer should fix the west substation');
+await page.screenshot({ path: `${out}/12-level4-fixed.png`, timeout: 240000 });
+
+// ---------------------------------------------------------------- level 5
+await page.goto(`${url}#debug.level-5.${quality}`, { timeout: 300000 });
+await page.reload({ timeout: 300000, waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 600000 });
+step('level 5 loaded');
+if (await page.isChecked('#opt-tips')) await page.click('#opt-tips');
+await page.click('button.start');
+await page.waitForTimeout(1500);
+const w5 = () =>
+  page.evaluate(() => {
+    const g = window.__pb3d;
+    const w = g.world;
+    const jeep = w.units.find((u) => u.kind === 'jeep');
+    return { phase: w.phase, night: g.view.night, jeep: jeep && { id: jeep.id, x: jeep.x, y: jeep.y, order: jeep.order }, heavy: w.units.find((u) => u.kind === 'heavy'), riders: w.units.filter((u) => u.aboard).length };
+  });
+s = await w5();
+step(`level 5: ${s.phase}, night ${s.night}`);
+if (s.phase !== 'mission' || s.night) fail('level 5 should start by day');
+// Tap a Heavy Team, then the 4x4, to load it.
+await look((s.heavy.x + s.jeep.x) / 2, (s.heavy.y + s.jeep.y) / 2);
+await page.waitForTimeout(400);
+const hp5 = await screenOf(s.heavy.x, s.heavy.y, 0.3);
+await page.touchscreen.tap(hp5.x, hp5.y);
+await page.waitForTimeout(400);
+const jp = await screenOf(s.jeep.x, s.jeep.y, 0.3);
+await page.touchscreen.tap(jp.x, jp.y);
+await page.waitForTimeout(400);
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  for (let i = 0; i < 60 * 3; i++) w.update(1 / 60);
+});
+await page.waitForTimeout(800);
+s = await w5();
+step(`riders: ${s.riders}`);
+if (s.riders !== 1) fail('tapping a troop, then the 4x4, should load it');
+// Tap the 4x4, then the map, to drive.
+const jp2 = await screenOf(s.jeep.x, s.jeep.y, 0.3);
+await page.touchscreen.tap(jp2.x, jp2.y);
+await page.waitForTimeout(400);
+const to = await screenOf(s.jeep.x + 3 * 40, s.jeep.y, 0);
+await page.touchscreen.tap(to.x, to.y);
+await page.waitForTimeout(400);
+s = await w5();
+step(`4x4 order: ${s.jeep.order}`);
+if (s.jeep.order !== 'move') fail('tapping the 4x4, then the map, should drive it');
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/13-level5-4x4.png`, timeout: 240000 });
+// Let the fight go on a few seconds, for the wounds.
+await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  for (let i = 0; i < 60 * 10; i++) w.update(1 / 60);
+  const rex = w.dinos.find((d) => d.kind === 'trex');
+  const g = window.__pb3d;
+  g.cam.x = rex.x / 40;
+  g.cam.z = rex.y / 40;
+  g.applyCamera();
+});
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/14-level5-fight.png`, timeout: 240000 });
 
 if (errors.length) fail(`page errors:\n${errors.join('\n')}`);
 await browser.close();

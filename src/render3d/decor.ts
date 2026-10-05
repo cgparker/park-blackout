@@ -90,10 +90,10 @@ export function planDecor(src: TerrainSource, splat: Splat, opts: DecorOptions):
       if (t === Tile.Path || t === Tile.Gate) pathM[i] = 1;
       if (t === Tile.Water) waterM[i] = 1;
       if (t === Tile.Rock) rockM[i] = 1;
-      if (t === Tile.Exhibit || t === Tile.HQ || t === Tile.Tower) blockM[i] = 1;
+      if (t === Tile.Exhibit || t === Tile.HQ || t === Tile.Tower || t === Tile.Substation) blockM[i] = 1;
       if (g.x === 0 && x < 0 && x > -3.6 && z > g.y - 1.2 && z < g.y + 2.2) pathM[i] = 1;
       if (g.x === 0 && x < -3.2 && x > -7.2) hard[i] = 1;
-      if (t === Tile.Path || t === Tile.Gate || t === Tile.Water || t === Tile.HQ || t === Tile.Tower || t === Tile.Exhibit || t === Tile.Rock) hard[i] = 1;
+      if (t === Tile.Path || t === Tile.Gate || t === Tile.Water || t === Tile.HQ || t === Tile.Tower || t === Tile.Exhibit || t === Tile.Rock || t === Tile.Substation) hard[i] = 1;
       if (pathM[i]) hard[i] = 1;
       const hq = src.hq;
       if (x > hq.x - 0.4 && x < hq.x + hq.w + 0.4 && z > hq.y - 0.4 && z < hq.y + hq.h + 0.4) hard[i] = blockM[i] = 1;

@@ -7,28 +7,41 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { VIEW3D } from '../config';
+import { GRID, VIEW3D } from '../config';
 import { buildSegments } from '../core/exhibit';
 import { Tile, type Point, type Rect, type TileType } from '../core/grid';
 import type { GameEvent } from '../core/world';
 import { Actors, type DinoView, type GuestView, type UnitView } from './actors';
 import { loadAssets, type Assets } from './assets';
+import { Cones, type ConeView } from './cones';
 import { Cues } from './cues';
 import { bakeDecorShade, instanceParts, planDecor, type DecorKind } from './decor';
 import { Effects } from './effects';
 import { buildFence, fenceSignature, type FenceBuild, type FenceExhibitView } from './fences';
 import { Ghost, type GhostView } from './ghost';
 import { addReveal, applyLighting, makeMaterials, REVEAL, setRims, TEX, type Mats } from './materials';
-import { buildHQ, buildNest, buildSite, TOWER_DECK, type HqBuild } from './structures';
+import { buildCable, buildHQ, buildNest, buildSite, buildSubstation, TOWER_DECK, type HqBuild, type SubstationBuild } from './structures';
 import { buildSplat, makeGround, makeWater, type Splat, type TerrainSource, type TileWindow } from './terrain';
 import { clamp, col, disposeTree, hdr, V3 } from './util';
+
+/** Level 4: a substation, in tiles (top-left of its block), and the pens it powers. */
+export interface SubstationView {
+  id: number;
+  x: number;
+  y: number;
+  pens: readonly number[];
+  fixed: boolean;
+  workers: number;
+  /** 0 to 1. */
+  progress: number;
+}
 
 export interface ViewWorld {
   T: number;
   cols: number;
   rows: number;
   tileAt(x: number, y: number): TileType;
-  exhibits: readonly (FenceExhibitView & { viewingSpot: Point })[];
+  exhibits: readonly (FenceExhibitView & { viewingSpot: Point; powered?: boolean })[];
   dinos: readonly DinoView[];
   units: readonly UnitView[];
   guests: readonly GuestView[];
@@ -39,6 +52,10 @@ export interface ViewWorld {
   powerOn: boolean;
   /** Areas to keep free of trees, in tiles. Stills use it to frame a shot. */
   clear?: readonly Rect[];
+  /** Level 4: the substations, what each raptor on patrol sees, and Engineers at work with the point each faces. */
+  substations?: readonly SubstationView[];
+  cones?: readonly ConeView[];
+  working?: ReadonlyMap<number, Point>;
 }
 
 export type Quality = 'high' | 'low' | 'still';
@@ -55,7 +72,15 @@ export interface ViewUi {
 }
 
 /** Height and ground radius, in tiles, of what a canopy must not hide. */
-const REVEAL_SIZE: Record<string, readonly [number, number]> = { tranq: [0.55, 0.35], heavy: [0.75, 0.42], raptor: [0.62, 0.5], triceratops: [0.95, 0.8], trex: [1.35, 1.1] };
+const REVEAL_SIZE: Record<string, readonly [number, number]> = {
+  tranq: [0.55, 0.35],
+  heavy: [0.75, 0.42],
+  engineer: [0.55, 0.35],
+  jeep: [0.8, 0.7],
+  raptor: [0.62, 0.5],
+  triceratops: [0.95, 0.8],
+  trex: [1.35, 1.1],
+};
 /** Trees whose canopies dither away over units. */
 const CANOPY: readonly DecorKind[] = ['tree', 'pine', 'twisted'];
 
@@ -137,6 +162,12 @@ export class View3D {
   private fences = new Map<number, { sig: string; build: FenceBuild }>();
   private readonly ghost = new Ghost();
   private readonly cues = new Cues();
+  private readonly cones = new Cones();
+  /** Path lamp glass by power zone: an exhibit's id, or 0 for the rest of the park. */
+  private lampZones = new Map<number, THREE.MeshStandardMaterial>();
+  /** Level 4: each substation's yard, cables, and progress ring, and what they show now. */
+  private subs = new Map<number, { build: SubstationBuild; cables: THREE.Mesh[]; ring: THREE.Mesh; fixed: boolean; progress: number; sparkIn: number }>();
+  private subsKey = '';
   private cssW = 1;
   private cssH = 1;
   private readonly raycaster = new THREE.Raycaster();
@@ -154,7 +185,7 @@ export class View3D {
     this.camera = new THREE.PerspectiveCamera(VIEW3D.fov, 1, 0.5, 160);
     this.M = makeMaterials();
     this.statics.add(this.fixed, this.dynamic);
-    this.scene.add(this.statics, this.ghost.group, this.cues.group);
+    this.scene.add(this.statics, this.ghost.group, this.cues.group, this.cones.group);
   }
 
   get pixelRatio(): number {
@@ -235,9 +266,12 @@ export class View3D {
         }
       });
     }
-    const site = buildSite({ cols: 6, rows: 6, tileAt: (_x, y) => (y === 2 ? Tile.Path : Tile.Grass), gate: { x: 1, y: 2 }, exhibits: [{ footprint: { x: 1, y: 3, w: 3, h: 3 }, viewingSpot: { x: 2, y: 2 } }] }, this.M);
+    const site = buildSite({ cols: 6, rows: 6, tileAt: (_x, y) => (y === 2 ? Tile.Path : Tile.Grass), gate: { x: 1, y: 2 }, exhibits: [{ footprint: { x: 1, y: 3, w: 3, h: 3 }, viewingSpot: { x: 2, y: 2 } }] }, this.M).group;
     site.position.set(cx - 3, 0, cz - 3);
     group.add(site, buildNest(cx, cz, this.M));
+    // Level 4's substation yard, and level 5's 4x4.
+    group.add(buildSubstation(cx + 2, cz - 1, this.M).group);
+    units.push({ id: -13, kind: 'engineer', ...at(2, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 }, { id: -14, kind: 'jeep', ...at(-2, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 });
     this.scene.add(group);
     const night = this.night;
     for (const n of [false, true]) {
@@ -300,6 +334,7 @@ export class View3D {
 
   setNight(night: boolean): void {
     this.night = night;
+    this.cones.setNight(night);
     setRims(night);
     applyLighting(this.M, night, true);
     this.effects.setNight(night);
@@ -347,6 +382,8 @@ export class View3D {
       disposeTree(f.build.group);
     }
     this.fences.clear();
+    this.clearSubstations();
+    this.cones.clear();
     this.staticKey = '';
     this.worldKey = '';
   }
@@ -488,8 +525,95 @@ export class View3D {
         }
       });
     }
-    this.dynamic.add(buildSite({ cols: w.cols, rows: w.rows, tileAt: src.tileAt, gate: w.gate, exhibits: w.exhibits }, this.M));
+    const site = buildSite({ cols: w.cols, rows: w.rows, tileAt: src.tileAt, gate: w.gate, exhibits: w.exhibits, zoneOf: (x, z) => this.zoneOf(w, x, z) }, this.M);
+    this.dynamic.add(site.group);
+    this.lampZones = site.lamps;
     this.staticKey = this.keyOf(w);
+  }
+
+  /** The pen whose power runs a path lamp: the nearest one within 4 tiles, in level 4. Elsewhere one zone, 0. */
+  private zoneOf(w: ViewWorld, x: number, z: number): number {
+    if (!w.substations?.length) return 0;
+    let best = 0;
+    let bestD = 4;
+    for (const ex of w.exhibits) {
+      const f = ex.footprint;
+      const d = Math.hypot(Math.max(f.x - x, 0, x - (f.x + f.w)), Math.max(f.y - z, 0, z - (f.y + f.h)));
+      if (d < bestD) {
+        bestD = d;
+        best = ex.id;
+      }
+    }
+    return best;
+  }
+
+  /** Lamps light at night where their zone has power. In level 3 they light everywhere, as before. */
+  private updateLamps(w: ViewWorld): void {
+    for (const [zone, m] of this.lampZones) {
+      const ex = zone ? w.exhibits.find((e) => e.id === zone) : undefined;
+      const on = !w.substations?.length || (ex ? (ex.powered ?? w.powerOn) : w.powerOn);
+      m.emissiveIntensity = this.night && on ? 3 : 0;
+    }
+  }
+
+  // ---------------------------------------------- level 4: substations
+
+  /** Builds the substations and their cables once per park; after that, follows each one's state. */
+  private updateSubstations(w: ViewWorld, dt: number): void {
+    const list = w.substations ?? [];
+    const key = list.map((s) => `${s.id}:${s.x},${s.y}`).join('|');
+    if (key !== this.subsKey) {
+      this.clearSubstations();
+      this.subsKey = key;
+      for (const s of list) {
+        const build = buildSubstation(s.x, s.y, this.M);
+        const cables = s.pens.map((id) => {
+          const ex = w.exhibits.find((e) => e.id === id);
+          return buildCable(ex ? cableRoute(s, ex.footprint) : [], this.M.cableOff);
+        });
+        const ring = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: col('#3fe6ff'), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+        ring.position.set(s.x + 1, 0.05, s.y + 1);
+        ring.renderOrder = 5;
+        this.scene.add(build.group, ring, ...cables);
+        this.subs.set(s.id, { build, cables, ring, fixed: !s.fixed, progress: -1, sparkIn: 0 });
+      }
+    }
+    for (const s of list) {
+      const v = this.subs.get(s.id);
+      if (!v) continue;
+      if (v.fixed !== s.fixed) {
+        v.fixed = s.fixed;
+        v.build.beacon.material = s.fixed ? this.M.beaconFixed : this.M.beacon;
+        for (const c of v.cables) c.material = s.fixed ? this.M.cableOn : this.M.cableOff;
+      }
+      // A ring fills around it while the Engineer works.
+      const p = s.fixed ? 0 : Math.round(s.progress * 100) / 100;
+      if (p !== v.progress) {
+        v.progress = p;
+        v.ring.geometry.dispose();
+        v.ring.geometry = p > 0 ? new THREE.RingGeometry(1.22, 1.3, 64, 1, Math.PI / 2, -Math.PI * 2 * p).rotateX(-Math.PI / 2) : new THREE.BufferGeometry();
+      }
+      // Sparks fly while it's being worked on.
+      if (s.workers > 0 && !s.fixed) {
+        v.sparkIn -= dt;
+        if (v.sparkIn <= 0) {
+          v.sparkIn = 0.08 + Math.random() * 0.12;
+          const at = v.build.sparks[Math.floor(Math.random() * v.build.sparks.length)];
+          this.effects.puff(at.x + (Math.random() - 0.5) * 0.1, at.z + (Math.random() - 0.5) * 0.1, at.y, '#fff1b8', 0.16 + Math.random() * 0.1, 0.2);
+        }
+      }
+    }
+  }
+
+  private clearSubstations(): void {
+    for (const v of this.subs.values()) {
+      this.scene.remove(v.build.group, v.ring, ...v.cables);
+      disposeTree(v.build.group);
+      v.ring.geometry.dispose();
+      for (const c of v.cables) c.geometry.dispose();
+    }
+    this.subs.clear();
+    this.subsKey = '';
   }
 
   /** Whether a kind of decor casts shadows. Low quality keeps them for trees only: every caster is drawn again for the shadow map. */
@@ -563,14 +687,16 @@ export class View3D {
     const seen = new Set<number>();
     for (const ex of w.exhibits) {
       seen.add(ex.id);
-      const sig = fenceSignature(ex, w.powerOn) + (this.night ? 'n' : 'd');
+      // Each pen has its own power: level 4 brings it back one substation at a time.
+      const power = ex.powered ?? w.powerOn;
+      const sig = fenceSignature(ex, power) + (this.night ? 'n' : 'd');
       const cur = this.fences.get(ex.id);
       if (cur && cur.sig === sig) continue;
       if (cur) {
         this.scene.remove(cur.build.group);
         disposeTree(cur.build.group);
       }
-      const build = buildFence(ex, w.powerOn, this.M, this.scuffMat);
+      const build = buildFence(ex, power, this.M, this.scuffMat);
       this.scene.add(build.group);
       this.fences.set(ex.id, { sig, build });
       changed = true;
@@ -641,6 +767,15 @@ export class View3D {
           this.effects.puff(e.x / T, e.y / T, 0.3, '#ff4a3a', 0.45, 0.35);
           this.actors.guestDown(e.x / T, e.y / T);
           break;
+        case 'maul':
+          this.effects.puff(e.x / T, e.y / T, 0.35, '#ff3a2a', 0.5, 0.35);
+          break;
+        case 'substationFixed': {
+          // A burst of light around the yard as it comes back on.
+          const sv = w.substations?.find((x) => x.id === e.id);
+          if (sv) for (let i = 0; i < 8; i++) this.effects.puff(sv.x + 1 + Math.cos(i) * 0.8, sv.y + 1 + Math.sin(i) * 0.8, 0.5, '#7fefff', 1.0, 0.8);
+          break;
+        }
         default:
           break;
       }
@@ -666,12 +801,26 @@ export class View3D {
     this.time += dt;
     if (this.keyOf(w) !== this.staticKey) this.buildStatics(w);
     this.updateFences(w);
-    this.actors.update({ T: w.T, dinos: w.dinos, units: w.units, guests: w.guests, selected: ui.selected, night: this.night, dt, now: this.time, view: this.opts.quality === 'still' ? undefined : this.viewRect(1.5) });
+    this.updateSubstations(w, dt);
+    this.updateLamps(w);
+    this.actors.update({
+      T: w.T,
+      dinos: w.dinos,
+      units: w.units,
+      guests: w.guests,
+      selected: ui.selected,
+      night: this.night,
+      dt,
+      now: this.time,
+      view: this.opts.quality === 'still' ? undefined : this.viewRect(1.5),
+      working: w.working,
+    });
     this.cues.update(w.T, w.dinos, w.units);
+    this.cones.update(w.T, w.cones ?? []);
     if (this.night) {
       const troops: { pos: THREE.Vector3; dir: THREE.Vector3 }[] = [];
       for (const u of w.units) {
-        if (u.kind === 'tower' || u.dead) continue;
+        if (u.kind === 'tower' || u.dead || u.aboard) continue;
         const dir = V3(Math.cos(u.facing), 0, Math.sin(u.facing));
         troops.push({ pos: V3(u.x / w.T, u.kind === 'heavy' ? 0.4 : 0.32, u.y / w.T), dir });
       }
@@ -718,7 +867,7 @@ export class View3D {
       const z = py / w.T;
       cands.push({ x, z, h, r, pri, d: (x - this.rig.x) ** 2 + (z - this.rig.z) ** 2 });
     };
-    for (const u of w.units) if (u.kind !== 'tower' && !u.dead) push(u.kind, u.x, u.y, ui.selected.has(u.id) ? 0 : 1);
+    for (const u of w.units) if (u.kind !== 'tower' && !u.dead && !u.aboard) push(u.kind, u.x, u.y, ui.selected.has(u.id) ? 0 : 1);
     for (const d of w.dinos) if (!d.removed && d.fade < 0.9) push(d.kind, d.x, d.y, d.state === 'loose' ? 1 : 2);
     // A placement preview comes first, so the player sees where the pen or tower would go.
     const gf = this.ghost.focus;
@@ -795,4 +944,27 @@ export class View3D {
   static isPath(t: TileType): boolean {
     return t === Tile.Path || t === Tile.Gate;
   }
+}
+
+/**
+ * The cable from a substation to a pen, in tiles: out of the side of its block that faces the pen, then along one
+ * axis and the other to the nearest point of the pen's fence.
+ */
+function cableRoute(s: SubstationView, f: Rect): { x: number; z: number }[] {
+  const n = GRID.sizeTiles;
+  const cx = s.x + n / 2;
+  const cz = s.y + n / 2;
+  const fx0 = f.x + 0.5;
+  const fx1 = f.x + f.w - 0.5;
+  const fz0 = f.y + 0.5;
+  const fz1 = f.y + f.h - 0.5;
+  const ex = Math.max(fx0, Math.min(fx1, cx));
+  const ez = Math.max(fz0, Math.min(fz1, cz));
+  const dx = ex - cx;
+  const dz = ez - cz;
+  // Start at the middle of the side facing the pen.
+  const horizontal = Math.abs(dx) > Math.abs(dz);
+  const start = horizontal ? { x: cx + Math.sign(dx) * (n / 2), z: cz } : { x: cx, z: cz + Math.sign(dz) * (n / 2) };
+  const corner = horizontal ? { x: ex, z: start.z } : { x: start.x, z: ez };
+  return [start, corner, { x: ex, z: ez }];
 }

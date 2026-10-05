@@ -130,3 +130,41 @@ describe('tips in levels 1 and 2', () => {
     for (const t of [...start, ...bites]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 });
+
+describe('tips in levels 4 and 5', () => {
+  const DASH = new RegExp('[' + String.fromCharCode(0x2013, 0x2014) + ']|\\s--\\s');
+
+  it('level 4 teaches staying out of sight, the west substation first, and what being seen means', () => {
+    const w = new World({ seed: 1, level: 4 });
+    w.start();
+    const start = tipsFor(w, w.events);
+    expect(ids(start)).toEqual(['stealth', 'engineer']);
+    expect(start[1].title).toBe('Fix the west substation');
+    expect(start[1].body).toMatch(/Its raptors go for their fence at 1:00\.$/);
+    const fixed = tipsFor(w, [{ type: 'substationFixed', id: w.substations[0].id, contained: 3, last: false }]);
+    expect(ids(fixed)).toEqual(['powered']);
+    const seen = tipsFor(w, [{ type: 'spotted', dinoId: 1, unitId: 2, kind: 'engineer', x: 0, y: 0 }]);
+    expect(seen[0].title).toBe('A raptor saw the Engineer');
+    expect(ids(tipsFor(w, [{ type: 'unitLost', unitId: 3, kind: 'tranq', x: 0, y: 0, by: 'raptor' }]))).toEqual(['squadLost']);
+    for (const t of [...start, ...fixed, ...seen]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+  });
+
+  it('after the west substation, the tip points at the next pen on a timer', () => {
+    const w = new World({ seed: 1, level: 4 });
+    w.start();
+    w.fixSubstation(w.substations[0]);
+    const tip = tipsFor(w, w.events).find((t) => t.id === 'powered')!;
+    expect(tip.body).toMatch(/Next, the north substation: its T\. rex goes for the fence at 1:50\.$/);
+  });
+
+  it('level 5 explains the fight and the 4x4, then a broken pen, a death, and the T. rex picking a target', () => {
+    const w = new World({ seed: 1, level: 5 });
+    w.start();
+    const start = tipsFor(w, w.events);
+    expect(ids(start)).toEqual(['fight', 'jeep']);
+    expect(ids(tipsFor(w, [{ type: 'breach', exhibitId: 1, kind: 'pasture', x: 0, y: 0 }]))).toEqual(['penBroken']);
+    expect(ids(tipsFor(w, [{ type: 'killed', dinoId: 1, kind: 'raptor', x: 0, y: 0, by: 'trex' }]))).toEqual(['killed']);
+    expect(ids(tipsFor(w, [{ type: 'charge', dinoId: 1, x: 0, y: 0 }]))).toEqual(['jeepKite']);
+    for (const t of start) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+  });
+});

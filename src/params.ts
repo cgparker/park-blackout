@@ -1,4 +1,4 @@
-import type { LevelId } from './config';
+import { LEVEL_IDS, type LevelId } from './config';
 
 export interface Params {
   debug: boolean;
@@ -9,7 +9,7 @@ export interface Params {
   level: LevelId | null;
 }
 
-const asLevel = (raw: string | null): LevelId | null => (raw === '1' || raw === '2' || raw === '3' ? (Number(raw) as LevelId) : null);
+const asLevel = (raw: string | null): LevelId | null => (LEVEL_IDS.some((l) => String(l) === raw) ? (Number(raw) as LevelId) : null);
 
 /**
  * Reads options from the query string (?debug=1&blackout=180&seed=7&level=2) or, where the

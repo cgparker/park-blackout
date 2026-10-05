@@ -94,7 +94,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('tips are on by default', await page.isChecked('#opt-tips'));
   // Every level is open. The briefing starts on level 1, and picking a level sets up its park behind the briefing.
   const pressed = () => S(page, () => [...document.querySelectorAll('.level-btn')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.level).join(','));
-  check('the briefing offers three levels and starts on level 1', (await page.locator('.level-btn').count()) === 3 && (await pressed()) === '1' && (await world(() => window.__pb.world.level)) === 1);
+  check('the briefing offers five levels and starts on level 1', (await page.locator('.level-btn').count()) === 5 && (await pressed()) === '1' && (await world(() => window.__pb.world.level)) === 1);
   check('level 1 is a roundup on a short clock', (await page.textContent('.brief-title')) === 'Round them up in 2:30' && (await page.textContent('.brief-side')).includes('Get all 6 Triceratops back before the park opens in 2:30.'));
   check('the quick test is for level 3 only', !(await page.isVisible('#opt-quick')));
   await page.tap('.level-btn[data-level="2"]');
@@ -392,7 +392,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.start');
   check('level 1 starts with the park built and Triceratops out', (await world(() => {
     const w = window.__pb.world;
-    return w.phase === 'hunt' && w.exhibits.length === 4 && w.dinos.filter((d) => d.state === 'loose').length === 6;
+    return w.phase === 'mission' && w.exhibits.length === 4 && w.dinos.filter((d) => d.state === 'loose').length === 6;
   })) === true);
   check('the clock counts down to opening', (await page.textContent('.clock .cap')) === 'Park opens in' && (await page.textContent('.clock .val')).startsWith('2:'));
   check('the top bar tracks spending for the second star', await soon(async () => (await page.textContent('.stat.revenue .cap')).startsWith('Spent') && (await page.textContent('.stat.revenue .cap')).includes('$4,500')));
@@ -488,6 +488,193 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('ending level 2 early says the nest was not clear', await soon(async () => (await page.isVisible('.end')) && (await page.textContent('.end .detail')) === 'You ended the game before the nest was clear.'));
   await page.screenshot({ path: `${out}/9-level2-end.png` });
   check('no console errors in levels 1 and 2', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+// ---------------------------------------------------------------- phone, levels 4 and 5
+{
+  const { ctx, page, errors } = await open({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, 'debug=1&seed=3&level=4');
+  const world = (fn, arg) => S(page, fn, arg);
+  const tipIs = (title) => soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === title);
+  /** Darts every loose animal with one troop of this kind, one dart each, without waiting on the walk. */
+  const dartAll = (kind) =>
+    world((k) => {
+      const w = window.__pb.world;
+      const u = w.units.find((u) => u.kind === k && !u.dead && !u.aboard);
+      for (const d of w.dinos.filter((d) => d.state === 'loose')) {
+        d.sedation = 1;
+        u.x = d.x - 60;
+        u.y = d.y;
+        u.order = 'attack';
+        u.targetId = d.id;
+        u.cooldown = 0;
+        for (let i = 0; i < 3 && w.phase !== 'ended'; i++) w.update(1 / 60);
+      }
+    }, kind);
+  const tapWorld = async (x, y) => {
+    const c = await cssOf(page, x, y);
+    await page.touchscreen.tap(c.x, c.y);
+  };
+
+  check('?level=4 opens the Grid Down briefing', (await world(() => window.__pb.world.level)) === 4 && (await page.textContent('.brief-title')) === 'Power back on by dawn');
+  const brief4 = await page.textContent('.brief-side');
+  check('the level 4 briefing names its goals', brief4.includes('Lose no troops.') && brief4.includes('Keep the Engineer out of every raptor’s sight.'), brief4.slice(0, 200));
+  check('the level 4 briefing names the team', (await page.textContent('.brief-intro')).includes('You have one Engineer and one Tranq Squad.'));
+  await page.tap('.start');
+  check('level 4 starts with three broken substations, the lights off, and two raptors on patrol', (await world(() => {
+    const w = window.__pb.world;
+    const raptors = w.dinos.filter((d) => d.state === 'loose');
+    return w.phase === 'mission' && w.substations.length === 3 && w.substations.every((s) => !s.fixed) && !w.powerOn && raptors.length === 2 && raptors.every((d) => d.patrol);
+  })) === true);
+  check('level 4 opens with a tip on staying out of sight', await tipIs('Stay out of sight'));
+  await page.tap('.tip-ok');
+  check('then a tip on the west substation', await tipIs('Fix the west substation'));
+  await page.tap('.tip-ok');
+  check('the top bar counts substations fixed', await soon(async () => (await page.textContent('.stat.casualties .cap')) === 'Power' && (await page.textContent('.stat.casualties .val')) === '0 of 3'));
+  check('the top bar says the Engineer is unseen', (await page.textContent('.stat.revenue .val')) === 'Unseen' && (await page.textContent('.stat.revenue .cap')).startsWith('Engineer'));
+  check('level 4 has no money and no training', (await page.locator('.stat.money.off').count()) === 1 && !(await page.isVisible('.hq-btn')));
+  check('the clock counts down to dawn', (await page.textContent('.clock .cap')) === 'Dawn in');
+  // Show the south raptor's cone for a look.
+  const south = await world(() => {
+    const d = window.__pb.world.dinos.find((d) => d.state === 'loose');
+    return { x: d.x, y: d.y };
+  });
+  await centerOn(page, south.x, south.y, 0.7);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/10-level4-cones.png` });
+
+  // With nothing selected, a tap on a substation opens its panel.
+  const west = await world(() => {
+    const s = window.__pb.world.substations.find((s) => s.name === 'West');
+    return { id: s.id, x: (s.x + 1) * 40, y: (s.y + 1) * 40 };
+  });
+  await centerOn(page, west.x, west.y);
+  await tapWorld(west.x, west.y);
+  check(
+    'tapping a substation opens its panel',
+    await soon(async () => (await page.isVisible('.substation-panel')) && (await page.textContent('.substation-panel .panel-title')) === 'West substation' && (await page.textContent('.sub-status')) === 'Broken. Send an Engineer.'),
+  );
+  await page.screenshot({ path: `${out}/11-level4-substation.png` });
+  await page.tap('.substation-panel .close');
+
+  // Tap the Engineer, then the substation.
+  const eng = await world(() => {
+    const u = window.__pb.world.units.find((u) => u.kind === 'engineer');
+    return { id: u.id, x: u.x, y: u.y };
+  });
+  await centerOn(page, (eng.x + west.x) / 2, (eng.y + west.y) / 2);
+  await tapWorld(eng.x, eng.y);
+  await tapWorld(west.x, west.y);
+  const repairOrder = await world(() => window.__pb.world.units.map((u) => `${u.kind}:${u.order}:${u.targetId}`).join(' '));
+  check('tap the Engineer, then a substation, to fix it', repairOrder.includes(`engineer:repair:${west.id}`), repairOrder);
+  await world((id) => {
+    const w = window.__pb.world;
+    const s = w.substationById(id);
+    for (let i = 0; i < 60 * 40 && !s.fixed && w.phase !== 'ended'; i++) w.update(1 / 60);
+  }, west.id);
+  check('the Engineer fixes it in about 20 s', (await world((id) => window.__pb.world.substationById(id).fixed, west.id)) === true);
+  check('a fixed substation brings up a tip that points at the next one', await soon(async () => (await tipIs('The power is back here')) && (await page.textContent('.tip-body')).includes('north substation')));
+  await page.tap('.tip-ok');
+  check('the top bar shows 1 of 3 fixed', await soon(async () => (await page.textContent('.stat.casualties .val')) === '1 of 3'));
+
+  // A pen's panel says when its animals break out and which substation powers it.
+  await page.tap('.sel-clear');
+  const rexPen = await world(() => {
+    const ex = window.__pb.world.exhibits.find((e) => e.kind === 'trex');
+    const f = ex.footprint;
+    return { x: (f.x + f.w / 2) * 40, y: (f.y + f.h / 2) * 40 };
+  });
+  await centerOn(page, rexPen.x, rexPen.y);
+  await tapWorld(rexPen.x, rexPen.y);
+  check(
+    'a dark pen shows when it breaks out and its substation',
+    await soon(async () => {
+      if (!(await page.isVisible('.exhibit-panel'))) return false;
+      const t = await page.textContent('.exhibit-panel');
+      return /Breaks outIn \d:\d\d/.test(t) && t.includes('SubstationNorth, broken') && t.includes('No power');
+    }),
+    await page.textContent('.exhibit-panel'),
+  );
+  await page.tap('.exhibit-panel .close');
+  await page.tap('.pause-btn');
+  check('the pause menu shows level 4 goals', await soon(async () => {
+    const t = await page.textContent('.menu .goal-rows');
+    return t.includes('Power back on') && t.includes('Lose no troops') && t.includes('Never spotted');
+  }));
+  await page.tap('.menu-resume');
+
+  // Walk the Tranq Squad into a raptor's view: it sees it and comes.
+  await world(() => {
+    const w = window.__pb.world;
+    const d = w.dinos.find((d) => d.state === 'loose');
+    const sq = w.units.find((u) => u.kind === 'tranq');
+    sq.x = d.x + Math.cos(d.facing) * 3 * 40;
+    sq.y = d.y + Math.sin(d.facing) * 3 * 40;
+    for (let i = 0; i < 6; i++) w.update(1 / 60);
+  });
+  check('a raptor that sees the squad says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'A raptor saw the Tranq Squad.'), await page.textContent('.toast'));
+  check('and the Engineer is still unseen', (await page.textContent('.stat.revenue .val')) === 'Unseen');
+  if (await soon(() => page.isVisible('.tip'), 1500)) await page.tap('.tip-ok');
+
+  // Fix the rest to win.
+  await world(() => {
+    const w = window.__pb.world;
+    for (const s of w.substations) if (!s.fixed) w.fixSubstation(s);
+    w.update(1 / 60);
+  });
+  check('power everywhere wins level 4, raptors or not', await soon(() => page.isVisible('.end'), 8000));
+  check('the level 4 end screen says the power is back', (await page.textContent('.end h1')) === 'Power back on');
+  check('the end screen counts the repairs and says the Engineer was never seen', (await page.textContent('.end-grid')).includes('Substations fixed3 of 3') && (await page.textContent('.end-grid')).includes('Engineer seenNever'), await page.textContent('.end-grid'));
+  await page.screenshot({ path: `${out}/12-level4-end.png` });
+  await page.tap('.next-level');
+  check('Next level opens the level 5 briefing', await soon(async () => (await world(() => window.__pb.world.level)) === 5 && (await page.textContent('.brief-title')) === 'Break up the fight'));
+  check('the level 5 briefing names the team', (await page.textContent('.brief-intro')).includes('2 Heavy Teams, 2 Tranq Squads, and a Patrol 4x4'), await page.textContent('.brief-intro'));
+
+  await page.tap('.start');
+  check('level 5 opens with a tip on the fight', await tipIs('They are killing each other'));
+  await page.tap('.tip-ok');
+  check('then a tip on the 4x4', await tipIs('The Patrol 4x4'));
+  await page.tap('.tip-ok');
+  check('level 5 has no money and no training', (await page.locator('.stat.money.off').count()) === 1 && !(await page.isVisible('.hq-btn')));
+  check('the top bar counts animals killed', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Animals killed · lose at 3' && (await page.textContent('.stat.revenue .val')) === '0 / 3'));
+
+  // Tap a Heavy Team, then the 4x4, to load it.
+  const team = await world(() => {
+    const w = window.__pb.world;
+    const h = w.units.find((u) => u.kind === 'heavy');
+    const j = w.units.find((u) => u.kind === 'jeep');
+    return { h: { id: h.id, x: h.x, y: h.y }, j: { id: j.id, x: j.x, y: j.y } };
+  });
+  await centerOn(page, (team.h.x + team.j.x) / 2, (team.h.y + team.j.y) / 2);
+  await tapWorld(team.h.x, team.h.y);
+  await tapWorld(team.j.x, team.j.y);
+  check('tap a troop, then the 4x4, to load it', (await world((id) => window.__pb.world.unitById(id).order, team.h.id)) === 'board');
+  await advance(page, 3);
+  check('the Heavy Team climbs in', (await world(([h, j]) => window.__pb.world.unitById(h).aboard === j, [team.h.id, team.j.id])) === true);
+  await tapWorld(team.j.x, team.j.y);
+  check('tapping the 4x4 selects it', await soon(async () => (await page.textContent('.sel-summary')).startsWith('4x4 (1 in)')), await page.textContent('.sel-summary'));
+  await page.screenshot({ path: `${out}/13-level5-loaded.png` });
+  const to = { x: team.j.x + 4 * T, y: team.j.y };
+  await tapWorld(to.x, to.y);
+  check('tap the map to drive', (await world((id) => window.__pb.world.unitById(id).order, team.j.id)) === 'move');
+  await advance(page, 4);
+  const out5 = await world(([h, j]) => {
+    const w = window.__pb.world;
+    const u = w.unitById(h);
+    const jeep = w.unitById(j);
+    return { aboard: u.aboard, gap: Math.hypot(u.x - jeep.x, u.y - jeep.y), order: jeep.order };
+  }, [team.h.id, team.j.id]);
+  check('the troop climbs out where the 4x4 stops', out5.aboard === 0 && out5.order === 'idle' && out5.gap < 2 * T, JSON.stringify(out5));
+  check('the fight wounds the animals', (await world(() => window.__pb.world.dinos.some((d) => d.health < (d.kind === 'trex' ? 1200 : 150)))) === true);
+  await page.screenshot({ path: `${out}/14-level5-fight.png` });
+
+  await dartAll('heavy');
+  check('darting every animal wins level 5', await soon(() => page.isVisible('.end'), 8000));
+  check('the level 5 end screen says the fight is over', (await page.textContent('.end h1')) === 'The fight is over');
+  check('the end screen sums up the fight', (await page.textContent('.end-grid')).includes('Patrol 4x4Still running'), await page.textContent('.end-grid'));
+  check('level 5 is the last level', !(await page.isVisible('.next-level')));
+  await page.screenshot({ path: `${out}/15-level5-end.png` });
+  check('no console errors in levels 4 and 5', errors.length === 0, errors.join(' | '));
   await ctx.close();
 }
 

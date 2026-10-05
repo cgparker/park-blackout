@@ -2,6 +2,57 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## 3D levels 4 and 5
+
+The 3D build offers every level, so levels 4 and 5 came to it with the same rules, HUD, and controls.
+
+118. **The Engineer is the Worker from the CC0 people pack.** Its hard hat and vest are recoloured safety yellow and orange, and the game adds reflective bands and a red toolbox in the left hand. Only the men's Worker ships: level 4 has one Engineer, the two Workers look alike from the game's camera, and every level would load the second one for nothing (about 0.5 MB).
+119. **Troops ride seated in the 4x4.** Each rider plays its own idle clip with its legs bent at the hip and knee, in the passenger seat and then the back. The driver is a Tranq Squad model that belongs to the vehicle, with no ring, bar, or shadow of its own. The 4x4's selection ring goes round the whole vehicle, at the same line weight as a troop's.
+120. **Level 4 is night in 3D, and the lights come back by zone.** A fixed substation lights its pens' fences and the path lamps within 4 tiles of those pens. The rest of the park's lamps wait for the last one.
+121. **The view cones are faint and fade toward their edge.** The 3D view blends colour in linear light, where the 2D game's 16% fill over dark grass came out as a solid amber sheet. At night the fill is 7% at the raptor and 30% of that at the far edge, with a thin outline where sight ends. A raptor after someone shows a red line to its prey and a red ring under it, as in 2D.
+122. **Hurt animals flinch, and a killed one falls and stays down a few seconds**, like a troop, then fades away. A red health bar shows once an animal is hurt.
+
+## Level 4: stealth
+
+Chosen by Chris after the first build of levels 4 and 5: level 4 starts with raptors already out, the team is one Engineer and one light troop, and getting all the power back takes stealth and maybe self-sacrifice. He then picked sight cones on patrol routes, a win for the power alone, stars for no losses and never being spotted, and the pen timers kept with more time.
+
+107. **A fixed team of one Engineer and one Tranq Squad, and no money.** HQ trains nothing, as in level 5. Losing the Engineer loses the level; losing the squad doesn't. This replaces the training and the spending star of decisions 90 and 98.
+108. **Two raptors on patrol, not three on guard.** The east pen holds two, and each walks its own route: one circles the south substation a tile out from where the Engineer stands, and one walks the east path up and around the north substation. They replace the guards of decision 91.
+109. **Raptors see in cones, and cover blocks them.** 90 degrees wide and 5 tiles long. Rock, pens, HQ, towers, and substations block sight; water and paths don't, so the pond is no hiding place. A troop within 1.2 tiles is heard whichever way the raptor looks. The cones are drawn on the ground, so the rule can be read off the screen.
+110. **A raptor that spots a troop calls the other, wherever it is.** A lone Tranq Squad beats one raptor, and with packs that only answered nearby calls, picking them off one at a time made sneaking pointless. Now every fight is two against one, so using the squad means losing it: that's the self-sacrifice, and it costs the no-losses star.
+111. **A dart shows a raptor where the shooter is, once,** and a raptor that loses sight of its prey runs to where it last saw it. At first it held a grudge for 5 s and chased its prey's real position, which tracked a troop through walls.
+112. **Idle troops hold fire at raptors that aren't after anyone.** Otherwise a squad waiting in cover darts a passing raptor on its own and gives itself away. An attack order still darts.
+113. **Level 4 is won by the power alone.** Every substation fixed before dawn wins, whatever is still loose. With one Tranq Squad, darting everything was never the point.
+114. **The stars are no troops lost and never spotted.** Never spotted counts any raptor noticing the Engineer, including one that bites it while chasing someone else.
+115. **The timers moved later: the west raptors at 1:00 (was 0:40) and the T. rex at 1:50 (was 1:05).** Sneaking takes longer than walking. A careful script fixes the north substation at about 0:55, and one that decides only every 1.5 s at about 1:20. One that decides every 2 s is too slow, and the T. rex gets out first.
+116. **The south pasture has power of its own.** The south raptor's route passes beside it. Without power, the passing raptor set its Triceratops running 15 to 25 times in two minutes, and they broke through the fence before 2:00: noise that had nothing to do with the level.
+117. **The scripted sneak lives in `tests/stealth-player.ts`.** It moves only through tiles no raptor sees now or will in the next 2 s, read off their routes. The balance runs use it, and so does a test, so a route change that leaves no way through fails `npm test`.
+
+## Levels 4 and 5
+
+Chosen by Chris: level 4 is getting the power back on, with a new Engineer unit, right after level 3 (no guests, power still out, dinosaurs still loose). Level 5 is breaking up a fight between the T. rex and raptors that escaped: animals can be killed and the fight spreads, the team is fixed (no towers, no training), and a 4x4 moves Heavy Teams faster.
+
+87. **Level 4's park is the blackout's dense T. rex park**, the one the balance runs use most: two raptor pens, the T. rex paddock, and two pastures. Level 5 uses the same park, so the two levels read as the same night and the next day.
+88. **Each pen has its own power now.** Levels 1 and 2 have it everywhere; level 3 loses it everywhere and gets it back everywhere; level 4 gets it back one substation at a time; level 5 sets it per pen. A fixed substation does to its pens exactly what the end of the blackout does to all of them: animals inside are contained and the gaps seal.
+89. **Level 4's pens break out at set times, not 10 and 18 s after the start.** With the blackout's times, the west raptors would be out before an Engineer could reach anything, so there would be no race. The pen's panel shows the time, so the race is visible.
+90. **Engineers can't dart and ignore attack orders.** Select all, then tap an animal, sends the troops and leaves Engineers where they are, instead of walking them into the fight. Two Engineers at one substation add their work, and work done stays done, so losing one costs time, not progress.
+91. **The south raptors guard the south substation** with level 2's nest rules (8 tiles to notice, 10 from the spot). Without a leash, loose raptors with no guests to chase run straight to HQ and kill each new troop as it walks out. A guarded spot puts the danger where the player has to go. Replaced by raptors on patrol (decision 108).
+92. **A darted animal is taken away in levels 4 and 5,** as in level 3. Carrying it home (levels 1 and 2) would put it back behind a fence with no power.
+93. **Level 5 sets power per pen.** A pen with power holds, as in levels 1 and 2, and the fight only goes for the dark ones. The dark pens are the ones at risk, and the player can see which they are.
+94. **Fights happen in level 5 only.** In level 3 a loose T. rex and loose raptors still ignore each other, so its balance doesn't change.
+95. **"Patrol 4x4", not "Jeep".** Jeep is a brand name, so the vehicle has a plain name and a look of its own: no seven-slot grille, no badges, and the team's navy and white.
+96. **The 4x4 unloads wherever it stops,** and tapping an animal with it selected drops the troops 3.5 tiles away with an attack order. That covers getting out without a new button.
+97. **Level 5's stars swap money for troops:** the win, no troops lost, and no animal killed. There's no money to spend in a level with a fixed team.
+98. **Level 4's timers make one Engineer a close race** (replaced by decisions 107 and 115). The west raptors go for their fence at 0:40, and the T. rex at 1:05, behind a fence dented to 80 HP. Three raptors guard the south substation, dawn is 3:30 away, and the level starts with $20,000. In the scripted runs one Engineer and one Heavy Team win all 16 games with three stars, while sending Heavy Teams first, or the Engineer south first, loses all 16 (SPEC section 13).
+99. **Level 5's team is 2 Heavy Teams and 2 Tranq Squads, with 3:00 on the clock.** Raptors have 150 health and the T. rex 1,200, so left alone the T. rex kills the first raptor at about 0:21. Every main plan wins, so the stars carry the challenge: speed saves the animals, and the 4x4 saves the troops.
+100. **Raptors circle the T. rex instead of stacking on one spot.** Each takes its own place around it, spread evenly, and the places turn slowly (`FIGHT.circleSpeed`). Stacked on one spot, a pack read as one animal.
+101. **A tip says how to save the troop the T. rex picks.** The first time it locks on in level 5, a tip points at the orange ring: load that troop into the 4x4 and drive off. In the scripted runs that one move cut troop losses from about 2.4 of 4 to 0.2.
+102. **The park lights follow the substations.** In level 4 the park stays dark until the last substation is fixed, while each pen's fence comes back with its own substation. Level 5 is by day.
+103. **Troops in the 4x4 move with it in the same step,** wherever they come in the unit list, so a rider never trails its 4x4. The stress runs found the lag.
+104. **A wandering animal drops a wander point it can no longer reach in a straight line.** A point picked before a chase could be behind a rock from where the animal ended up, and the T. rex walked into the rock. The stress runs found it.
+105. **The level picker shows five levels in one row,** each with its number, name, and what it teaches stacked, so it doesn't wrap on a phone.
+106. **Level 5 has no HQ button, and a tap on HQ is a tap on the map.** HQ trains nothing there, so a tap on it moves the selected troops instead of opening an empty panel.
+
 ## 3D level 3
 
 Chosen by Chris: the blackout level in 3D too, after levels 1 and 2 played well there.

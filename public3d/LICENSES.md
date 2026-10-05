@@ -9,7 +9,7 @@ All three packs are by Quaternius (quaternius.com) and released under CC0 1.0 Un
 | Folder | Pack | Used for | License text shipped with the pack |
 |---|---|---|---|
 | `dinos/` | Animated Dinosaur Pack (https://quaternius.com/packs/animateddinosaurs.html) | T. rex, Velociraptor, Triceratops | CC0 1.0, stated in the pack's credits file |
-| `people/` | Ultimate Modular Men and Ultimate Modular Women | Troops (Adventurer, Swat) and park guests | CC0 1.0 Universal |
+| `people/` | Ultimate Modular Men and Ultimate Modular Women | Troops (Adventurer, Swat), the Engineer (Worker, from the men's pack), and park guests | CC0 1.0 Universal |
 | `nature/` | Stylized Nature MegaKit, free Standard version | Trees, bushes, plants, grass, rocks | CC0 1.0 Universal (`License_Standard.txt`) |
 
 The copies used were taken from public GitHub projects that include these packs unchanged with their license files: Bleach4Ever/kid, marcoaureliomenezes/tauan-games, howellsryan/pocketRPG, playdream996-cyber/Mirag_City_Game, and osman-1002/3D-3rd-Person-Godot-Game-With-GenAI-Integration. The packs are not in this repo; `scripts/assets3d.mjs` turns them into the files here.
@@ -21,7 +21,8 @@ What the build changes, so nobody mistakes these for the originals:
 - Dinosaur normals are smoothed. Dinosaur colours come from the game's own skin shader, not the pack's materials.
 - Vertex data is packed (KHR_mesh_quantization). Tree trunks are simplified, and leaf cards are thinned (about half kept, each grown to cover the gap).
 - Tree leaves use white versions of the pack's leaf textures, tinted in the game.
-- Troop gear (caps, armour, guns) is built by the game from simple shapes and is not part of any pack.
+- Troop gear (caps, armour, guns) and the Engineer's toolbox are built by the game from simple shapes and are not part of any pack. The Engineer's hard hat and vest are the pack's, recoloured by the game, which adds the vest's reflective bands.
+- The Patrol 4x4 is built by the game from simple shapes. It copies no real vehicle's badges or grille.
 - In the game, each character's parts are merged into one mesh, and each guest is given its own colours.
 
 ## Made for this project

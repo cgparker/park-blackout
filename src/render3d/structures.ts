@@ -293,11 +293,25 @@ export interface SiteSource {
   tileAt(x: number, y: number): TileType;
   gate: Point;
   exhibits: readonly { footprint: Rect; viewingSpot: Point }[];
+  /** Which power zone a lamp at (x, z) belongs to (level 4 lights the park one zone at a time). 0 when there's one zone. */
+  zoneOf?: (x: number, z: number) => number;
 }
 
-export function buildSite(src: SiteSource, M: Mats): THREE.Group {
+export interface SiteBuild {
+  group: THREE.Group;
+  /** Each zone's lamp glass, so a zone's lamps light up when its power comes back. */
+  lamps: Map<number, THREE.MeshStandardMaterial>;
+}
+
+export function buildSite(src: SiteSource, M: Mats): SiteBuild {
   const B = new Batch();
   const g = new THREE.Group();
+  const lamps = new Map<number, THREE.MeshStandardMaterial>();
+  const lampGlass = (zone: number) => {
+    let m = lamps.get(zone);
+    if (!m) lamps.set(zone, (m = M.lampGlass.clone()));
+    return m;
+  };
   // Gate on the west edge.
   if (src.gate.x === 0) {
     const gx = 0.02;
@@ -339,11 +353,11 @@ export function buildSite(src: SiteSource, M: Mats): THREE.Group {
       const lz = z + 0.5 + side * 0.42;
       B.cyl(0.016, 0.022, 0.62, M.darkSteel, lx, 0.31, lz, 8);
       B.add(rbox(0.07, 0.04, 0.07, 0.01), M.darkSteel, B.at(lx, 0.64, lz));
-      B.box(0.05, 0.07, 0.05, M.lampGlass, lx, 0.59, lz);
+      B.box(0.05, 0.07, 0.05, lampGlass(src.zoneOf?.(lx, lz) ?? 0), lx, 0.59, lz);
       B.cyl(0.04, 0.05, 0.03, M.concreteDark, lx, 0.015, lz, 8);
     }
   B.flush(g);
-  return g;
+  return { group: g, lamps };
 }
 
 /** The raptors' nest: a mound of straw, a ring of sticks, and a clutch of eggs. */
@@ -372,4 +386,166 @@ export function buildNest(x: number, z: number, M: Mats): THREE.Group {
   }
   B.flush(g);
   return g;
+}
+
+// ------------------------------------------------------------------ level 4: substations
+
+export interface SubstationBuild {
+  group: THREE.Group;
+  /** The beacon on its mast: red while broken, cyan once fixed. */
+  beacon: THREE.Mesh;
+  /** Where sparks fly while the Engineer works, in tiles. */
+  sparks: THREE.Vector3[];
+}
+
+/**
+ * A fenced transformer yard on its 2x2 block (top-left tile x, z): a concrete pad, a transformer with cooling fins
+ * and three insulator bushings, a control cabinet with a warning sign facing the camera, a pole, and a beacon mast.
+ */
+export function buildSubstation(x: number, z: number, M: Mats): SubstationBuild {
+  const B = new Batch();
+  const g = new THREE.Group();
+  const cx = x + 1;
+  const cz = z + 1;
+  B.add(rbox(1.9, 0.06, 1.9, 0.02), M.concreteDark, B.at(cx, 0.03, cz));
+  // Low chain-link fence around the yard.
+  const h = 0.36;
+  const e = 0.9;
+  for (const [px, pz] of [[-e, -e], [e, -e], [e, e], [-e, e], [0, -e], [0, e], [-e, 0], [e, 0]]) B.cyl(0.018, 0.018, h, M.galv, cx + px, h / 2 + 0.03, cz + pz, 6);
+  for (const [w, d, px, pz] of [[1.8, 0.01, 0, -e], [1.8, 0.01, 0, e], [0.01, 1.8, -e, 0], [0.01, 1.8, e, 0]] as const) {
+    B.add(new THREE.BoxGeometry(w, h - 0.06, d), M.chain, B.at(cx + px, h / 2 + 0.03, cz + pz));
+    B.add(new THREE.BoxGeometry(Math.max(w, 0.02), 0.014, Math.max(d, 0.02)), M.galv, B.at(cx + px, h + 0.03, cz + pz));
+  }
+  // The transformer: a tank on a plinth, fins on its sides, three bushings on top.
+  const tx = cx - 0.12;
+  const tz = cz - 0.1;
+  B.add(rbox(0.8, 0.08, 0.62, 0.01), M.concrete, B.at(tx, 0.1, tz));
+  B.add(rbox(0.66, 0.5, 0.48, 0.03), M.transformer, B.at(tx, 0.39, tz));
+  for (let i = 0; i < 7; i++) {
+    const f = -0.24 + i * 0.08;
+    for (const s of [-1, 1]) B.add(new THREE.BoxGeometry(0.012, 0.36, 0.1), M.transformer, B.at(tx + f, 0.36, tz + s * 0.29));
+  }
+  B.add(rbox(0.7, 0.04, 0.52, 0.015), M.greyPlate, B.at(tx, 0.66, tz));
+  for (let i = -1; i <= 1; i++) {
+    const bx = tx + i * 0.2;
+    for (let k = 0; k < 4; k++) B.cyl(0.045 - k * 0.004, 0.05 - k * 0.004, 0.035, M.insulator, bx, 0.71 + k * 0.045, tz, 12);
+    B.cyl(0.012, 0.012, 0.06, M.steel, bx, 0.9, tz, 6);
+  }
+  // Control cabinet at the front, with the warning sign toward the camera.
+  B.add(rbox(0.34, 0.42, 0.2, 0.015), M.greyPlate, B.at(cx + 0.5, 0.27, cz + 0.55));
+  B.add(new THREE.BoxGeometry(0.3, 0.01, 0.16), M.darkSteel, B.at(cx + 0.5, 0.485, cz + 0.55));
+  const sign = new THREE.PlaneGeometry(0.2, 0.2);
+  B.add(sign, M.warning, B.at(cx + 0.5, 0.3, cz + 0.652));
+  // A wooden pole with a crossarm at the back.
+  B.cyl(0.03, 0.036, 1.2, M.woodDark, cx + 0.62, 0.63, cz - 0.62, 8);
+  B.add(new THREE.BoxGeometry(0.5, 0.04, 0.05), M.woodDark, B.at(cx + 0.62, 1.12, cz - 0.62));
+  for (const s of [-1, 0, 1]) B.cyl(0.02, 0.024, 0.06, M.insulator, cx + 0.62 + s * 0.2, 1.17, cz - 0.62, 8);
+  // Beacon mast at the front-left corner.
+  B.cyl(0.014, 0.018, 0.62, M.darkSteel, cx - 0.72, 0.34, cz + 0.62, 6);
+  B.flush(g);
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.05, 14, 10), M.beacon);
+  beacon.position.set(cx - 0.72, 0.68, cz + 0.62);
+  g.add(beacon);
+  const sparks = [V3(tx - 0.2, 0.92, tz), V3(tx, 0.92, tz), V3(tx + 0.2, 0.92, tz), V3(cx + 0.5, 0.42, cz + 0.66)];
+  return { group: g, beacon, sparks };
+}
+
+/** A flat cable on the ground along a path of points (tiles), in segments. */
+export function buildCable(points: readonly { x: number; z: number }[], mat: THREE.Material): THREE.Mesh {
+  const B = new Batch();
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 1e-3) continue;
+    B.add(new THREE.BoxGeometry(len + 0.05, 0.022, 0.05), mat, B.at((a.x + b.x) / 2, 0.016, (a.z + b.z) / 2, -Math.atan2(b.z - a.z, b.x - a.x)));
+  }
+  const g = new THREE.Group();
+  const meshes = B.flush(g, { cast: false });
+  return meshes[0] ?? new THREE.Mesh();
+}
+
+// ------------------------------------------------------------------ level 5: the Patrol 4x4
+
+export interface JeepBuild {
+  group: THREE.Group;
+  /** Spin as it drives, about their own x axis. */
+  wheels: THREE.Object3D[];
+  /** Where the driver and the troops sit, in the 4x4's own space (it faces +z). */
+  driver: THREE.Vector3;
+  seats: THREE.Vector3[];
+  /** Wheel radius, for how fast the wheels turn. */
+  radius: number;
+}
+
+/**
+ * An open-top patrol 4x4 built from shapes, facing +z: a navy body with white doors and the team's shield on them, a
+ * roll bar with a light bar, a spare wheel on the back, and bench seats. No maker's grille or badges.
+ */
+export function buildJeep(M: Mats): JeepBuild {
+  const B = new Batch();
+  const g = new THREE.Group();
+  const L = 1.1;
+  const W = 0.58;
+  const wheelR = 0.13;
+  // Chassis and the tub: low sides, a hood, and a tailgate.
+  B.add(rbox(W - 0.06, 0.08, L - 0.12, 0.02), M.darkSteel, B.at(0, 0.14, 0));
+  B.add(rbox(W, 0.16, L, 0.04), M.navy, B.at(0, 0.24, 0));
+  B.add(rbox(W - 0.02, 0.08, 0.34, 0.035), M.navy, B.at(0, 0.34, 0.36));
+  // White door panels with the team's shield.
+  for (const s of [-1, 1]) {
+    B.add(rbox(0.012, 0.13, 0.4, 0.005), M.whitePlate, B.at(s * (W / 2 + 0.002), 0.25, -0.02));
+    const shield = new THREE.PlaneGeometry(0.11, 0.11);
+    B.add(shield, M.emblem, B.at(s * (W / 2 + 0.01), 0.255, -0.02, s * Math.PI / 2));
+  }
+  // Floor and seats: two in front, a bench behind.
+  B.add(new THREE.BoxGeometry(W - 0.08, 0.02, L - 0.42), M.rubber, B.at(0, 0.3, -0.12));
+  for (const s of [-1, 1]) {
+    B.add(rbox(0.18, 0.06, 0.16, 0.02), M.seat, B.at(s * 0.13, 0.35, 0.02));
+    B.add(rbox(0.18, 0.18, 0.05, 0.02), M.seat, B.at(s * 0.13, 0.44, -0.07, 0, -0.15));
+  }
+  B.add(rbox(0.46, 0.06, 0.16, 0.02), M.seat, B.at(0, 0.35, -0.3));
+  B.add(rbox(0.46, 0.16, 0.05, 0.02), M.seat, B.at(0, 0.44, -0.4, 0, -0.12));
+  // Dash, steering wheel, and a folded-down windscreen frame.
+  B.add(rbox(W - 0.06, 0.07, 0.06, 0.015), M.darkSteel, B.at(0, 0.38, 0.19));
+  B.add(new THREE.TorusGeometry(0.05, 0.008, 6, 16), M.rubber, B.at(0.13, 0.43, 0.14, 0, -1.0));
+  B.add(new THREE.BoxGeometry(W - 0.04, 0.02, 0.02), M.darkSteel, B.at(0, 0.42, 0.22));
+  B.add(new THREE.BoxGeometry(W - 0.1, 0.14, 0.006), M.glass, B.at(0, 0.5, 0.215, 0, 0.25));
+  B.add(new THREE.BoxGeometry(W - 0.04, 0.016, 0.016), M.darkSteel, B.at(0, 0.575, 0.2));
+  for (const s of [-1, 1]) B.add(new THREE.BoxGeometry(0.016, 0.16, 0.016), M.darkSteel, B.at(s * (W / 2 - 0.02), 0.5, 0.21, 0, 0.25));
+  // Roll bar over the front seats, with a light bar on top.
+  for (const s of [-1, 1]) B.rod(V3(s * (W / 2 - 0.04), 0.32, -0.16), V3(s * (W / 2 - 0.06), 0.7, -0.14), 0.016, M.whitePlate, 8);
+  B.rod(V3(-(W / 2 - 0.06), 0.7, -0.14), V3(W / 2 - 0.06, 0.7, -0.14), 0.016, M.whitePlate, 8);
+  B.add(rbox(0.36, 0.035, 0.06, 0.01), M.darkSteel, B.at(0, 0.73, -0.14));
+  B.add(new THREE.BoxGeometry(0.1, 0.03, 0.062), M.beacon, B.at(-0.08, 0.748, -0.14));
+  B.add(new THREE.BoxGeometry(0.1, 0.03, 0.062), M.beaconBlue, B.at(0.08, 0.748, -0.14));
+  // Bumpers, headlights, and wheel arches.
+  B.add(rbox(W + 0.04, 0.06, 0.06, 0.02), M.darkSteel, B.at(0, 0.17, L / 2 + 0.02));
+  B.add(rbox(W + 0.02, 0.06, 0.05, 0.02), M.darkSteel, B.at(0, 0.17, -L / 2 - 0.02));
+  for (const s of [-1, 1]) {
+    const lens = new THREE.CylinderGeometry(0.035, 0.035, 0.02, 14).rotateX(Math.PI / 2);
+    B.add(lens, M.lampGlass, B.at(s * 0.19, 0.3, L / 2 + 0.005));
+    for (const f of [-1, 1]) B.add(new THREE.CylinderGeometry(wheelR + 0.03, wheelR + 0.03, 0.08, 16, 1, true, 0, Math.PI).rotateZ(Math.PI / 2), M.darkSteel, B.at(s * (W / 2 - 0.03), 0.17, f * 0.34, 0, 0, 0));
+  }
+  // The spare wheel on the tailgate.
+  const spare = new THREE.CylinderGeometry(wheelR, wheelR, 0.07, 18).rotateX(Math.PI / 2);
+  B.add(spare, M.rubber, B.at(0, 0.3, -L / 2 - 0.06));
+  B.add(new THREE.CylinderGeometry(0.06, 0.06, 0.075, 12).rotateX(Math.PI / 2), M.whitePlate, B.at(0, 0.3, -L / 2 - 0.06));
+  B.flush(g);
+  // Wheels that turn: tyre, hub, and a white rim stripe.
+  const wheels: THREE.Object3D[] = [];
+  for (const s of [-1, 1]) {
+    for (const f of [-1, 1]) {
+      const w = new THREE.Group();
+      const wb = new Batch();
+      wb.add(new THREE.CylinderGeometry(wheelR, wheelR, 0.08, 18).rotateZ(Math.PI / 2), M.rubber);
+      wb.add(new THREE.CylinderGeometry(0.06, 0.06, 0.085, 12).rotateZ(Math.PI / 2), M.steel);
+      wb.add(new THREE.BoxGeometry(0.086, 0.025, 0.1), M.darkSteel);
+      wb.flush(w);
+      w.position.set(s * (W / 2 - 0.03), wheelR, f * 0.34);
+      g.add(w);
+      wheels.push(w);
+    }
+  }
+  return { group: g, wheels, driver: V3(0.13, 0.33, 0.02), seats: [V3(-0.13, 0.33, 0.02), V3(0, 0.33, -0.3)], radius: wheelR };
 }

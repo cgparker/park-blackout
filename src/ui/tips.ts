@@ -1,7 +1,8 @@
-import { DINOS, MAP, TIPS, UNITS } from '../config';
+import { DINO_AI, DINOS, FIGHT, MAP, TIPS, UNITS } from '../config';
 import { footprintCenter, type Exhibit } from '../core/exhibit';
 import type { Point } from '../core/grid';
 import { guarded, nearestExhibit, troopsNear } from '../core/guard';
+import { substationCenter } from '../core/power';
 import type { GameEvent, World } from '../core/world';
 
 /**
@@ -10,6 +11,8 @@ import type { GameEvent, World } from '../core/world';
  * and the T. rex picks off troops that are spread thin.
  * One more explains the evacuation rule: guests stay until the first animal gets out.
  * Levels 1 and 2 have their own: how to train and send troops, why Triceratops run, and how raptors fight.
+ * Level 4: staying out of the raptors' sight, sending the Engineer, what a fixed substation does, and being seen.
+ * Level 5: the fight, the 4x4, a pen broken open, the first animal killed, and pulling the T. rex's target away in the 4x4.
  * No Phaser and no DOM here, so the rules for when a tip fires can be tested.
  */
 export type TipId =
@@ -23,7 +26,17 @@ export type TipId =
   | 'dart'
   | 'spooked'
   | 'nest'
-  | 'raptorBites';
+  | 'raptorBites'
+  | 'stealth'
+  | 'engineer'
+  | 'powered'
+  | 'spotted'
+  | 'squadLost'
+  | 'fight'
+  | 'jeep'
+  | 'penBroken'
+  | 'killed'
+  | 'jeepKite';
 
 export interface Tip {
   id: TipId;
@@ -37,7 +50,9 @@ const T = MAP.tileSize;
 
 /** Tips set off by this batch of events. The caller decides whether tips are on and which were seen. */
 export function tipsFor(w: World, events: readonly GameEvent[]): Tip[] {
-  if (w.hunt) return huntTips(w, events);
+  if (w.level === 4) return gridTips(w, events);
+  if (w.level === 5) return fightTips(w, events);
+  if (w.mission) return huntTips(w, events);
   const out: Tip[] = [];
   for (const e of events) {
     switch (e.type) {
@@ -120,6 +135,130 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
           id: 'raptorBites',
           title: 'Raptors pile on',
           body: `Raptors bite the nearest troop. A group darts them down before they can finish anyone. Heavy Teams have ${UNITS.heavy.hp} HP, so they last ${Math.round(UNITS.heavy.hp / DINOS.raptor.troopDamage)} bites.`,
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+    }
+  }
+  return out;
+}
+
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+
+/** Level 4: the pen whose animals go for the fence first, and the substation that powers it. */
+function firstToBreak(w: World) {
+  let pen: Exhibit | null = null;
+  for (const ex of w.exhibits) {
+    if (ex.powered || ex.breakoutAt == null) continue;
+    if (!pen || ex.breakoutAt < (pen.breakoutAt ?? Infinity)) pen = ex;
+  }
+  return { pen, substation: pen ? w.substationFor(pen.id) : undefined };
+}
+
+/** Level 4. */
+function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
+  const out: Tip[] = [];
+  for (const e of events) {
+    switch (e.type) {
+      case 'started': {
+        const raptor = w.dinos.find((d) => d.kind === 'raptor' && d.state === 'loose');
+        out.push({
+          id: 'stealth',
+          title: 'Stay out of sight',
+          body: 'Two raptors walk the east side of the park. The cone in front of each one shows what it sees, and rock, pens, and substations block its view. A raptor that sees a troop comes for it and calls the other.',
+          focus: raptor ? { x: raptor.x, y: raptor.y } : null,
+        });
+        const { pen, substation } = firstToBreak(w);
+        const when = pen?.breakoutAt != null ? ` Its raptors go for their fence at ${clock(pen.breakoutAt)}.` : '';
+        out.push({
+          id: 'engineer',
+          title: `Fix the ${substation?.name.toLowerCase() ?? 'nearest'} substation`,
+          body: `Tap the Engineer, then the substation beside HQ. It works while it stands beside it, and work done stays done if it has to leave.${when}`,
+          focus: substation ? substationCenter(substation, T) : HQ_CENTER,
+        });
+        break;
+      }
+      case 'substationFixed': {
+        const s = w.substationById(e.id);
+        const { pen, substation } = firstToBreak(w);
+        const next = !e.last && pen?.breakoutAt != null && substation ? ` Next, the ${substation.name.toLowerCase()} substation: its ${pen.kind === 'trex' ? 'T. rex goes' : 'animals go'} for the fence at ${clock(pen.breakoutAt)}.` : '';
+        out.push({
+          id: 'powered',
+          title: 'The power is back here',
+          body: `The pens this substation powers are sealed, and the animals inside stay inside.${next}`,
+          focus: s ? substationCenter(s, T) : null,
+        });
+        break;
+      }
+      case 'spotted': {
+        const engineer = e.kind === 'engineer';
+        out.push({
+          id: 'spotted',
+          title: `A raptor saw ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`,
+          body: engineer
+            ? 'It’s coming, and it called the other. The Engineer can’t outrun them. A raptor goes for whoever darts it, so the Tranq Squad can draw them off.'
+            : 'It’s coming, and it called the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.',
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+      }
+      case 'unitLost':
+        if (e.kind !== 'tranq') break;
+        out.push({
+          id: 'squadLost',
+          title: 'The Tranq Squad is gone',
+          body: 'The raptors go back to their routes now. Whatever the Engineer fixed while they were busy stays fixed.',
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+    }
+  }
+  return out;
+}
+
+/** Level 5. */
+function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
+  const out: Tip[] = [];
+  for (const e of events) {
+    switch (e.type) {
+      case 'started': {
+        const rex = w.dinos.find((d) => d.kind === 'trex' && d.state === 'loose');
+        const jeep = w.units.find((u) => u.kind === 'jeep' && !u.dead);
+        out.push({
+          id: 'fight',
+          title: 'They are killing each other',
+          body: 'The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. Whatever you dart turns on you: a raptor for a few seconds, the T. rex until it loses you.',
+          focus: rex ? { x: rex.x, y: rex.y } : null,
+        });
+        out.push({
+          id: 'jeep',
+          title: 'The Patrol 4x4',
+          body: 'Select troops and tap the 4x4 to load two. Then tap the 4x4 and tap the map to drive, and they climb out where it stops. Tap an animal instead to drop them beside it.',
+          focus: jeep ? { x: jeep.x, y: jeep.y } : HQ_CENTER,
+        });
+        break;
+      }
+      case 'breach':
+        out.push({
+          id: 'penBroken',
+          title: 'The fight broke into a pen',
+          body: 'The T. rex pushes toward pens with no power, and the animals inside get out. Take the raptors off it before it reaches the next one.',
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+      case 'charge':
+        out.push({
+          id: 'jeepKite',
+          title: 'The T. rex picked a target',
+          body: `The orange ring marks the troop it is after. Load that troop into the 4x4 and drive away: the T. rex goes after the 4x4 and gives up past ${DINO_AI.trexLockBreakTiles} tiles, while the others keep darting it.`,
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+      case 'killed':
+        out.push({
+          id: 'killed',
+          title: e.kind === 'trex' ? 'The T. rex was killed' : 'A raptor was killed',
+          body: `The T. rex bites the most hurt raptor it can reach, and raptors wear the T. rex down. ${FIGHT.killLimit} animals killed loses the level.`,
           focus: { x: e.x, y: e.y },
         });
         break;

@@ -186,6 +186,7 @@ export function buildSplat(src: TerrainSource, into?: Splat, win?: TileWindow): 
       else if (t === Tile.Water) water[i] = 1;
       else if (t === Tile.Rock) rock[i] = 1;
       else if (t === Tile.HQ) block[i] = 1;
+      else if (t === Tile.Substation) concrete[i] = 1;
       else if (t === Tile.Tower) {
         const fx = x - tx - 0.5;
         const fz = z - tz - 0.5;

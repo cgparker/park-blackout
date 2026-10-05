@@ -236,6 +236,28 @@ export const TEX = {
     g.fillRect(0, h * 0.82, w, h * 0.06);
     drawEmblem(g, w * 0.5 - h * 0.31, h * 0.1, h * 0.62, h * 0.62);
   }),
+  /** Level 4's substation sign: a yellow triangle with a black lightning bolt. */
+  warning: canvasTexture(128, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    const tri = (inset: number) => {
+      g.beginPath();
+      g.moveTo(w * 0.5, h * (0.06 + inset));
+      g.lineTo(w * (0.96 - inset), h * (0.9 - inset * 0.55));
+      g.lineTo(w * (0.04 + inset), h * (0.9 - inset * 0.55));
+      g.closePath();
+    };
+    tri(0);
+    g.fillStyle = '#141414';
+    g.fill();
+    tri(0.1);
+    g.fillStyle = '#f5c518';
+    g.fill();
+    g.beginPath();
+    for (const [x, y] of [[0.56, 0.3], [0.38, 0.6], [0.5, 0.6], [0.44, 0.8], [0.64, 0.5], [0.52, 0.5], [0.61, 0.3]]) g.lineTo(w * x, h * y);
+    g.closePath();
+    g.fillStyle = '#141414';
+    g.fill();
+  }),
   securitySign: canvasTexture(512, 96, (g, w, h) => {
     g.fillStyle = '#1c3f8f';
     g.fillRect(0, 0, w, h);
@@ -324,6 +346,17 @@ export function makeMaterials() {
     straw: std({ color: col('#b59a5c'), roughness: 1 }),
     egg: std({ color: col('#efe4c8'), roughness: 0.55 }),
     debris: std({ color: col('#7a746a'), roughness: 0.95 }),
+    // Level 4: the Engineer's kit, and the substations.
+    toolbox: std({ color: col('#b5332b'), metalness: 0.45, roughness: 0.4 }),
+    reflective: std({ color: col('#e4e8ea'), metalness: 0.3, roughness: 0.25 }),
+    transformer: std({ color: col('#5a6858'), metalness: 0.45, roughness: 0.55 }),
+    warning: std({ map: TEX.warning, transparent: true, alphaTest: 0.1, roughness: 0.6 }),
+    beaconFixed: new THREE.MeshBasicMaterial({ color: hdr('#3fe6ff', 1.2) }),
+    cableOff: std({ color: col('#1d2024'), roughness: 0.7 }),
+    cableOn: std({ color: col('#9eefff'), emissive: col('#3fdcff'), emissiveIntensity: 0.6, roughness: 0.4 }),
+    // Level 5: the Patrol 4x4.
+    navy: std({ color: col('#1d2c52'), metalness: 0.35, roughness: 0.38, envMapIntensity: 1.1 }),
+    seat: std({ color: col('#262626'), roughness: 0.85 }),
   };
   return M;
 }
@@ -337,6 +370,8 @@ export function applyLighting(M: Mats, night: boolean, power: boolean): void {
   M.lampGlass.emissiveIntensity = night && power ? 3 : 0;
   M.beacon.color = hdr('#ff2a1a', night ? 6 : 1.2);
   M.beaconBlue.color = hdr('#3b7bff', night ? 4 : 1.2);
+  M.beaconFixed.color = hdr('#3fe6ff', night ? 5 : 1.2);
+  M.cableOn.emissiveIntensity = night ? 2.4 : 0.6;
   M.searchGlass.color = hdr('#e8f0ff', night ? 8 : 1.0);
 }
 

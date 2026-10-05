@@ -8,7 +8,7 @@ import type { DinoState } from '../core/dinos';
 import type { VisitorMode } from '../core/visitors';
 import { GUEST_SLOT, SCALE, type Assets, type DinoTemplate, type PersonTemplate } from './assets';
 import { TEX, type Mats } from './materials';
-import { buildTower, TOWER_DECK, type TowerBuild } from './structures';
+import { buildJeep, buildTower, TOWER_DECK, type JeepBuild, type TowerBuild } from './structures';
 import { clamp, col, facingToRotY, hdr, mulberry32, turnToward } from './util';
 
 export interface DinoView {
@@ -28,6 +28,10 @@ export interface DinoView {
   cdx?: number;
   cdy?: number;
   removed?: boolean;
+  /** Level 5: health left from fights, when it was last hurt, and the T. rex's bite timer on raptors. */
+  health?: number;
+  hurtAt?: number;
+  fightCooldown?: number;
   /** Stills only: play this clip instead of inferring one from movement. */
   pose?: string;
   poseAt?: number;
@@ -44,7 +48,9 @@ export interface UnitView {
   cooldown: number;
   hurtAt?: number;
   dead?: boolean;
-  order?: 'idle' | 'move' | 'attack';
+  order?: 'idle' | 'move' | 'attack' | 'repair' | 'board';
+  /** Level 5: the 4x4 this troop is riding in, 0 on foot. */
+  aboard?: number;
   pose?: string;
   poseAt?: number;
 }
@@ -109,6 +115,9 @@ const ringGeo = new THREE.RingGeometry(0.24, 0.29, 48).rotateX(-Math.PI / 2);
 const selGeo = new THREE.RingGeometry(0.3, 0.37, 48).rotateX(-Math.PI / 2);
 const heavyRingGeo = new THREE.RingGeometry(0.3, 0.355, 48).rotateX(-Math.PI / 2);
 const heavySelGeo = new THREE.RingGeometry(0.36, 0.44, 48).rotateX(-Math.PI / 2);
+// The 4x4's rings: wide enough to go round it, with the same line weight as a troop's.
+const jeepRingGeo = new THREE.RingGeometry(0.66, 0.715, 64).rotateX(-Math.PI / 2);
+const jeepSelGeo = new THREE.RingGeometry(0.64, 0.72, 64).rotateX(-Math.PI / 2);
 const teamRingMat = new THREE.MeshBasicMaterial({ color: col('#4d8dff'), transparent: true, opacity: 0.7, depthWrite: false });
 // Selected: a plain yellow ring, kept under the bloom threshold so it reads without glaring.
 const selRingMat = new THREE.MeshBasicMaterial({ color: col('#f2c94a'), transparent: true, opacity: 0.85, depthWrite: false });
@@ -145,17 +154,29 @@ interface DinoActor {
   lastZ: number;
   speed: number;
   lastCooldown: number;
+  lastFight: number;
   loose: boolean;
   faded: boolean;
   eyes: THREE.Mesh[];
   bar: Bar;
+  /** Level 5: health, under the sedation bar. */
+  health: Bar;
   blob: THREE.Mesh;
+  /** Level 5: when it was last hurt, and seconds left in its flinch. */
+  lastHurt: number;
+  flinch: number;
 }
 
 interface TroopActor {
   obj: THREE.Object3D;
   anim: Anim;
   heavy: boolean;
+  /** Level 4's Engineer: other clips, and a toolbox instead of a gun. */
+  engineer: boolean;
+  /** Height of its hips above its feet, in tiles, to sit it in the 4x4. */
+  hipY: number;
+  /** Its leg bones, bent to sit. */
+  legs: { upper: THREE.Bone[]; lower: THREE.Bone[] };
   rotY: number;
   lastX: number;
   lastZ: number;
@@ -174,6 +195,19 @@ interface TowerActor {
   rotY: number;
   lastCooldown: number;
   bar: Bar;
+}
+
+/** Level 5's Patrol 4x4, and the driver who comes with it. */
+interface JeepActor {
+  build: JeepBuild;
+  rotY: number;
+  lastX: number;
+  lastZ: number;
+  speed: number;
+  ring: THREE.Mesh;
+  bar: Bar;
+  blob: THREE.Mesh;
+  driver: TroopActor;
 }
 
 interface GuestActor {
@@ -209,15 +243,19 @@ export interface ActorFrame {
   now: number;
   /** Ground near the view, in tiles. Guests and animals outside it are neither drawn nor animated. */
   view?: { x0: number; z0: number; x1: number; z1: number };
+  /** Level 4: Engineers at work, and the point (world pixels) each one faces. */
+  working?: ReadonlyMap<number, { x: number; y: number }>;
 }
 
 const tmpV = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class Actors {
   readonly root = new THREE.Group();
   private readonly dinos = new Map<number, DinoActor>();
   private readonly troops = new Map<number, TroopActor>();
   private readonly towers = new Map<number, TowerActor>();
+  private readonly jeeps = new Map<number, JeepActor>();
   private readonly guests = new Map<number, GuestActor>();
   private readonly corpses: TroopActor[] = [];
   private readonly fallen: GuestActor[] = [];
@@ -278,9 +316,11 @@ export class Actors {
 
   /** Drops every actor, for a new game. */
   clear(): void {
-    for (const a of this.dinos.values()) this.root.remove(a.obj, a.bar.group, a.blob);
+    for (const a of this.dinos.values()) this.root.remove(a.obj, a.bar.group, a.health.group, a.blob);
     for (const a of this.troops.values()) this.root.remove(a.obj, a.ring, a.bar.group, a.blob);
     for (const t of this.towers.values()) this.root.remove(t.build.group, t.bar.group);
+    for (const j of this.jeeps.values()) this.root.remove(j.build.group, j.ring, j.bar.group, j.blob, j.driver.obj);
+    this.jeeps.clear();
     for (const g of [...this.guests.values(), ...this.fallen, ...this.guestPool]) this.root.remove(g.obj);
     for (const c of this.corpses) this.root.remove(c.obj);
     this.fallen.length = 0;
@@ -336,22 +376,44 @@ export class Actors {
     play(anim, 'Idle', { fade: 0, at: this.rnd() * 2 });
     const bar = new Bar('#b07cff');
     bar.group.visible = false;
+    const health = new Bar('#ff4d4d');
+    health.group.visible = false;
     const blob = new THREE.Mesh(blobGeo, blobMat);
     const r = DINOS[d.kind].radius / 40;
     blob.scale.set(r * 3.2, 1, r * 3.2);
     blob.renderOrder = 1;
-    this.root.add(obj, bar.group, blob);
-    return { obj, anim, tpl, rotY: facingToRotY(d.facing), lastX: d.x, lastZ: d.y, speed: 0, lastCooldown: 0, loose: false, faded: false, eyes, bar, blob };
+    this.root.add(obj, bar.group, health.group, blob);
+    return {
+      obj,
+      anim,
+      tpl,
+      rotY: facingToRotY(d.facing),
+      lastX: d.x,
+      lastZ: d.y,
+      speed: 0,
+      lastCooldown: 0,
+      lastFight: 0,
+      loose: false,
+      faded: false,
+      eyes,
+      bar,
+      health,
+      blob,
+      lastHurt: d.hurtAt ?? -Infinity,
+      flinch: 0,
+    };
   }
 
   private makeTroop(u: UnitView): TroopActor {
     const heavy = u.kind === 'heavy';
-    const n = this.assets.light.length;
-    const tpl: PersonTemplate = heavy ? this.assets.heavy : this.assets.light[((u.id % n) + n) % n];
+    const engineer = u.kind === 'engineer' && this.assets.engineer.length > 0;
+    const pick = (list: PersonTemplate[]) => list[((u.id % list.length) + list.length) % list.length];
+    const tpl: PersonTemplate = heavy ? this.assets.heavy : engineer ? pick(this.assets.engineer) : pick(this.assets.light);
     const obj = SkeletonUtils.clone(tpl.gltf.scene);
-    obj.scale.setScalar(heavy ? SCALE.heavy : SCALE.light);
+    const scale = heavy ? SCALE.heavy : engineer ? SCALE.engineer : SCALE.light;
+    obj.scale.setScalar(scale);
     const anim = makeAnim(obj, tpl.gltf.animations);
-    play(anim, 'Idle_Gun', { fade: 0, at: this.rnd() });
+    play(anim, engineer ? 'Idle' : 'Idle_Gun', { fade: 0, at: this.rnd() });
     const ring = new THREE.Mesh(heavy ? heavyRingGeo : ringGeo, teamRingMat);
     ring.renderOrder = 2;
     const bar = new Bar('#56e07a');
@@ -360,7 +422,61 @@ export class Actors {
     blob.scale.set(heavy ? 0.62 : 0.5, 1, heavy ? 0.62 : 0.5);
     blob.renderOrder = 1;
     this.root.add(obj, ring, bar.group, blob);
-    return { obj, anim, heavy, rotY: facingToRotY(u.facing), lastX: u.x, lastZ: u.y, speed: 0, lastCooldown: u.cooldown, lastHurt: u.hurtAt ?? -1, ring, bar, blob, dying: -1 };
+    const bones: Record<string, THREE.Bone> = {};
+    obj.traverse((b) => {
+      if ((b as THREE.Bone).isBone) bones[b.name] = b as THREE.Bone;
+    });
+    obj.updateMatrixWorld(true);
+    const hips = bones.Hips ? new THREE.Vector3().setFromMatrixPosition(bones.Hips.matrixWorld).y : 0.5 / scale;
+    return {
+      obj,
+      anim,
+      heavy,
+      engineer,
+      hipY: hips,
+      legs: { upper: [bones.UpperLegL, bones.UpperLegR].filter(Boolean), lower: [bones.LowerLegL, bones.LowerLegR].filter(Boolean) },
+      rotY: facingToRotY(u.facing),
+      lastX: u.x,
+      lastZ: u.y,
+      speed: 0,
+      lastCooldown: u.cooldown,
+      lastHurt: u.hurtAt ?? -1,
+      ring,
+      bar,
+      blob,
+      dying: -1,
+    };
+  }
+
+  /** The 4x4, with a driver from the team in its seat. */
+  private makeJeep(u: UnitView): JeepActor {
+    const build = buildJeep(this.M);
+    const ring = new THREE.Mesh(jeepRingGeo, teamRingMat);
+    ring.renderOrder = 2;
+    const bar = new Bar('#56e07a');
+    bar.group.visible = false;
+    const blob = new THREE.Mesh(blobGeo, blobMat);
+    blob.scale.set(0.9, 1, 1.4);
+    blob.renderOrder = 1;
+    const driver = this.makeTroop({ ...u, id: u.id + 1, kind: 'tranq' });
+    // The driver belongs to the 4x4: no ring, bar, or shadow of its own.
+    this.root.remove(driver.ring, driver.bar.group, driver.blob);
+    this.root.add(build.group, ring, bar.group, blob);
+    return { build, rotY: facingToRotY(u.facing), lastX: u.x, lastZ: u.y, speed: 0, ring, bar, blob, driver };
+  }
+
+  /** Bends a troop's legs to sit, after its clip has posed it. */
+  private sit(a: TroopActor): void {
+    for (const b of a.legs.upper) b.rotation.x -= 1.45;
+    for (const b of a.legs.lower) b.rotation.x += 1.45;
+  }
+
+  /** Puts a troop in a seat of its 4x4 (seat in the 4x4's own space), sitting and facing ahead. */
+  private seat(a: TroopActor, jeep: JeepActor, seat: THREE.Vector3): void {
+    const p = seat.clone().applyAxisAngle(UP, jeep.rotY).add(jeep.build.group.position);
+    a.obj.position.set(p.x, p.y + 0.03 - a.hipY, p.z);
+    a.rotY = jeep.rotY;
+    a.obj.rotation.y = jeep.rotY;
   }
 
   /** A guest: a free one of the same model from the pool, or a new copy, in this guest's own colours. */
@@ -500,11 +616,16 @@ export class Actors {
         if (a.anim.current !== 'Death') play(a.anim, 'Death', { once: true, fade: 0.25 });
         const k = clamp(d.fade / DINO_AI.secureFadeSeconds, 0, 1);
         this.setFade(a, k);
+      } else if (d.state === 'dead') {
+        // Killed in level 5's fight: it falls and stays down, then fades in its last second.
+        if (a.anim.current !== 'Death') play(a.anim, 'Death', { once: true, fade: 0.15 });
+        this.setFade(a, clamp(d.fade, 0, 1));
       } else if (d.pose) {
         if (a.anim.current !== d.pose) play(a.anim, d.pose, { fade: 0, at: d.poseAt ?? 0 });
       } else {
         if (a.faded) this.setFade(a, 1);
-        const attacked = d.cooldown > a.lastCooldown + 0.05;
+        // Bites on troops and on other animals, and the T. rex's own bite on raptors.
+        const attacked = d.cooldown > a.lastCooldown + 0.05 || (d.fightCooldown ?? 0) > a.lastFight + 0.05;
         if ((d.windup ?? 0) > 0) play(a.anim, 'Attack', { speed: 0.8 });
         else if (attacked && f.now >= a.anim.oneShot) {
           play(a.anim, 'Attack', { once: true, fade: 0.08, speed: 1.3 });
@@ -517,24 +638,83 @@ export class Actors {
         }
       }
       a.lastCooldown = d.cooldown;
-      // Sedation bar while darts are working.
-      const showBar = d.state !== 'secured' && d.sedation > 0;
+      a.lastFight = d.fightCooldown ?? 0;
+      // Sedation bar while darts are working, and level 5's health bar under it once it's hurt.
+      const top = d.kind === 'trex' ? 1.35 : d.kind === 'raptor' ? 0.62 : 0.95;
+      const showBar = d.state !== 'secured' && d.state !== 'dead' && d.sedation < cfg.sedation;
       a.bar.group.visible = showBar;
       if (showBar) {
         a.bar.set(d.sedation / cfg.sedation);
-        a.bar.group.position.set(x, (d.kind === 'trex' ? 1.35 : d.kind === 'raptor' ? 0.62 : 0.95), z);
+        a.bar.group.position.set(x, top, z);
       }
+      const hp = d.health ?? cfg.health;
+      const showHealth = d.state === 'loose' && hp < cfg.health;
+      a.health.group.visible = showHealth;
+      if (showHealth) {
+        a.health.set(hp / cfg.health);
+        a.health.group.position.set(x, top - 0.07, z);
+      }
+      // Hurt in a fight: a short shudder.
+      if ((d.hurtAt ?? -Infinity) > a.lastHurt) {
+        a.lastHurt = d.hurtAt ?? -Infinity;
+        if (d.state === 'loose') a.flinch = 0.3;
+      }
+      if (a.flinch > 0) {
+        a.flinch = Math.max(0, a.flinch - dt);
+        const k = a.flinch / 0.3;
+        a.obj.rotation.z = Math.sin(a.flinch * 60) * 0.12 * k;
+        a.obj.position.y = 0.03 * k;
+      } else a.obj.rotation.z = 0;
       if (shown) a.anim.mixer.update(dt);
     }
     for (const [id, a] of this.dinos) {
       if (seenD.has(id)) continue;
-      this.root.remove(a.obj, a.bar.group, a.blob);
+      this.root.remove(a.obj, a.bar.group, a.health.group, a.blob);
       this.dinos.delete(id);
     }
 
-    // Troops and towers.
+    // The 4x4 first, so its riders can take their seats.
     const seenU = new Set<number>();
     for (const u of f.units) {
+      if (u.kind !== 'jeep' || u.dead) continue;
+      seenU.add(u.id);
+      let j = this.jeeps.get(u.id);
+      if (!j) this.jeeps.set(u.id, (j = this.makeJeep(u)));
+      const x = u.x / T;
+      const z = u.y / T;
+      const moved = Math.hypot(u.x - j.lastX, u.y - j.lastZ) / T;
+      j.speed += (moved / dt - j.speed) * clamp(dt * 10, 0, 1);
+      j.lastX = u.x;
+      j.lastZ = u.y;
+      j.rotY = turnToward(j.rotY, facingToRotY(u.facing), 6 * dt);
+      j.build.group.position.set(x, 0, z);
+      j.build.group.rotation.y = j.rotY;
+      for (const w of j.build.wheels) w.rotation.x += (moved / j.build.radius) * 1;
+      const sel = f.selected.has(u.id);
+      j.ring.material = sel ? selRingMat : teamRingMat;
+      j.ring.geometry = sel ? jeepSelGeo : jeepRingGeo;
+      j.ring.position.set(x, 0.02, z);
+      j.blob.position.set(x, 0.015, z);
+      j.blob.rotation.y = j.rotY;
+      const hurt = u.hp < u.maxHp;
+      j.bar.group.visible = hurt;
+      if (hurt) {
+        j.bar.set(u.hp / u.maxHp);
+        j.bar.group.position.set(x, 0.95, z);
+      }
+      // The driver sits at the wheel.
+      const dr = j.driver;
+      this.seat(dr, j, j.build.driver);
+      play(dr.anim, 'Idle');
+      dr.anim.mixer.update(dt);
+      this.sit(dr);
+    }
+
+    // Troops and towers.
+    const riders = new Map<number, number[]>();
+    for (const u of f.units) if (u.aboard && !u.dead) riders.set(u.aboard, [...(riders.get(u.aboard) ?? []), u.id].sort((p, q) => p - q));
+    for (const u of f.units) {
+      if (u.kind === 'jeep') continue;
       if (u.kind === 'tower') {
         seenU.add(u.id);
         let t = this.towers.get(u.id);
@@ -563,12 +743,30 @@ export class Actors {
       if (!a) this.troops.set(u.id, (a = this.makeTroop(u)));
       const x = u.x / T;
       const z = u.y / T;
+      // In the 4x4: sitting in a seat, gun ready, no ring of its own.
+      const jeep = u.aboard ? this.jeeps.get(u.aboard) : undefined;
+      if (jeep) {
+        const seats = riders.get(u.aboard!) ?? [];
+        this.seat(a, jeep, jeep.build.seats[Math.max(0, seats.indexOf(u.id)) % jeep.build.seats.length]);
+        a.lastX = u.x;
+        a.lastZ = u.y;
+        a.speed = 0;
+        a.ring.visible = a.blob.visible = a.bar.group.visible = false;
+        play(a.anim, a.engineer ? 'Idle' : 'Idle_Gun');
+        a.anim.mixer.update(dt);
+        this.sit(a);
+        continue;
+      }
+      a.ring.visible = a.blob.visible = true;
       const moved = Math.hypot(u.x - a.lastX, u.y - a.lastZ) / T;
       a.speed += (moved / dt - a.speed) * clamp(dt * 10, 0, 1);
       a.lastX = u.x;
       a.lastZ = u.y;
       a.obj.position.set(x, 0, z);
-      a.rotY = turnToward(a.rotY, facingToRotY(u.facing), 10 * dt);
+      // Level 4: an Engineer at work turns to the substation.
+      const work = f.working?.get(u.id);
+      const face = work ? Math.atan2(work.y - u.y, work.x - u.x) : u.facing;
+      a.rotY = turnToward(a.rotY, facingToRotY(face), 10 * dt);
       a.obj.rotation.y = a.rotY;
       const sel = f.selected.has(u.id);
       a.ring.geometry = sel ? (a.heavy ? heavySelGeo : selGeo) : a.heavy ? heavyRingGeo : ringGeo;
@@ -585,6 +783,12 @@ export class Actors {
       } else if (hurt) {
         play(a.anim, 'HitRecieve', { once: true, fade: 0.06 });
         a.anim.oneShot = f.now + 0.5;
+      } else if (a.engineer) {
+        if (f.now >= a.anim.oneShot) {
+          const runRef = (UNITS[u.kind].speed / T) * 0.9;
+          if (moving) play(a.anim, 'Run', { speed: clamp(a.speed / runRef, 0.6, 1.5) });
+          else play(a.anim, work ? 'Interact' : 'Idle');
+        }
       } else if (fired) {
         play(a.anim, moving ? 'Run_Shoot' : 'Gun_Shoot', { once: !moving, fade: 0.06 });
         a.anim.oneShot = f.now + 0.45;
@@ -613,6 +817,16 @@ export class Actors {
       if (seenU.has(id)) continue;
       this.root.remove(t.build.group, t.bar.group);
       this.towers.delete(id);
+    }
+    for (const [id, j] of this.jeeps) {
+      if (seenU.has(id)) continue;
+      // Wrecked: it stays where it stopped, dark, a few seconds, then goes.
+      this.root.remove(j.ring, j.bar.group, j.blob, j.driver.obj);
+      j.build.group.position.y -= dt * 0.05;
+      if (j.build.group.position.y < -0.2) {
+        this.root.remove(j.build.group);
+        this.jeeps.delete(id);
+      }
     }
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i];

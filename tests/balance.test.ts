@@ -1,14 +1,15 @@
 // Headless balance checks. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { BLACKOUT, EXHIBITS, HUNTS, MAP, SCORING, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
+import { BLACKOUT, EXHIBITS, MAP, MISSIONS, SCORING, UNITS, type ExhibitKind, type StarGoal, type UnitKind } from '../src/config';
 import type { Dino } from '../src/core/dinos';
 import { footprintCenter, inFootprint } from '../src/core/exhibit';
 import type { Point, Rect } from '../src/core/grid';
 import { nearestOpenTile } from '../src/core/nav';
 import { planPlacement, planTower, type PlacementPlan } from '../src/core/placement';
-import { enqueueUnit, isTroop, orderAttack, orderMove, spawnUnit } from '../src/core/units';
+import { enqueueUnit, isTroop, orderAttack, orderBoard, orderMove, passengers, spawnUnit, type Unit } from '../src/core/units';
 import { World } from '../src/core/world';
+import { playGrid, type GridPlan } from './stealth-player';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -351,6 +352,7 @@ describe.skipIf(!process.env.BALANCE)('combat', () => {
 // ---------------------------------------------------------------- levels 1 and 2
 
 const looseNow = (w: World) => w.dinos.filter((d) => d.state === 'loose');
+const spendCap = (g: StarGoal) => (g.type === 'spend' ? g.max : Infinity);
 const nearestOf = (list: Dino[], x: number, y: number) => [...list].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
 const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
@@ -437,14 +439,14 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
 describe.skipIf(!process.env.BALANCE)('levels', () => {
   it('prints level 1: squads against the clock', { timeout: 600_000 }, () => {
     const seeds = Number(process.env.SEEDS ?? 8);
-    const cfg = HUNTS[1];
+    const cfg = MISSIONS[1];
     const most = Math.floor(cfg.startingMoney / UNITS.tranq.cost);
     const rows: string[] = [];
     for (const style of ['split', 'massed'] as const) {
       for (let n = 1; n <= most; n++) {
         const runs = Array.from({ length: seeds }, (_, i) => roundup(i + 1, n, style));
         const wins = runs.filter((r) => r.won);
-        const left = wins.map((r) => r.hunt!.timeLeft);
+        const left = wins.map((r) => r.mission!.timeLeft);
         const stars = runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {});
         rows.push(
           `  ${style.padEnd(6)} ${n} ${n === 1 ? 'squad ' : 'squads'} ${money(n * UNITS.tranq.cost).padStart(7)}  won ${wins.length}/${seeds}  ` +
@@ -452,13 +454,14 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
         );
       }
     }
-    const third = cfg.thirdStar.type === 'timeLeft' ? `${clockOf(cfg.thirdStar.seconds)} left` : 'no troops lost';
-    console.log(`\nLevel 1: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and ${third}, ${seeds} seeds\n` + rows.join('\n'));
+    const [spend, time] = cfg.stars;
+    const third = time.type === 'timeLeft' ? `${clockOf(time.seconds)} left` : 'no troops lost';
+    console.log(`\nLevel 1: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(spendCap(spend))} spent and ${third}, ${seeds} seeds\n` + rows.join('\n'));
   });
 
   it('prints level 2: troop mixes against the nest', { timeout: 600_000 }, () => {
     const seeds = Number(process.env.SEEDS ?? 8);
-    const cfg = HUNTS[2];
+    const cfg = MISSIONS[2];
     const tranqs = (n: number): UnitKind[] => Array(n).fill('tranq');
     const mixes: [string, UnitKind[]][] = [
       ['4 Tranq', tranqs(4)],
@@ -484,6 +487,128 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
         );
       }
     }
-    console.log(`\nLevel 2: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and no troops lost, ${seeds} seeds\n` + rows.join('\n'));
+    console.log(`\nLevel 2: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(spendCap(cfg.stars[0]))} spent and no troops lost, ${seeds} seeds\n` + rows.join('\n'));
+  });
+});
+
+
+// ---------------------------------------------------------------- levels 4 and 5
+
+/**
+ * Level 5. With `jeep`, the two Heavy Teams climb into the 4x4 at the start and it drops them at the fight; otherwise
+ * everyone walks. Troops dart raptors first (or the T. rex first, with `rexFirst`). With `jeepKite`, once the troops are
+ * out, the 4x4 picks up whichever troop the T. rex has locked onto and drives it away. `wait` holds every order for a
+ * few seconds at the start, like a player reading the briefing.
+ */
+function showdown(seed: number, opts: { jeep: boolean; rexFirst?: boolean; jeepKite?: boolean; wait?: number; reaction?: number }) {
+  const w = new World({ seed, level: 5 });
+  w.start();
+  let next = opts.wait ?? 0;
+  const heavies = w.units.filter((u) => u.kind === 'heavy');
+  const jeep = w.units.find((u) => u.kind === 'jeep')!;
+  let stage = 0;
+  while (w.phase !== 'ended') {
+    w.update(1 / 60);
+    w.events = [];
+    if (w.time < next) continue;
+    next = w.time + Math.max(0.5, opts.reaction ?? 0.5);
+    const loose = looseNow(w);
+    if (!loose.length) continue;
+    const troops = w.units.filter((u) => (u.kind === 'heavy' || u.kind === 'tranq') && !u.dead && !u.aboard);
+    const rex = loose.find((d) => d.kind === 'trex');
+    const raptors = loose.filter((d) => d.kind === 'raptor');
+    const pick = (u: Unit) => (opts.rexFirst && rex ? rex : raptors.length ? nearestOf(raptors, u.x, u.y) : (rex ?? nearestOf(loose, u.x, u.y)));
+    if (opts.jeep && stage === 0) {
+      orderBoard(w, heavies.map((h) => h.id), jeep.id);
+      stage = 1;
+    }
+    if (opts.jeep && stage === 1 && !jeep.dead && passengers(w, jeep).length === heavies.length) {
+      orderAttack(w, [jeep.id], pick(jeep).id);
+      stage = 2;
+    }
+    const locked = rex?.lockId ? w.unitById(rex.lockId) : undefined;
+    if (opts.jeepKite && rex && locked && !jeep.dead && stage >= 2) {
+      if (locked === jeep) {
+        // Drive straight away from the T. rex until it gives up.
+        const d = Math.hypot(jeep.x - rex.x, jeep.y - rex.y) || 1;
+        if (jeep.order !== 'move') orderMove(w, [jeep.id], jeep.x + ((jeep.x - rex.x) / d) * 14 * T, jeep.y + ((jeep.y - rex.y) / d) * 14 * T);
+      } else if (!locked.aboard && locked.order !== 'board') {
+        orderMove(w, [jeep.id], locked.x, locked.y);
+        orderBoard(w, [locked.id], jeep.id);
+      }
+    }
+    for (const u of troops) {
+      if (opts.jeepKite && u === locked) continue;
+      if (u.order === 'board' || (opts.jeep && stage < 2 && u.kind === 'heavy')) continue;
+      const cur = u.order === 'attack' ? w.dinoById(u.targetId) : undefined;
+      const want = pick(u);
+      if (!cur || cur.state !== 'loose' || (cur !== want && cur.kind !== want.kind)) orderAttack(w, [u.id], want.id);
+    }
+  }
+  return w.result!;
+}
+
+/** "8 3★, 2 timeUp" from a set of results. */
+const tallyOf = (runs: { won: boolean; stars: number; reason: string }[]) =>
+  Object.entries(runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {}))
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ');
+
+describe.skipIf(!process.env.BALANCE)('levels 4 and 5', () => {
+  it('prints level 4: the Engineer and the Tranq Squad against the patrols', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = MISSIONS[4];
+    const plans: [string, GridPlan][] = [
+      ['Sneak, decisions every 0.5 s', { engineer: 'sneak', every: 0.5 }],
+      ['Sneak, every 1 s', { engineer: 'sneak', every: 1 }],
+      ['Sneak, every 1.5 s, less careful', { engineer: 'sneak', every: 1.5, margin: 0.5 }],
+      ['Sneak, every 2 s', { engineer: 'sneak', every: 2 }],
+      ['Sneak, squad as decoy at the south', { engineer: 'sneak', squad: 'decoy' }],
+      ['Sneak, squad darts the south raptor', { engineer: 'sneak', squad: 'dart' }],
+      ['Straight to each substation', { engineer: 'rush' }],
+    ];
+    const rows = plans.map(([name, plan]) => {
+      const runs = Array.from({ length: seeds }, (_, i) => playGrid(i + 1, plan));
+      const wins = runs.filter((x) => x.world.result!.won);
+      const left = wins.map((x) => x.world.result!.mission!.timeLeft);
+      const fixedAt = (i: number) => {
+        const ts = runs.map((x) => x.fixed[i]).filter((t) => t !== undefined);
+        return ts.length ? clockOf(ts.reduce((a, t) => a + t, 0) / ts.length) : '-';
+      };
+      const seen = runs.filter((x) => x.seenAt >= 0).length;
+      const lost = runs.reduce((a, x) => a + x.world.result!.troopsLost, 0) / seeds;
+      return (
+        `  ${name.padEnd(38)} won ${wins.length}/${seeds}  left ${left.length ? `${clockOf(Math.min(...left))} to ${clockOf(Math.max(...left))}` : '-'}  ` +
+        `fixed ${fixedAt(0)} ${fixedAt(1)} ${fixedAt(2)}  Engineer seen in ${seen}  troops lost ${lost.toFixed(1)} of 2 | ${tallyOf(runs.map((x) => x.world.result!))}`
+      );
+    });
+    const timers = cfg.park.filter((p) => p.breakoutAt != null).map((p) => `${p.kind} ${clockOf(p.breakoutAt!)}`).join(', ');
+    console.log(`\nLevel 4: ${clockOf(cfg.timeLimitSeconds)} until dawn, pens break out at ${timers}, stars for no troops lost and never spotted, ${seeds} seeds\n` + rows.join('\n'));
+  });
+
+  it('prints level 5: the fixed team against the fight', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = MISSIONS[5];
+    const plans: [string, Parameters<typeof showdown>[1]][] = [
+      ['4x4, raptors first', { jeep: true }],
+      ['4x4, raptors first, 4x4 pulls the target away', { jeep: true, jeepKite: true }],
+      ['4x4, T. rex first', { jeep: true, rexFirst: true }],
+      ['Walk, raptors first', { jeep: false }],
+      ['Walk, T. rex first', { jeep: false, rexFirst: true }],
+      ['4x4, orders start after 10 s', { jeep: true, wait: 10 }],
+      ['Walk, orders start after 20 s', { jeep: false, wait: 20 }],
+      ['4x4, 3 s orders', { jeep: true, reaction: 3 }],
+    ];
+    const rows = plans.map(([name, opts]) => {
+      const runs = Array.from({ length: seeds }, (_, i) => showdown(i + 1, opts));
+      const wins = runs.filter((r) => r.won);
+      const avg = (f: (r: (typeof runs)[number]) => number) => (runs.reduce((a, r) => a + f(r), 0) / seeds).toFixed(1);
+      const left = wins.map((r) => r.mission!.timeLeft);
+      return (
+        `  ${name.padEnd(46)} won ${wins.length}/${seeds}  left ${left.length ? `${clockOf(Math.min(...left))} to ${clockOf(Math.max(...left))}` : '-'}  ` +
+        `killed ${avg((r) => r.mission!.killed)}  troops lost ${avg((r) => r.troopsLost)} of ${cfg.team!.filter((m) => m.kind !== 'jeep').length} | ${tallyOf(runs)}`
+      );
+    });
+    console.log(`\nLevel 5: ${clockOf(cfg.timeLimitSeconds)} on the clock, stars for no troops lost and no animal killed, ${seeds} seeds\n` + rows.join('\n'));
   });
 });

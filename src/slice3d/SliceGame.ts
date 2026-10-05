@@ -1,24 +1,24 @@
 // The 3D build: every level drawn in real 3D with three.js. The rules come from src/core and the HUD
 // from src/ui, as in the 2D game. This controller turns touches into orders and keeps the camera, the
 // HUD, and the 3D view in step with the world. It only reads the world and sends it orders.
-import { BLACKOUT, CAMERA, DINOS, EXHIBITS, EXHIBIT_KINDS, INPUT, SCORING, SIM, UNITS, VIEW3D, type AnimalKind, type ExhibitKind, type LevelId, type UnitKind } from '../config';
+import { BLACKOUT, CAMERA, DINOS, EXHIBITS, EXHIBIT_KINDS, FIGHT, INPUT, SCORING, SIM, UNITS, VIEW3D, type AnimalKind, type ExhibitKind, type LevelId, type UnitKind } from '../config';
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
-import { animalNoun } from '../core/report';
-import { cancelQueued, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
+import { substationCenter } from '../core/power';
+import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderMove, orderRepair, passengers, type Unit } from '../core/units';
 import { World, type GameEvent } from '../core/world';
 import type { Params } from '../params';
 import { MARGIN } from '../render3d/terrain';
 import { View3D, type Quality, type ViewWorld } from '../render3d/View3D';
 import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
-import { formatClock, formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
-import { exhibitPlaceView, exhibitView, towerPlaceView, trainingView } from '../ui/panels';
+import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
+import { exhibitPlaceView, exhibitView, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
 /** Levels the 3D build offers. */
-export const SLICE_LEVELS: readonly LevelId[] = [1, 2, 3];
+export const SLICE_LEVELS: readonly LevelId[] = [1, 2, 3, 4, 5];
 
 type Gesture = 'idle' | 'press' | 'pan' | 'pinch' | 'box';
 
@@ -191,8 +191,10 @@ export class SliceGame {
     this.powerShown = w.powerOn;
     for (const f of this.floats) f.el.remove();
     this.floats = [];
-    // The blackout level starts by day. In levels 1 and 2 the Night switch is a test tool and stays as set.
-    if (!w.hunt) this.setNight(false);
+    // The blackout level and level 5 start by day, and level 4 is the night after the blackout. In levels 1 and 2 the
+    // Night switch is a test tool and stays as set.
+    if (!w.mission || w.level === 5) this.setNight(false);
+    else if (w.level === 4) this.setNight(true);
     this.selected = new Set();
     this.accumulator = 0;
     this.pointers.clear();
@@ -317,11 +319,15 @@ export class SliceGame {
     this.view.handle(events, this.vw);
     this.handleEvents(events);
     // The blackout level goes dark when the power is cut and lights up again when it comes back.
-    if (!w.hunt && w.powerOn !== this.powerShown) {
+    if (!w.mission && w.powerOn !== this.powerShown) {
       this.powerShown = w.powerOn;
       this.setNight(!w.powerOn);
     }
-    for (const id of this.selected) if (!w.unitById(id)) this.selected.delete(id);
+    // Troops that climbed into the 4x4, or fell, leave the selection; select the 4x4 to move them.
+    for (const id of this.selected) {
+      const u = w.unitById(id);
+      if (!u || !canCommand(u)) this.selected.delete(id);
+    }
     this.view.render(this.vw, { selected: this.selected }, dt);
     this.refreshHud();
     this.updateArrows();
@@ -339,7 +345,7 @@ export class SliceGame {
       reinforce: (id) => this.reinforce(id),
       start: (o) => {
         this.keepOptions(o);
-        if (!this.world.hunt) this.world.setBuildPhase(o.quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
+        if (!this.world.mission) this.world.setBuildPhase(o.quick ? BLACKOUT.quickBuildPhaseSeconds : (this.params.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds));
         this.hud.showDebug(o.debug);
         this.hud.hideBriefing();
         this.world.start();
@@ -361,7 +367,7 @@ export class SliceGame {
       cancelQueued: (id) => cancelQueued(this.world, id),
       closePanel: () => this.closePanels(),
       selectAll: () => {
-        this.selected = new Set(this.world.units.filter(isTroop).map((u) => u.id));
+        this.selected = new Set(this.world.units.filter(canCommand).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
       tipDone: () => this.nextTip(),
@@ -415,6 +421,10 @@ export class SliceGame {
       spent: w.troopSpending,
       returned: w.returned,
       troopsLost: w.troopsLost,
+      fixed: w.fixedCount,
+      substations: w.substations.length,
+      spotted: w.engineerSpotted,
+      killed: w.animalsKilled,
       revenue: w.revenue,
       revenueTarget: w.revenueTarget,
       clockSeconds: w.clockSeconds,
@@ -430,16 +440,9 @@ export class SliceGame {
     });
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
-    let tranq = 0;
-    let heavy = 0;
-    for (const id of this.selected) {
-      const u = w.unitById(id);
-      if (u?.kind === 'tranq') tranq++;
-      else if (u?.kind === 'heavy') heavy++;
-    }
-    const parts = [tranq ? `${tranq} Tranq` : '', heavy ? `${heavy} Heavy` : ''].filter(Boolean);
-    const troops = w.units.reduce((n, u) => (isTroop(u) ? n + 1 : n), 0);
-    this.hud.setTroops(troops, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
+    const troops = w.units.reduce((n, u) => (canCommand(u) ? n + 1 : n), 0);
+    this.hud.setTroops(troops, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild);
+    this.hud.setHq(w.trainable.length > 0);
     if (this.hud.panel === 'place') {
       const r = this.placementRect();
       if (r) this.anchorToTiles(r);
@@ -451,6 +454,12 @@ export class SliceGame {
       if (ex) {
         this.hud.updateExhibit(exhibitView(w, ex.id)!);
         this.anchorToTiles(ex.footprint);
+      }
+    } else if (this.hud.panel === 'substation') {
+      const s = w.substationById(this.hud.shownSubstation);
+      if (s) {
+        this.hud.updateSubstation(substationView(w, s.id)!);
+        this.anchorToTiles({ x: s.x, y: s.y, w: 2, h: 2 });
       }
     }
   }
@@ -504,7 +513,21 @@ export class SliceGame {
     if (w.phase === 'briefing' || w.phase === 'ended') return;
     if (this.placingKind) this.endPlacement();
     this.hud.showMenu(
-      goalsNow({ phase: w.phase, loose: w.looseCount, revenue: w.revenue, target: w.revenueTarget, casualties: w.casualtyTotal, level: w.level, spent: w.troopSpending, timeLeft: w.clockSeconds, troopsLost: w.troopsLost }),
+      goalsNow({
+        phase: w.phase,
+        loose: w.looseCount,
+        revenue: w.revenue,
+        target: w.revenueTarget,
+        casualties: w.casualtyTotal,
+        level: w.level,
+        spent: w.troopSpending,
+        timeLeft: w.clockSeconds,
+        troopsLost: w.troopsLost,
+        killed: w.animalsKilled,
+        fixed: w.fixedCount,
+        substations: w.substations.length,
+        spotted: w.engineerSpotted,
+      }),
     );
   }
 
@@ -515,19 +538,44 @@ export class SliceGame {
     const T = w.T;
     // The evacuation banner names the first animal out, so that escape needs no toast of its own.
     const evacuation = events.some((e) => e.type === 'evacuation');
+    // A raptor that spots a troop calls the others, so one sighting can come as several events.
+    const spotted = new Set<number>();
     for (const e of events) {
       switch (e.type) {
         case 'started': {
-          if (!w.hunt) break;
-          const loose = w.dinos.filter((d) => d.state === 'loose');
-          const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
-          const what = `${loose.length} ${animalNoun(kind, loose.length)}`;
-          this.hud.showBanner(`${what} ${w.nest ? 'are guarding a nest' : 'are loose'}. The park opens in ${formatClock(w.clockSeconds)}.`, 'warn', 4);
-          const pts = loose.map((d) => ({ x: d.x / T, y: d.y / T }));
+          if (!w.mission) break;
+          this.hud.showBanner(startBanner(w), 'warn', 4);
+          // Level 4 is about the substations; the others about what is loose.
+          const pts =
+            w.level === 4
+              ? w.substations.map((s) => substationCenter(s, T)).map((p) => ({ x: p.x / T, y: p.y / T }))
+              : w.dinos.filter((d) => d.state === 'loose').map((d) => ({ x: d.x / T, y: d.y / T }));
           if (w.nest) pts.push({ x: w.nest.x / T, y: w.nest.y / T });
           this.frame(pts, true);
           break;
         }
+        case 'spotted': {
+          this.float('!', e.x / T, 0.95, e.y / T, '#ff6b5a', 1.4);
+          if (spotted.has(e.unitId)) break;
+          spotted.add(e.unitId);
+          if (e.kind === 'engineer') this.hud.showBanner('A raptor saw the Engineer.', 'danger', 3);
+          else this.hud.toast(`A raptor saw the ${UNITS[e.kind].name}.`);
+          break;
+        }
+        case 'substationFixed': {
+          const s = w.substationById(e.id);
+          const held = e.contained ? ` ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : '';
+          this.hud.showBanner(e.last ? `The power is back everywhere.${held}` : `${s?.name ?? 'A'} substation fixed.${held}`, 'good', 3.5);
+          if (s) {
+            const c = substationCenter(s, T);
+            this.float('Power on', c.x / T, 1.3, c.y / T, '#7fefff', 1.8);
+          }
+          break;
+        }
+        case 'killed':
+          this.float('Killed', e.x / T, 0.9, e.y / T, '#ff6b6b', 1.8);
+          this.hud.showBanner(`${e.kind === 'trex' ? 'The T. rex' : 'A raptor'} was killed. ${w.animalsKilled} of ${FIGHT.killLimit}.`, 'danger', 3);
+          break;
         case 'warning':
           this.hud.showBanner(`${BLACKOUT.villainName} cuts the power in 1:00`, 'warn');
           break;
@@ -563,13 +611,13 @@ export class SliceGame {
           this.hud.toast(`${UNITS[e.kind].name} ready`);
           break;
         case 'unitLost':
-          this.hud.toast(`${UNITS[e.kind].name} lost`);
+          this.hud.toast(e.kind === 'jeep' ? 'The Patrol 4x4 is wrecked. Everyone got out.' : `${UNITS[e.kind].name} lost`);
           break;
         case 'secured': {
           this.float('Secured', e.x / T, 1.1, e.y / T, '#cdb4ff', 1.6);
           // In levels 1 and 2 the count left is what matters. The last one ends the level, so it needs no toast.
           const left = w.looseCount;
-          if (!w.hunt) this.hud.toast(`${DINOS[e.kind].name} secured`);
+          if (!w.mission) this.hud.toast(`${DINOS[e.kind].name} secured`);
           else if (left) this.hud.toast(`${DINOS[e.kind].name} darted. ${left} to go.`);
           break;
         }
@@ -763,7 +811,7 @@ export class SliceGame {
   private updateArrows(): void {
     const w = this.world;
     this.arrowTargets.clear();
-    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'hunt') {
+    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'mission') {
       this.hud.setArrows([]);
       return;
     }
@@ -1026,7 +1074,7 @@ export class SliceGame {
     const y1 = Math.max(this.boxStart.y, this.boxEnd.y);
     const T = this.world.T;
     const picked = this.world.units.filter((u) => {
-      if (!isTroop(u)) return false;
+      if (!canCommand(u)) return false;
       const p = this.view.project(u.x / T, 0.25, u.y / T);
       return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
     });
@@ -1048,6 +1096,11 @@ export class SliceGame {
       return;
     }
     const unit = this.unitAt(sx, sy);
+    // With troops selected, tapping the 4x4 loads them into it.
+    if (unit?.kind === 'jeep' && this.boardersSelected(unit)) {
+      this.command(sx, sy);
+      return;
+    }
     if (unit) {
       this.selected = new Set([unit.id]);
       if (this.hud.panel) this.closePanels();
@@ -1058,7 +1111,8 @@ export class SliceGame {
     const tx = Math.floor(g.x);
     const ty = Math.floor(g.z);
     const hq = this.world.map.hq;
-    if (tx >= hq.x && ty >= hq.y && tx < hq.x + hq.w && ty < hq.y + hq.h) {
+    // Levels 4 and 5 train nothing, so a tap on HQ is just a tap on the map.
+    if (this.world.trainable.length && tx >= hq.x && ty >= hq.y && tx < hq.x + hq.w && ty < hq.y + hq.h) {
       this.openTraining();
       return;
     }
@@ -1066,15 +1120,35 @@ export class SliceGame {
       this.command(sx, sy);
       return;
     }
+    const sub = this.world.substationAtTile(tx, ty);
+    if (sub) {
+      this.openSubstation(sub.id);
+      return;
+    }
     const ex = this.world.grid.inBounds(tx, ty) ? this.world.exhibitAtTile(tx, ty) : undefined;
     if (ex) this.openExhibit(ex.id);
     else this.closePanels();
   }
 
-  /** Move or attack with the selected troops. */
+  /** True when the selection has troops other than this 4x4, which a tap on it would load. */
+  private boardersSelected(jeep: Unit): boolean {
+    for (const id of this.selected) {
+      const u = this.world.unitById(id);
+      if (u && u !== jeep && u.kind !== 'jeep') return true;
+    }
+    return false;
+  }
+
+  /** Move or attack with the selected troops, fix a substation with the Engineer, or load troops into the 4x4. */
   private command(sx: number, sy: number): void {
     const w = this.world;
     if (!this.selected.size || w.phase === 'ended') return;
+    const jeep = this.unitAt(sx, sy);
+    if (jeep?.kind === 'jeep' && this.boardersSelected(jeep)) {
+      orderBoard(w, [...this.selected].filter((id) => id !== jeep.id), jeep.id);
+      this.view.markMove(jeep.x / w.T, jeep.y / w.T);
+      return;
+    }
     const dino = this.dinoAt(sx, sy);
     if (dino) {
       orderAttack(w, this.selected, dino.id);
@@ -1083,10 +1157,26 @@ export class SliceGame {
     }
     const g = this.view.groundAt(sx, sy);
     if (!g) return;
+    const sub = w.substationAtTile(Math.floor(g.x), Math.floor(g.z));
+    if (sub) {
+      orderRepair(w, this.selected, sub.id);
+      const c = substationCenter(sub, w.T);
+      this.view.markMove(c.x / w.T, c.y / w.T);
+      return;
+    }
     const x = clamp(g.x, 0.05, w.grid.cols - 0.05) * w.T;
     const y = clamp(g.z, 0.05, w.grid.rows - 0.05) * w.T;
     orderMove(w, this.selected, x, y);
     this.view.markMove(x / w.T, y / w.T);
+  }
+
+  private openSubstation(id: number): void {
+    const v = substationView(this.world, id);
+    if (!v) return;
+    if (this.placingKind) this.endPlacement();
+    this.hud.showSubstation(v);
+    const s = this.world.substationById(id)!;
+    this.anchorToTiles({ x: s.x, y: s.y, w: 2, h: 2 });
   }
 
   /** Screen pixels per tile around the focus, for sizing tap targets. */
@@ -1100,7 +1190,7 @@ export class SliceGame {
     let best = null;
     let bestD = Infinity;
     for (const u of w.units) {
-      if (!isTroop(u)) continue;
+      if (!canCommand(u)) continue;
       const p = this.view.project(u.x / w.T, 0.25, u.y / w.T);
       const d = Math.hypot(p.x - sx, p.y - sy);
       const reach = Math.max(VIEW3D.pickRadiusPx, (UNITS[u.kind].radius / w.T) * this.pxPerTile + INPUT.tapSlop);

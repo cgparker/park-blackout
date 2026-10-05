@@ -28,13 +28,15 @@ export interface Assets {
   dinos: Record<AnimalKind, DinoTemplate>;
   light: PersonTemplate[];
   heavy: PersonTemplate;
+  /** Level 4's Engineer. */
+  engineer: PersonTemplate[];
   guests: PersonTemplate[];
   nature: Partial<Record<DecorKind, NaturePart[][]>>;
   terrain: TerrainTextures;
 }
 
 const DINO_SCALE = 0.075;
-export const SCALE = { dino: DINO_SCALE, light: 0.3, heavy: 0.38, guest: 0.26 };
+export const SCALE = { dino: DINO_SCALE, light: 0.3, heavy: 0.38, guest: 0.26, engineer: 0.3 };
 
 /** The models use packed vertices (KHR_mesh_quantization), which needs no decoder. */
 function loader(): GLTFLoader {
@@ -661,6 +663,67 @@ function prepHeavy(g: GLTF, M: Mats): PersonTemplate {
   return { gltf: g, clips: clipMap(g) };
 }
 
+/**
+ * Level 4's Engineer: the pack's park worker, recoloured to a safety-yellow hard hat and an orange high-visibility
+ * vest with two reflective bands, carrying a red toolbox in its left hand instead of a gun.
+ */
+function prepEngineer(g: GLTF, M: Mats): PersonTemplate {
+  g.scene.updateMatrixWorld(true);
+  const rim: Rim = { color: '#b4c8ff', power: 3.5, strength: 0.3 };
+  const meshes = skinned(g.scene);
+  for (const m of meshes) {
+    const list = (Array.isArray(m.material) ? m.material : [m.material]).map((mm) => {
+      const c = (mm as THREE.MeshStandardMaterial).clone();
+      c.roughness = 0.7;
+      c.envMapIntensity = 0.5;
+      if (c.name === 'Worker_Yellow') c.color.set('#f2c21b');
+      if (c.name === 'Worker_Vest') c.color.set('#ff6f12');
+      return addRim(c, rim);
+    });
+    m.material = list.length === 1 ? list[0] : list;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.frustumCulled = false;
+  }
+  const kit = new Kit();
+  // Two reflective bands around the vest.
+  const abd = bonePos(g.scene, 'Abdomen');
+  const neck = bonePos(g.scene, 'Neck');
+  const cb = boneBox(meshes, 'Chest', 0.5).union(boneBox(meshes, 'Torso', 0.5));
+  if (abd && neck && !cb.isEmpty()) {
+    const cs = cb.getSize(new THREE.Vector3());
+    for (const t of [0.28, 0.62]) {
+      const a = abd.clone().lerp(neck, t);
+      const b = abd.clone().lerp(neck, t + 0.07);
+      kit.add('Chest', shellGeo(a, b, [[0, 1], [1, 1]], { sx: cs.x * 0.56, sz: cs.z * 0.62, seg: 22 }), M.reflective);
+    }
+  }
+  toolbox(g.scene, M, kit);
+  const body = mergePerson(g.scene, rim, 0.7);
+  if (body) finishKit(body, kit, rim);
+  return { gltf: g, clips: clipMap(g) };
+}
+
+/** A red toolbox with a steel lid seam and handle, hanging from the left hand. Built in the wrist's frame, where +y runs down the hand. */
+function toolbox(root: THREE.Object3D, M: Mats, kit: Kit): void {
+  const wrist = findBone(root, 'WristL');
+  if (!wrist) return;
+  const k = 1 / wrist.matrixWorld.getMaxScaleOnAxis();
+  const scale = new THREE.Matrix4().makeScale(k, k, k);
+  const B = new Batch();
+  const box = (w: number, h: number, d: number, r = 0.01) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2));
+  B.add(box(0.12, 0.14, 0.3, 0.014), M.toolbox, B.at(0, 0.24, 0));
+  B.add(new THREE.BoxGeometry(0.124, 0.012, 0.304), M.steel, B.at(0, 0.19, 0));
+  for (const z of [-0.1, 0.1]) B.add(new THREE.BoxGeometry(0.016, 0.06, 0.016), M.darkSteel, B.at(0, 0.14, z));
+  B.add(new THREE.BoxGeometry(0.02, 0.018, 0.22), M.darkSteel, B.at(0, 0.11, 0));
+  const merged = new THREE.Group();
+  B.flush(merged);
+  for (const c of merged.children) {
+    const m = c as THREE.Mesh;
+    kit.add('WristL', fromBone(root, 'WristL', m.geometry.applyMatrix4(scale)), m.material as THREE.Material);
+  }
+}
+
 /** Which colour a guest's part takes: 0 keeps the model's own, then skin, darker skin, hair, top, and bottom. */
 export const GUEST_SLOT = { own: 0, skin: 1, skinDark: 2, hair: 3, top: 4, bottom: 5 } as const;
 
@@ -688,6 +751,9 @@ function prepGuest(g: GLTF, clips: THREE.AnimationClip[]): PersonTemplate {
   if (!g.animations.length) g.animations = clips;
   return { gltf: g, clips: clipMap(g) };
 }
+
+/** Level 4 has one Engineer, so one model is enough. */
+const ENGINEER_FILES = ['engineer'];
 
 /** Guests: the first of each pack carries the clips for the rest of its pack. */
 const GUEST_FILES = { men: ['guest_m1', 'guest_m2', 'guest_m3'], women: ['guest_f1', 'guest_f3', 'guest_f4'] };
@@ -735,6 +801,7 @@ export async function loadAssets(M: Mats, o: LoadOptions): Promise<Assets> {
   const dinoP = Promise.all((['trex', 'raptor', 'triceratops'] as AnimalKind[]).map(async (k) => [k, prepDino(k, await load(`dinos/${k}.glb`))] as const));
   const lightP = Promise.all(['ranger_m', 'ranger_f'].map(async (n) => prepLight(await load(`people/${n}.glb`), M)));
   const heavyP = load('people/heavy.glb').then((g) => prepHeavy(g, M));
+  const engineerP = Promise.all(ENGINEER_FILES.map(async (n) => prepEngineer(await load(`people/${n}.glb`), M)));
   const pack = async (names: string[]) => {
     const files = await Promise.all(names.map((n) => load(`people/${n}.glb`)));
     return files.map((g) => prepGuest(g, files[0].animations));
@@ -747,11 +814,12 @@ export async function loadAssets(M: Mats, o: LoadOptions): Promise<Assets> {
     }),
   );
   const terrainP = track(loadTerrainTextures(`${o.base}/terrain`));
-  const [dinos, light, heavy, guests, nat, terrain] = await Promise.all([dinoP, lightP, heavyP, guestP, natP, terrainP]);
+  const [dinos, light, heavy, engineer, guests, nat, terrain] = await Promise.all([dinoP, lightP, heavyP, engineerP, guestP, natP, terrainP]);
   return {
     dinos: Object.fromEntries(dinos) as Record<AnimalKind, DinoTemplate>,
     light,
     heavy,
+    engineer,
     guests,
     nature: Object.fromEntries(nat),
     terrain,

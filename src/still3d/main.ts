@@ -1,12 +1,13 @@
 // Renders one 3D frame for review: the level 3 moment from a saved snapshot (day or blackout),
 // a sheet of fence states, or a troop lineup. Used by scripts to make comparison images.
 import { buildSegments } from '../core/exhibit';
+import { orderBoard, orderMove } from '../core/units';
 import { World } from '../core/world';
 import { viewOf } from '../slice3d/viewOf';
 import { Tile, type TileType } from '../core/grid';
 import type { DinoView, GuestView, UnitView } from '../render3d/actors';
 import type { FenceExhibitView } from '../render3d/fences';
-import { View3D, type ViewWorld } from '../render3d/View3D';
+import { View3D, type Quality, type ViewWorld } from '../render3d/View3D';
 import type { ExhibitKind, AnimalKind, UnitKind } from '../config';
 import type { DinoState } from '../core/dinos';
 import type { VisitorMode } from '../core/visitors';
@@ -29,6 +30,8 @@ interface SceneJson {
 const Q = new URLSearchParams(location.hash.slice(1));
 const num = (k: string, d: number) => (Q.has(k) ? Number(Q.get(k)) : d);
 const mode = Q.get('mode') ?? 'day';
+/** The game's own settings, 'low' or 'high', to see a frame as a phone draws it. 'still' adds ambient occlusion. */
+const quality: Quality = Q.get('quality') === 'low' ? 'low' : Q.get('quality') === 'high' ? 'high' : 'still';
 const CHARS: Record<string, TileType> = { g: Tile.Grass, p: Tile.Path, w: Tile.Water, r: Tile.Rock, e: Tile.Exhibit, G: Tile.Gate, h: Tile.HQ, t: Tile.Tower };
 
 function fromJson(s: SceneJson, night: boolean): { world: ViewWorld; selected: Set<number>; cam: { x: number; z: number } } {
@@ -138,21 +141,29 @@ function fenceSheet(): ViewWorld {
   return { T, cols, rows, tileAt: (x, y) => tiles[y]?.[x] ?? Tile.Grass, exhibits, dinos: [], units: [], guests: [], hq: { x: 2, y: 30, w: 3, h: 3 }, gate: { x: 0, y: 40 }, nest: null, powerOn: true, clear };
 }
 
-/** A Tranq Squad and a Heavy Team side by side, plus their kit, for a close look. */
+/** A Tranq Squad and a Heavy Team side by side, plus their kit, for a close look. With `crew`, the Engineer and the 4x4. */
 function troopLineup(): ViewWorld {
   const T = 40;
-  const units: UnitView[] = [
-    { id: 1, kind: 'tranq', x: 19.2 * T, y: 12 * T, facing: Math.PI / 2 - 0.35, hp: 100, maxHp: 100, cooldown: 0, pose: 'Idle_Gun', poseAt: 0.3 },
-    { id: 2, kind: 'tranq', x: 19.9 * T, y: 12.15 * T, facing: Math.PI / 2 + 0.25, hp: 100, maxHp: 100, cooldown: 0, pose: 'Idle_Gun_Pointing', poseAt: 0.6 },
-    { id: 3, kind: 'heavy', x: 20.9 * T, y: 12 * T, facing: Math.PI / 2 - 0.3, hp: 250, maxHp: 250, cooldown: 0, pose: 'Idle_Gun_Pointing', poseAt: 0.4 },
-    { id: 4, kind: 'heavy', x: 21.9 * T, y: 12.15 * T, facing: Math.PI / 2 + 0.3, hp: 250, maxHp: 250, cooldown: 0, pose: 'Gun_Shoot', poseAt: 0.2 },
-  ];
+  const units: UnitView[] = mode === 'crew'
+    ? [
+        { id: 1, kind: 'engineer', x: 19.3 * T, y: 12 * T, facing: Math.PI / 2 - 0.4, hp: 60, maxHp: 60, cooldown: 0, pose: 'Idle', poseAt: 0.3 },
+        { id: 2, kind: 'engineer', x: 20.0 * T, y: 12.1 * T, facing: Math.PI / 2 + 0.4, hp: 60, maxHp: 60, cooldown: 0, pose: 'Interact', poseAt: 0.5 },
+        { id: 10, kind: 'jeep', x: 21.6 * T, y: 12 * T, facing: Math.PI / 2 + 0.6, hp: 400, maxHp: 400, cooldown: 0 },
+        { id: 3, kind: 'heavy', x: 21.6 * T, y: 12 * T, facing: 0, hp: 250, maxHp: 250, cooldown: 0, aboard: 10 },
+        { id: 4, kind: 'tranq', x: 21.6 * T, y: 12 * T, facing: 0, hp: 100, maxHp: 100, cooldown: 0, aboard: 10 },
+      ]
+    : [
+        { id: 1, kind: 'tranq', x: 19.2 * T, y: 12 * T, facing: Math.PI / 2 - 0.35, hp: 100, maxHp: 100, cooldown: 0, pose: 'Idle_Gun', poseAt: 0.3 },
+        { id: 2, kind: 'tranq', x: 19.9 * T, y: 12.15 * T, facing: Math.PI / 2 + 0.25, hp: 100, maxHp: 100, cooldown: 0, pose: 'Idle_Gun_Pointing', poseAt: 0.6 },
+        { id: 3, kind: 'heavy', x: 20.9 * T, y: 12 * T, facing: Math.PI / 2 - 0.3, hp: 250, maxHp: 250, cooldown: 0, pose: 'Idle_Gun_Pointing', poseAt: 0.4 },
+        { id: 4, kind: 'heavy', x: 21.9 * T, y: 12.15 * T, facing: Math.PI / 2 + 0.3, hp: 250, maxHp: 250, cooldown: 0, pose: 'Gun_Shoot', poseAt: 0.2 },
+      ];
   return { T, cols: 40, rows: 24, tileAt: () => Tile.Grass, exhibits: [], dinos: [], units, guests: [], hq: { x: 2, y: 30, w: 3, h: 3 }, gate: { x: 0, y: 40 }, nest: null, powerOn: true, clear: [{ x: 16, y: 9, w: 9, h: 6 }] };
 }
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
-  const night = mode === 'night' || Q.get('night') === '1';
+  const night = mode === 'night' || mode === 'level4' || Q.get('night') === '1';
   let world: ViewWorld;
   let selected = new Set<number>();
   let cam = { x: 20, z: 12 };
@@ -164,13 +175,39 @@ async function main(): Promise<void> {
     selected = r.selected;
     cam = r.cam;
   } else if (mode === 'level1' || mode === 'level2') {
-    // A hunt level as the slice starts it, a second in.
+    // A mission level as the slice starts it, a second in.
     const w = new World({ level: mode === 'level1' ? 1 : 2, seed: 7 });
     w.start();
     for (let i = 0; i < 60; i++) w.update(1 / 60);
     world = viewOf(w);
     cam = { x: 20, z: 12.5 };
     dist = num('dist', 34);
+  } else if (mode === 'level4') {
+    // Level 4 at night: the Engineer at the south substation, out of the raptor's sight, with the west one fixed.
+    const w = new World({ level: 4, seed: 7 });
+    w.start();
+    w.fixSubstation(w.substations[0]);
+    const e = w.units.find((u) => u.kind === 'engineer')!;
+    const south = w.substations[2];
+    e.x = (south.x - 0.5) * 40;
+    e.y = (south.y + 0.5) * 40;
+    for (let i = 0; i < 60 * num('t', 6); i++) w.update(1 / 60);
+    world = viewOf(w);
+    cam = { x: south.x + 1, z: south.y - 1 };
+    dist = num('dist', 16);
+  } else if (mode === 'level5') {
+    // Level 5: two Heavy Teams in the 4x4 on the way to the fight.
+    const w = new World({ level: 5, seed: 7 });
+    w.start();
+    const jeep = w.units.find((u) => u.kind === 'jeep')!;
+    const heavies = w.units.filter((u) => u.kind === 'heavy').map((u) => u.id);
+    orderBoard(w, heavies, jeep.id);
+    for (let i = 0; i < 60 * 4; i++) w.update(1 / 60);
+    orderMove(w, [jeep.id], 18 * 40, 12.5 * 40);
+    for (let i = 0; i < 60 * num('t', 3); i++) w.update(1 / 60);
+    world = viewOf(w);
+    cam = { x: jeep.x / 40 + 3, z: jeep.y / 40 - 1 };
+    dist = num('dist', 14);
   } else if (mode === 'fences') {
     world = fenceSheet();
     cam = { x: 20, z: 12.6 };
@@ -180,7 +217,7 @@ async function main(): Promise<void> {
     cam = { x: 20.55, z: 12.05 };
     dist = num('dist', 4.2);
   }
-  const view = new View3D(canvas, { base: '.', quality: 'still', night, guests: world.guests.length > 0 });
+  const view = new View3D(canvas, { base: '.', quality, night, guests: world.guests.length > 0 });
   await view.init(world);
   view.setSize(canvas.clientWidth, canvas.clientHeight);
   view.setRig(num('tx', cam.x), num('tz', cam.z), dist, num('el', 56));
@@ -217,6 +254,8 @@ async function main(): Promise<void> {
     }
     (window as unknown as { __shots: string[] }).__shots = out;
   }
+  (window as unknown as { __view: View3D; __world: ViewWorld }).__view = view;
+  (window as unknown as { __world: ViewWorld }).__world = world;
   (window as unknown as { __ready: boolean }).__ready = true;
 }
 

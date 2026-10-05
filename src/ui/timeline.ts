@@ -1,19 +1,19 @@
-import { DINOS, HUNTS, UNITS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import { DINOS, FIGHT, MISSIONS, UNITS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
 import type { LogEntry } from '../core/log';
-import { animalNoun, type Result } from '../core/report';
+import { animalList, animalNoun, type Result } from '../core/report';
 import { numberWord } from './levels';
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 
 /**
- * Turns the blackout log into short end-screen lines, and picks one thing to try next time.
+ * Turns the log into short end-screen lines, and picks one thing to try next time.
  * No Phaser and no DOM here, so the wording can be tested.
  */
 
 export type LineTone = 'plain' | 'bad' | 'loss' | 'good';
 
 export interface TimelineLine {
-  /** Minutes and seconds since the power went out. */
+  /** Minutes and seconds since the power went out, or since the level started. */
   time: string;
   text: string;
   tone: LineTone;
@@ -36,41 +36,57 @@ const noun = animalNoun;
 const toGo = (left: number) => (left ? ` ${left} to go.` : '');
 
 const OUT: Record<AnimalKind, string> = { trex: 'The T. rex is out', raptor: 'Raptors are out', triceratops: 'Triceratops are out' };
+/** Mission levels: an escape with no guests to mention. */
+const OUT_OF: Record<AnimalKind, (pens: number) => string> = {
+  trex: () => 'The T. rex is out of its paddock.',
+  raptor: (n) => (n > 1 ? `Raptors are out of ${numberWord(n)} pens.` : 'Raptors are out of their pen.'),
+  triceratops: (n) => (n > 1 ? `Triceratops are out of ${numberWord(n)} pastures.` : 'Triceratops are out of their pasture.'),
+};
 const BY: Record<AnimalKind, string> = { trex: 'the T. rex', raptor: 'raptors', triceratops: 'a stampede' };
 const PLACE: Record<ExhibitKind, string> = { raptor: 'near a raptor pen', trex: 'near the T. rex paddock', pasture: 'near a pasture' };
 
-function animals(counts: Partial<Record<AnimalKind, number>>): string {
-  const parts: string[] = [];
-  const t = counts.trex ?? 0;
-  const r = counts.raptor ?? 0;
-  const c = counts.triceratops ?? 0;
-  if (t) parts.push('the T. rex');
-  if (r) parts.push(`${r} ${r === 1 ? 'raptor' : 'raptors'}`);
-  if (c) parts.push(`${c} Triceratops`);
-  return parts.join(', ');
-}
-
 function lostText(kinds: UnitKind[], by: AnimalKind | null, alone: boolean): string {
   const towers = kinds.filter((k) => k === 'tower').length;
-  const troops = kinds.length - towers;
+  const jeeps = kinds.filter((k) => k === 'jeep').length;
+  const people = kinds.filter((k) => k !== 'tower' && k !== 'jeep');
+  const troops = people.length;
   const who: string[] = [];
-  if (troops === 1 && !towers) who.push(UNITS[kinds[0]].name);
+  if (troops === 1 && !towers && !jeeps) who.push(UNITS[people[0]].name);
   else if (troops) who.push(`${troops} ${troops === 1 ? 'troop' : 'troops'}`);
   if (towers) who.push(towers === 1 ? (troops ? 'a tower' : 'Tranq Tower') : `${towers} towers`);
+  if (jeeps) who.push(troops || towers ? 'the 4x4' : 'The Patrol 4x4');
   const subject = who.join(' and ');
   const to = by ? ` to ${BY[by]}` : '';
-  return `${subject[0].toUpperCase()}${subject.slice(1)} lost${to}${alone && by === 'trex' ? ', caught alone' : ''}.`;
+  const verb = jeeps && !troops && !towers ? 'wrecked' : 'lost';
+  return `${subject[0].toUpperCase()}${subject.slice(1)} ${verb}${jeeps && !troops && !towers && by ? ` by ${BY[by]}` : to}${alone && by === 'trex' ? ', caught alone' : ''}.`;
 }
 
 /** "Triceratops", "Raptor", for the start of a sentence. */
 const ONE: Record<AnimalKind, string> = { trex: 'The T. rex', raptor: 'Raptor', triceratops: 'Triceratops' };
 const PEN: Record<AnimalKind, string> = { trex: 'paddock', raptor: 'pen', triceratops: 'pasture' };
+/** "the raptor pen", "the pasture", for a sealed pen. */
+const PEN_NAME: Record<ExhibitKind, string> = { raptor: 'raptor pen', trex: 'T. rex paddock', pasture: 'pasture' };
+
+/** "the raptor pen and the pasture", for the pens a substation powers. */
+export function pensText(pens: readonly ExhibitKind[]): string {
+  const names = pens.map((k) => `the ${PEN_NAME[k]}`);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? 'nothing');
+}
+
+/** What kind of mission the log is from, read off its start entry. */
+interface Mission {
+  kind: AnimalKind;
+  nest: boolean;
+  substations: number;
+  fight: boolean;
+  stealth: boolean;
+}
 
 /** End-screen lines, oldest first. Long games keep the start and the end. */
 export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
   const out: TimelineLine[] = [];
-  // Levels 1 and 2 open with a start entry. It decides how a win reads.
-  let hunt: { kind: AnimalKind; nest: boolean } | null = null;
+  // Mission levels open with a start entry. It decides how escapes and a win read.
+  let mission: Mission | null = null;
   for (let i = 0; i < log.length; i++) {
     const e = log[i];
     switch (e.type) {
@@ -79,9 +95,17 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
         break;
       case 'start': {
         const kind = (Object.keys(e.loose)[0] as AnimalKind | undefined) ?? 'triceratops';
-        hunt = { kind, nest: e.nest };
-        const what = animals(e.loose);
-        out.push({ time: clock(e.t), text: e.nest ? `${cap(what)} are guarding a nest.` : `${cap(what)} are loose in the park.`, tone: 'plain' });
+        mission = { kind, nest: e.nest, substations: e.substations ?? 0, fight: !!e.fight, stealth: !!e.stealth };
+        const what = cap(animalList(e.loose, true));
+        const n = Object.values(e.loose).reduce((a, k) => a + (k ?? 0), 0);
+        const text = mission.fight
+          ? `${what} are fighting.`
+          : mission.substations
+            ? `The power is out at ${mission.substations} substations. ${what} ${n === 1 ? 'is' : 'are'} ${mission.stealth ? 'on patrol' : 'loose'}.`
+            : e.nest
+              ? `${what} are guarding a nest.`
+              : `${what} are loose in the park.`;
+        out.push({ time: clock(e.t), text, tone: 'plain' });
         break;
       }
       case 'back': {
@@ -117,6 +141,11 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
           i++;
         }
         const what = pens > 1 ? `${OUT[e.kind]} of ${pens} pens` : OUT[e.kind];
+        if (mission) {
+          // No guests in a mission level, so an escape is just one more animal to catch.
+          out.push({ time: clock(e.t), text: OUT_OF[e.kind](pens), tone: 'bad' });
+          break;
+        }
         const text = !inPark
           ? `${what}. The guests are already gone.`
           : evacuation
@@ -153,6 +182,20 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
         out.push({ time: clock(e.t), text: lostText(kinds, e.by, alone), tone: 'loss' });
         break;
       }
+      case 'fixed': {
+        const sealed = e.pens.length ? ` ${cap(pensText(e.pens))} ${e.pens.length === 1 ? 'has' : 'have'} power.` : '';
+        const held = e.contained ? ` ${e.contained} ${e.contained === 1 ? 'animal is' : 'animals are'} contained.` : '';
+        out.push({ time: clock(e.t), text: `The ${e.name.toLowerCase()} substation is fixed.${sealed}${held}${e.last ? ' The power is back everywhere.' : ''}`, tone: 'good' });
+        break;
+      }
+      case 'spotted':
+        out.push({ time: clock(e.t), text: `A raptor saw ${e.kind === 'engineer' ? 'the Engineer' : `the ${UNITS[e.kind].name}`}.`, tone: 'bad' });
+        break;
+      case 'killed': {
+        const by = e.by ? ` by ${BY[e.by]}` : '';
+        out.push({ time: clock(e.t), text: e.kind === 'trex' ? `The T. rex was killed${by}.` : `A ${noun(e.kind, 1)} was killed${by}.`, tone: 'bad' });
+        break;
+      }
       case 'parkEmpty':
         out.push({ time: clock(e.t), text: 'The park is empty.', tone: 'plain' });
         break;
@@ -167,9 +210,17 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
         });
         break;
       case 'end': {
-        const loose = animals(e.loose);
+        const loose = animalList(e.loose);
         const still = loose ? ` Still loose: ${loose}.` : '';
-        const won = hunt ? (hunt.nest ? 'The nest is clear.' : `Every ${noun(hunt.kind, 1)} is back.`) : 'Every dinosaur is accounted for.';
+        const won = mission
+          ? mission.fight
+            ? 'The fight is over. Every animal is darted.'
+            : mission.substations
+              ? 'Every substation is fixed.'
+              : mission.nest
+                ? 'The nest is clear.'
+                : `Every ${noun(mission.kind, 1)} is back.`
+          : 'Every dinosaur is accounted for.';
         const text =
           e.reason === 'secured'
             ? won
@@ -178,10 +229,16 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
               : e.reason === 'overrun'
                 ? `The park is overrun.${still}`
                 : e.reason === 'timeUp'
-                  ? `The park opens.${still}`
+                  ? mission?.substations
+                    ? 'Dawn, and the power is still out.'
+                    : `The park opens.${still}`
                   : e.reason === 'noTroops'
-                    ? `No troops left, and no money for more.${still}`
-                    : `You ended the game.${still}`;
+                    ? `No troops left${mission?.substations ? ' that can dart' : ''}, and no money for more.${still}`
+                    : e.reason === 'noEngineers'
+                      ? 'The Engineer is down. Nobody else can fix the substations.'
+                      : e.reason === 'killed'
+                        ? `${cap(numberWord(FIGHT.killLimit))} animals are dead.${still}`
+                        : `You ended the game.${still}`;
         out.push({ time: clock(e.t), text, tone: e.reason === 'secured' ? 'good' : 'bad' });
         break;
       }
@@ -194,9 +251,10 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
 
 /** Levels 1 and 2: one thing to do differently. Each line is something the balance runs showed works. */
 function huntAdvice(r: Result, level: 1 | 2): string | null {
-  const cfg = HUNTS[level];
+  const cfg = MISSIONS[level];
   const spent = r.spending.troops;
-  const timeLeft = r.hunt?.timeLeft ?? 0;
+  const timeLeft = r.mission?.timeLeft ?? 0;
+  const spend = cfg.stars[0].type === 'spend' ? cfg.stars[0].max : Infinity;
   if (!cfg.nest) {
     if (!r.won) {
       if (r.reason !== 'timeUp') return null;
@@ -204,9 +262,9 @@ function huntAdvice(r: Result, level: 1 | 2): string | null {
         ? 'One squad is too slow. Train two or three at the start, and send each one after a different Triceratops.'
         : 'Triceratops run straight away from the nearest troop. Come at them from the open side, so they run into rocks, water, or a fence and stop.';
     }
-    const squads = Math.floor(cfg.spendStar / UNITS.tranq.cost);
-    if (spent > cfg.spendStar) return `${cap(numberWord(squads))} ${squads === 1 ? 'squad is' : 'squads are'} enough if each one goes after a different Triceratops.`;
-    const third = cfg.thirdStar;
+    const squads = Math.floor(spend / UNITS.tranq.cost);
+    if (spent > spend) return `${cap(numberWord(squads))} ${squads === 1 ? 'squad is' : 'squads are'} enough if each one goes after a different Triceratops.`;
+    const third = cfg.stars[1];
     if (third.type === 'timeLeft' && Math.ceil(timeLeft) < third.seconds) return 'Train your squads at the start, and send each one after a different Triceratops.';
     return null;
   }
@@ -224,13 +282,55 @@ function huntAdvice(r: Result, level: 1 | 2): string | null {
   if (r.troopsLost) {
     return `Heavy Teams take ${Math.round(heavy.hp / DINOS.raptor.troopDamage)} raptor bites. Two of them together often clear the nest without a loss.`;
   }
-  if (spent > cfg.spendStar) return `Two Heavy Teams together can clear the nest for ${money(2 * heavy.cost)}.`;
+  if (spent > spend) return `Two Heavy Teams together can clear the nest for ${money(2 * heavy.cost)}.`;
+  return null;
+}
+
+/** Level 4: one thing to do differently. */
+function gridAdvice(r: Result): string | null {
+  const park = MISSIONS[4].park;
+  const opensAt = (kind: ExhibitKind) => park.find((p) => p.kind === kind && p.breakoutAt != null)?.breakoutAt ?? null;
+  const lost = r.log.find((e) => e.type === 'lost' && e.kind === 'engineer');
+  const seen = r.log.some((e) => e.type === 'spotted' && e.kind === 'engineer');
+  const escapes = r.log.filter((e) => e.type === 'escape');
+  if (!r.won) {
+    if (r.reason === 'abandoned' && !escapes.length && !seen) return null;
+    const rex = opensAt('trex');
+    if (lost?.type === 'lost' && lost.by === 'trex' && rex !== null) return `Fix the north substation before ${clock(rex)}, when the T. rex goes for its fence.`;
+    const raptors = opensAt('raptor');
+    if (escapes.some((e) => e.type === 'escape' && e.kind === 'raptor') && raptors !== null) {
+      return `Fix the west substation first. Its raptors go for their fence at ${clock(raptors)}.`;
+    }
+    if (seen || lost) return 'Watch the cones on the ground. Wait in cover until a raptor turns away: it can’t see through rock, pens, or substations.';
+    return 'Keep moving. Work done on a substation stays done, so fix what you can and come back.';
+  }
+  if (seen) return 'Keep the substation between the Engineer and the raptor, and move around it as the raptor walks around. The block hides you.';
+  if (r.troopsLost) return 'Every raptor that sees a troop calls the other. To keep the Tranq Squad, keep it out of sight too.';
+  return null;
+}
+
+/** Level 5: one thing to do differently. */
+function fightAdvice(r: Result): string | null {
+  const killed = r.mission?.killed ?? 0;
+  const losses = r.log.filter((e) => e.type === 'lost' && e.kind !== 'jeep');
+  const byTrex = losses.filter((e) => e.type === 'lost' && e.by === 'trex').length;
+  if (!r.won && r.reason === 'abandoned' && !killed && !losses.length) return null;
+  if (r.reason === 'killed' || (!r.won && killed >= 2)) {
+    return 'Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor about every 30 s.';
+  }
+  if (byTrex) return 'When the T. rex locks onto a troop, load that troop in the 4x4 and drive it away while the others keep darting.';
+  if (losses.length) return 'A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last 25 bites.';
+  if (killed) return 'Dart the raptors first, from the far side of the T. rex. Every raptor you take out is one it can’t kill.';
   return null;
 }
 
 /** One thing to do differently, from what went worst. null when there's nothing to fix. */
 export function nextTime(r: Result): string | null {
-  if (r.hunt && r.level !== 3) return huntAdvice(r, r.level);
+  if (r.mission && r.level !== 3) {
+    if (r.level === 4) return gridAdvice(r);
+    if (r.level === 5) return fightAdvice(r);
+    return huntAdvice(r, r.level);
+  }
   const log = r.log;
   const raptorDeaths = log.filter((e) => e.type === 'death' && e.cause === 'raptor');
   const trex = r.exhibits.find((e) => e.kind === 'trex');
@@ -256,7 +356,7 @@ export function nextTime(r: Result): string | null {
   }
   if (r.reason === 'overrun') {
     const end = log.find((e) => e.type === 'end');
-    const left = end?.type === 'end' ? animals(end.loose) : '';
+    const left = end?.type === 'end' ? animalList(end.loose) : '';
     return `${left ? `Still loose at the end: ${left}. ` : ''}Train more troops before the blackout, and keep them together.`;
   }
   if (r.won && r.revenue < r.revenueTarget) {

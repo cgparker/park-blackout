@@ -2,11 +2,12 @@
 
 export type ExhibitKind = 'pasture' | 'raptor' | 'trex';
 export type AnimalKind = 'triceratops' | 'raptor' | 'trex';
-export type UnitKind = 'tranq' | 'heavy' | 'tower';
+/** Engineers fix level 4's substations. The jeep is level 5's Patrol 4x4. */
+export type UnitKind = 'tranq' | 'heavy' | 'tower' | 'engineer' | 'jeep';
 
 export const EXHIBIT_KINDS: readonly ExhibitKind[] = ['pasture', 'raptor', 'trex'];
-/** Troops trained at HQ. Towers are built, not trained. */
-export const UNIT_KINDS: readonly UnitKind[] = ['tranq', 'heavy'];
+/** Everything HQ trains in some level. Towers are built, not trained, and level 5's 4x4 comes with the level. */
+export const UNIT_KINDS: readonly UnitKind[] = ['tranq', 'heavy', 'engineer'];
 
 export interface ExhibitConfig {
   name: string;
@@ -247,6 +248,30 @@ export const UNITS: Record<UnitKind, UnitConfig> = {
     fireIntervalSeconds: 1.5,
     radius: 20,
   },
+  /** Level 4. Fixes substations (see GRID). Can't dart. */
+  engineer: {
+    name: 'Engineer',
+    cost: 3000,
+    trainSeconds: 8,
+    hp: 60,
+    speed: 100,
+    range: 0,
+    dartSedation: 0,
+    fireIntervalSeconds: 1,
+    radius: 9,
+  },
+  /** Level 5's Patrol 4x4. Carries troops (see JEEP). Can't dart, and isn't for sale. */
+  jeep: {
+    name: 'Patrol 4x4',
+    cost: 0,
+    trainSeconds: 0,
+    hp: 400,
+    speed: 210,
+    range: 0,
+    dartSedation: 0,
+    fireIntervalSeconds: 1,
+    radius: 16,
+  },
 };
 
 export const COMBAT = {
@@ -270,6 +295,8 @@ export interface DinoConfig {
   name: string;
   plural: string;
   sedation: number;
+  /** Level 5's fights wear this down (see FIGHT). Darts don't touch it. */
+  health: number;
   /** Top speed when loose. For Triceratops this is the stampede speed. */
   speed: number;
   wanderSpeed: number;
@@ -292,6 +319,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'Triceratops',
     plural: 'Triceratops',
     sedation: 120,
+    health: 300,
     speed: 120,
     wanderSpeed: 12,
     wanderPauseSeconds: [1.5, 4],
@@ -307,6 +335,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'Raptor',
     plural: 'Raptors',
     sedation: 60,
+    health: 150,
     speed: 160,
     wanderSpeed: 34,
     wanderPauseSeconds: [0.4, 1.5],
@@ -326,6 +355,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'T. rex',
     plural: 'T. rex',
     sedation: 800,
+    health: 1200,
     speed: 90,
     wanderSpeed: 16,
     wanderPauseSeconds: [1, 3],
@@ -382,6 +412,8 @@ export const BLACKOUT = {
   allClearSpeed: 30,
   /** The quick-test build phase offered on the briefing screen. */
   quickBuildPhaseSeconds: 120,
+  /** What HQ trains in the blackout. */
+  units: ['tranq', 'heavy'] as readonly UnitKind[],
   /** Placeholder: Mantah Corp is from Camp Cretaceous. Rename before sharing publicly. */
   villainName: 'Mantah Corp',
 };
@@ -404,10 +436,13 @@ export const SCORING = {
 
 // ------------------------------------------------------------ levels
 
-/** 1 and 2 start in a park that is already built, before it opens, with animals out. 3 is the blackout. */
-export type LevelId = 1 | 2 | 3;
-export const LEVEL_IDS: readonly LevelId[] = [1, 2, 3];
-export type HuntLevelId = 1 | 2;
+/**
+ * 3 is the blackout, where you build the park. The others are missions: the park is already built when they start.
+ * 1 and 2 come before the blackout, and 4 and 5 after it.
+ */
+export type LevelId = 1 | 2 | 3 | 4 | 5;
+export const LEVEL_IDS: readonly LevelId[] = [1, 2, 3, 4, 5];
+export type MissionLevelId = 1 | 2 | 4 | 5;
 
 export type Side = 'top' | 'right' | 'bottom' | 'left';
 
@@ -419,29 +454,76 @@ export interface ParkExhibit {
   y: number;
   /** The side whose fence is down. Its animals start loose. */
   open?: Side;
-  /** Where its loose animals start, in tiles. Raptors guarding a nest start around the nest instead. */
+  /** Where its loose animals start, in tiles. Raptors guarding a nest start around it instead. */
   out?: readonly (readonly [number, number])[];
+  /**
+   * Level 4: a patrol route for each of its loose animals, in tiles. Each starts at its route's first stop and walks
+   * the stops in a loop (STEALTH). A route that goes there and back lists the stops both ways.
+   */
+  patrols?: readonly (readonly (readonly [number, number])[])[];
+  /** How many animals it holds, when fewer than usual: the rest were taken away earlier. */
+  animals?: number;
+  /** One side's fence is dented down to this many HP at the start. */
+  dent?: { side: Side; hp: number };
+  /** Seconds into the level when the animals inside go for the fence while it has no power. null: never on their own. */
+  breakoutAt?: number | null;
+  /** Whether its fence has power at the start. Default: yes, unless a broken substation powers it. */
+  powered?: boolean;
 }
 
-export interface HuntConfig {
-  /** Seconds until the park opens. Anything still loose then loses the level. */
+/** Level 4: a broken substation and the pens it powers once fixed. */
+export interface SubstationConfig {
+  name: string;
+  /** Top-left tile of its block (GRID.sizeTiles square). */
+  tile: readonly [number, number];
+  /** Indices into the level's park list. */
+  pens: readonly number[];
+}
+
+/** The second and third star goals of a mission level. The first is always the win. */
+export type StarGoal =
+  | { type: 'spend'; max: number }
+  | { type: 'timeLeft'; seconds: number }
+  | { type: 'noTroopsLost' }
+  | { type: 'noneKilled' }
+  /** Level 4: no raptor ever sees the Engineer. */
+  | { type: 'neverSpotted' };
+
+export interface MissionConfig {
+  /** Seconds on the clock. Anything still loose (or level 4's power still out) when it runs out loses the level. */
   timeLimitSeconds: number;
+  /** What the clock runs to: the park opening, or dawn. */
+  clock: 'opening' | 'dawn';
   startingMoney: number;
   /** What HQ can train in this level. */
   units: readonly UnitKind[];
+  /** Levels 4 and 5: the team the level starts with, beside HQ. Positions in tiles. */
+  team?: readonly { kind: UnitKind; at: readonly [number, number] }[];
   park: readonly ParkExhibit[];
   /** Raptors from the open pens guard a nest on this tile. */
   nest: readonly [number, number] | null;
-  /** Second star: spend no more than this. */
-  spendStar: number;
-  /** Third star: finish with this much time left, or lose no troops. */
-  thirdStar: { type: 'timeLeft'; seconds: number } | { type: 'noLosses' };
+  /** Level 4: the substations. Pens they power start without power. */
+  substations?: readonly SubstationConfig[];
+  /**
+   * What wins the level. 'secure' (the default): nothing loose, and any substations fixed. 'power' (level 4): every
+   * substation fixed, whatever is still loose.
+   */
+  win?: 'secure' | 'power';
+  /** Level 4: loose raptors only notice what they see (STEALTH), instead of hunting the whole park. */
+  stealth?: boolean;
+  /** Level 5: the T. rex and raptors fight each other (FIGHT). */
+  fights?: boolean;
+  /** Levels 1 and 2: a darted animal wakes up back in its pen. Otherwise it's taken away, as in the blackout. */
+  carryHome: boolean;
+  /** Second and third stars. */
+  stars: readonly [StarGoal, StarGoal];
 }
 
-export const HUNTS: Record<HuntLevelId, HuntConfig> = {
+export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
   // Roundup: three pastures are open and their Triceratops are out. Tranq Squads only.
   1: {
     timeLimitSeconds: 150,
+    clock: 'opening',
     startingMoney: 9000,
     units: ['tranq'],
     park: [
@@ -451,12 +533,13 @@ export const HUNTS: Record<HuntLevelId, HuntConfig> = {
       { kind: 'pasture', x: 22, y: 20, open: 'right', out: [[30, 19], [35, 21]] },
     ],
     nest: null,
-    spendStar: 4500,
-    thirdStar: { type: 'timeLeft', seconds: 60 },
+    carryHome: true,
+    stars: [{ type: 'spend', max: 4500 }, { type: 'timeLeft', seconds: 60 }],
   },
   // Raptor Nest: both raptor pens are open, and all six raptors guard a nest at the east edge.
   2: {
     timeLimitSeconds: 240,
+    clock: 'opening',
     startingMoney: 21000,
     units: ['tranq', 'heavy'],
     park: [
@@ -466,14 +549,147 @@ export const HUNTS: Record<HuntLevelId, HuntConfig> = {
       { kind: 'pasture', x: 22, y: 20 },
     ],
     nest: [35, 16],
-    spendStar: 13500,
-    thirdStar: { type: 'noLosses' },
+    carryHome: true,
+    stars: [{ type: 'spend', max: 13500 }, { type: 'noTroopsLost' }],
+  },
+  // Grid Down: right after the blackout, the power is still out. One Engineer and one Tranq Squad fix three
+  // substations, one zone each, while two raptors from the east pen walk their routes.
+  4: {
+    timeLimitSeconds: 210,
+    clock: 'dawn',
+    startingMoney: 0,
+    units: [],
+    team: [
+      { kind: 'engineer', at: [5.6, 13.6] },
+      { kind: 'tranq', at: [5.6, 15.2] },
+    ],
+    park: [
+      { kind: 'raptor', x: 16, y: 14, breakoutAt: 60 },
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'trex', x: 27, y: 7, breakoutAt: 110, dent: { side: 'bottom', hp: 80 } },
+      {
+        kind: 'raptor',
+        x: 33,
+        y: 17,
+        open: 'right',
+        animals: 2,
+        patrols: [
+          // South: round and round the south substation, a tile out from where an Engineer would stand.
+          [[25, 18], [30, 18], [30, 23], [25, 23]],
+          // North: up the east path, round the west side of the north substation to the top, and back.
+          [[31, 12], [31, 5], [29, 1], [31, 5]],
+        ],
+      },
+      { kind: 'pasture', x: 22, y: 20 },
+    ],
+    nest: null,
+    substations: [
+      { name: 'West', tile: [10, 13], pens: [0, 1] },
+      { name: 'North', tile: [31, 2], pens: [2] },
+      { name: 'South', tile: [27, 20], pens: [3] },
+    ],
+    win: 'power',
+    stealth: true,
+    carryHome: false,
+    stars: [{ type: 'noTroopsLost' }, { type: 'neverSpotted' }],
+  },
+  // Showdown: the T. rex and a raptor pack fight north of the east rocks. A fixed team and the Patrol 4x4.
+  5: {
+    timeLimitSeconds: 180,
+    clock: 'opening',
+    startingMoney: 0,
+    units: [],
+    team: [
+      { kind: 'heavy', at: [5.2, 14] },
+      { kind: 'heavy', at: [5.2, 15.2] },
+      { kind: 'tranq', at: [6.3, 14] },
+      { kind: 'tranq', at: [6.3, 15.2] },
+      { kind: 'jeep', at: [7, 12] },
+    ],
+    park: [
+      { kind: 'raptor', x: 16, y: 14, powered: false, breakoutAt: null },
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'trex', x: 27, y: 7, open: 'bottom', out: [[28, 11]] },
+      { kind: 'raptor', x: 33, y: 17, open: 'left', out: [[27, 10.2], [29.3, 10.6], [28, 12]] },
+      { kind: 'pasture', x: 22, y: 20, powered: false, breakoutAt: null },
+    ],
+    nest: null,
+    fights: true,
+    carryHome: false,
+    stars: [{ type: 'noTroopsLost' }, { type: 'noneKilled' }],
   },
 };
 
-export const HUNT = {
+export const MISSION = {
   /** Loose animals start up to this many tiles from their listed spot, so games differ a little. */
   jitterTiles: 0.4,
+};
+
+/** Level 4's substations. */
+export const GRID = {
+  /** Seconds of one Engineer's work to fix a substation. Engineers working together add up. */
+  repairSeconds: 20,
+  /** A substation is this many tiles square. */
+  sizeTiles: 2,
+  /** An Engineer works while its center is this close to the substation's center, in tiles: the ring of tiles around it. */
+  reachTiles: 2.2,
+};
+
+/**
+ * Level 4's raptors on patrol. Each walks its route and sees a cone ahead of it, but not through rock, a pen,
+ * HQ, or a substation. Whatever it sees, it hunts, and it calls the others.
+ */
+export const STEALTH = {
+  /** How far a raptor sees, in tiles, and how wide its view is, in degrees. */
+  sightTiles: 5,
+  coneDeg: 90,
+  /** It notices a troop this close (tiles), whichever way it's looking. */
+  hearTiles: 1.2,
+  /** Walking speed on its route (px/s). */
+  patrolSpeed: 45,
+  /** At each stop on its route it looks around for this long, turning this far each way. */
+  lookSeconds: 2.5,
+  lookDeg: 70,
+  /** A raptor that spots a troop calls the others within this many tiles, and they come too: the whole park. */
+  alertTiles: 40,
+  /** On the hunt it keeps track of its prey this far away (tiles), in any direction... */
+  chaseSightTiles: 10,
+  /** ...and goes back to its route after this many seconds without seeing it. A dart shows it where the shooter is. */
+  giveUpSeconds: 4,
+  /** Rays in a drawn view cone. */
+  coneRays: 24,
+};
+
+/** Level 5's fight between the T. rex and raptors. */
+export const FIGHT = {
+  /** Raptors this close to a loose T. rex (tiles) go for it instead of troops. */
+  joinTiles: 8,
+  /** A raptor darted this recently goes for the troop that darted it instead, if it's within the raptors' hunt radius. */
+  grudgeSeconds: 5,
+  /** A raptor's bite on the T. rex, once per raptor bite interval. */
+  raptorBite: 5,
+  /** The T. rex bites the most wounded raptor in reach for this much, this often. */
+  trexBite: 20,
+  trexBiteSeconds: 3,
+  /** Raptors this close count as on the T. rex (tiles between centers, past both bodies). */
+  engageTiles: 0.6,
+  /** Raptors on the T. rex keep circling it at this many radians per second, each from its own side. */
+  circleSpeed: 0.5,
+  /** While raptors are on it, the T. rex pushes toward a pen without power at this speed (px/s) instead of its own. */
+  pushSpeed: 12,
+  /** Animals killed before the level is lost. */
+  killLimit: 3,
+  /** A killed animal stays down this long before it's gone. */
+  deadSeconds: 4,
+};
+
+/** Level 5's Patrol 4x4. */
+export const JEEP = {
+  seats: 2,
+  /** A troop climbs in from this far past both bodies (px). */
+  boardReachPx: 14,
+  /** Tapping an animal with the 4x4 selected drives it to within this many tiles, then drops the troops. */
+  dropTiles: 3.5,
 };
 
 export const NEST = {
@@ -537,4 +753,19 @@ export const COLORS = {
   nest: 0x6b4a2b,
   nestRim: 0x3d2a17,
   egg: 0xefe4c8,
+  substation: 0x2b3138,
+  substationTrim: 0x8a96a3,
+  bolt: 0xffd84d,
+  substationBroken: 0xff4d4d,
+  substationFixed: 0x3fe0ff,
+  cableOff: 0x6b7178,
+  cableOn: 0x3fe0ff,
+  engineerRing: 0xffd84d,
+  jeep: 0x1d2d5a,
+  jeepTrim: 0xe8f0ff,
+  health: 0xff4d4d,
+  dead: 0x2a2a2a,
+  /** Level 4: what a raptor on patrol sees, and the line to a troop it's after. */
+  cone: 0xffd36b,
+  coneAlert: 0xff5a4a,
 };

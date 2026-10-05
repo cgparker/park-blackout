@@ -4,8 +4,9 @@ import {
   EXHIBITS,
   EXHIBIT_KINDS,
   FENCE,
-  HUNTS,
+  FIGHT,
   LEVEL_IDS,
+  MISSIONS,
   SQUAD,
   UNITS,
   UNIT_KINDS,
@@ -75,10 +76,16 @@ export interface TopView {
   phase: Phase;
   level: LevelId;
   money: number;
-  /** Levels 1 and 2: spent on troops, and how many animals are back in a pen. */
+  /** Mission levels: spent on troops, and how many animals are back in a pen (or darted). */
   spent: number;
   returned: number;
   troopsLost: number;
+  /** Level 4: substations fixed, out of how many, and whether a raptor has seen the Engineer. */
+  fixed: number;
+  substations: number;
+  spotted: boolean;
+  /** Level 5: animals killed in the fight. */
+  killed: number;
   revenue: number;
   revenueTarget: number;
   clockSeconds: number;
@@ -129,8 +136,24 @@ export interface ExhibitView {
   money: number;
   /** Before the blackout: seconds until these animals get out (null: never on their own), and the same behind concrete. */
   breakout: { now: number | null; concrete: number | null } | null;
-  /** Levels 1 and 2: the park hasn't opened, so visits and revenue mean nothing yet. */
+  /** Mission levels: the park hasn't opened, so visits and revenue mean nothing yet. */
   closed: boolean;
+  /** Level 4: when the animals inside go for the fence while it has no power ("In 0:32"), or null. */
+  breaksOut: string | null;
+  /** Level 4: the substation that powers it, or null. */
+  powerFrom: string | null;
+}
+
+/** Level 4: a substation's panel. */
+export interface SubstationView {
+  id: number;
+  name: string;
+  /** "The raptor pen and the pasture". */
+  powers: string;
+  status: string;
+  /** 0 to 1. */
+  progress: number;
+  fixed: boolean;
 }
 
 /** An arrow at the edge of the map pointing at something off screen. Position in CSS pixels. */
@@ -155,7 +178,7 @@ export interface BriefingView {
   tips: boolean;
 }
 
-export type Panel = 'place' | 'train' | 'exhibit';
+export type Panel = 'place' | 'train' | 'exhibit' | 'substation';
 
 /** "14 s after the blackout" style text for planning numbers. */
 export const afterBlackout = (s: number | null) => (s === null ? 'Never on its own' : `${Math.round(s)} s after blackout`);
@@ -211,7 +234,16 @@ function unitIcon(kind: UnitKind): string {
       return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="5" y="5" width="16" height="16" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`;
     case 'tower':
       return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="3" y="3" width="20" height="20" rx="3" fill="${hex(COLORS.tower)}" stroke="${hex(COLORS.towerTrim)}" stroke-width="1.5"/><circle cx="13" cy="13" r="5.5" fill="${fill}" stroke="${stroke}" stroke-width="1.3"/><rect x="17" y="11.8" width="6" height="2.4" fill="#e8f0ff"/></svg>`;
+    case 'engineer':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="7" fill="${fill}" stroke="${hex(COLORS.engineerRing)}" stroke-width="2.4"/></svg>`;
+    case 'jeep':
+      return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="3" y="7" width="20" height="12" rx="3.5" fill="${hex(COLORS.jeep)}" stroke="${hex(COLORS.jeepTrim)}" stroke-width="1.5"/><rect x="11" y="8.5" width="2" height="9" fill="${hex(COLORS.jeepTrim)}"/></svg>`;
   }
+}
+
+/** Level 4's substation, for its panel: a steel block with a lightning bolt. */
+function substationIcon(fixed: boolean): string {
+  return `<svg viewBox="0 0 26 26" aria-hidden="true"><rect x="3" y="3" width="20" height="20" rx="3" fill="${hex(COLORS.substation)}" stroke="${hex(fixed ? COLORS.substationFixed : COLORS.substationTrim)}" stroke-width="1.6"/><polygon points="14.5,5 8.5,14 12.5,14 11,21 17.5,11.5 13.5,11.5" fill="${hex(COLORS.bolt)}"/></svg>`;
 }
 
 /** Star goal rows: a star (lit when earned), the goal, how it went, and a mark. */
@@ -234,6 +266,7 @@ export class Hud {
   handlers: HudHandlers | null = null;
 
   private readonly topBar: HTMLElement;
+  private readonly moneyStat: HTMLElement;
   private readonly moneyVal: HTMLElement;
   private readonly revenueVal: HTMLElement;
   private readonly revenueCap: HTMLElement;
@@ -251,6 +284,7 @@ export class Hud {
   private readonly buildGroup: HTMLElement;
   private readonly buildButtons = new Map<BuildKind, HTMLButtonElement>();
   private readonly buildMeta = new Map<BuildKind, { price: HTMLElement; left: HTMLElement }>();
+  private readonly hqBtn: HTMLButtonElement;
   private readonly hqMeta: HTMLElement;
   private readonly selectAllBtn: HTMLButtonElement;
   private readonly clearBtn: HTMLButtonElement;
@@ -276,9 +310,20 @@ export class Hud {
   private readonly exFence: HTMLElement;
   private readonly exAnimals: HTMLElement;
   private readonly exBreakout: HTMLElement;
+  private readonly exBreaksOut: HTMLElement;
+  private readonly exPower: HTMLElement;
   private readonly reinforceBtn: HTMLButtonElement;
   private readonly reinforceNote: HTMLElement;
   private exhibitId = 0;
+
+  private readonly subPanel: HTMLElement;
+  private readonly subTitle: HTMLElement;
+  private readonly subIcon: HTMLElement;
+  private readonly subPowers: HTMLElement;
+  private readonly subStatus: HTMLElement;
+  private readonly subBar: HTMLElement;
+  private readonly subNote: HTMLElement;
+  private substationId = 0;
 
   private readonly banner: HTMLElement;
   private bannerTimer = 0;
@@ -317,7 +362,7 @@ export class Hud {
 
   private openPanel: Panel | null = null;
 
-  /** Levels this build offers. The 3D slice has levels 1 and 2 only. */
+  /** Levels this build offers. Both builds offer all five. */
   private readonly levels: readonly LevelId[];
 
   constructor(root: HTMLElement, opts: { levels?: readonly LevelId[] } = {}) {
@@ -348,6 +393,7 @@ export class Hud {
     pause.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="3.5" height="12" rx="1"/><rect x="11.5" y="4" width="3.5" height="12" rx="1"/></svg>';
     pause.addEventListener('click', () => this.handlers?.openMenu());
     this.topBar.append(money.box, revenue.box, this.clock, dinos.box, casualties.box, pause);
+    this.moneyStat = money.box;
     this.moneyVal = money.val;
     this.revenueVal = revenue.val;
     this.revenueCap = revenue.cap;
@@ -384,6 +430,7 @@ export class Hud {
     }
     const troopGroup = el('div', 'troop-group');
     const hqBtn = button('hq-btn');
+    this.hqBtn = hqBtn;
     const hqLabel = el('span', 'label');
     this.hqMeta = el('span', 'meta', 'Queue 0/5');
     hqLabel.append(el('span', 'name', 'Train'), this.hqMeta);
@@ -423,7 +470,7 @@ export class Hud {
       const label = el('span', 'label');
       label.append(
         el('span', 'name', cfg.name),
-        el('span', 'meta', `Sedates ${Math.round(sedationPerSecond(kind))}/s · ${cfg.hp}\u00a0HP`),
+        el('span', 'meta', kind === 'engineer' ? `Fixes power · ${cfg.hp}\u00a0HP` : `Sedates ${Math.round(sedationPerSecond(kind))}/s · ${cfg.hp}\u00a0HP`),
       );
       b.append(icon, label, el('span', 'price', formatMoney(cfg.cost)));
       b.addEventListener('click', () => this.handlers?.train(kind));
@@ -454,10 +501,34 @@ export class Hud {
     this.exFence = row('Fence');
     this.exAnimals = row('Animals');
     this.exBreakout = row('Breaks out');
+    this.exBreaksOut = row('Breaks out');
+    this.exPower = row('Substation');
     this.reinforceBtn = button('primary reinforce');
     this.reinforceBtn.addEventListener('click', () => this.handlers?.reinforce(this.exhibitId));
     this.reinforceNote = el('div', 'note');
     this.exhibitPanel.append(exHead, rows, this.reinforceBtn, this.reinforceNote);
+
+    // ------------------------------------------------ substation panel (level 4)
+    this.subPanel = el('div', 'panel substation-panel hidden');
+    const subHead = this.panelHead('');
+    this.subTitle = subHead.querySelector('.panel-title') as HTMLElement;
+    this.subIcon = el('span', 'sub-icon');
+    subHead.prepend(this.subIcon);
+    const subLines = el('div', 'lines');
+    const subRow = (label: string) => {
+      const r = el('div', 'line');
+      const v = el('span', 'value');
+      r.append(el('span', '', label), v);
+      subLines.append(r);
+      return v;
+    };
+    this.subPowers = subRow('Powers');
+    this.subStatus = el('div', 'note sub-status');
+    const bar = el('div', 'sub-bar');
+    this.subBar = el('i');
+    bar.append(this.subBar);
+    this.subNote = el('div', 'note', 'Tap an Engineer, then this substation, to fix it.');
+    this.subPanel.append(subHead, subLines, bar, this.subStatus, this.subNote);
 
     // ------------------------------------------------ banner, toast
     this.banner = el('div', 'banner');
@@ -614,6 +685,7 @@ export class Hud {
       this.placePanel,
       this.trainPanel,
       this.exhibitPanel,
+      this.subPanel,
       this.banner,
       this.toastEl,
       this.tipCard,
@@ -659,15 +731,35 @@ export class Hud {
   // ------------------------------------------------ bars
 
   setTop(v: TopView): void {
-    setText(this.moneyVal, formatMoney(v.money));
-    const hunt = v.level !== 3 ? HUNTS[v.level] : null;
+    const mission = v.level !== 3 ? MISSIONS[v.level] : null;
+    // Level 5 has a fixed team and no money.
+    const broke = !!mission && mission.startingMoney === 0;
+    this.moneyStat.classList.toggle('off', broke);
+    if (!broke) setText(this.moneyVal, formatMoney(v.money));
+    const spend = mission?.stars.find((g) => g.type === 'spend');
     let pct: number;
-    if (hunt) {
-      // Levels 1 and 2 have no visitors. This slot tracks the second star: spending.
-      setText(this.revenueCap, `Spent · ★ up to ${formatMoney(hunt.spendStar)}`);
+    this.revenueStat.classList.toggle('flag', v.level === 4);
+    if (v.level === 4) {
+      // No money to spend: this slot shows whether the Engineer is still unseen, for the third star.
+      setText(this.revenueCap, 'Engineer · ★ if never seen');
+      setText(this.revenueVal, v.spotted ? 'Spotted' : 'Unseen');
+      pct = 0;
+      this.revenueStat.classList.toggle('over', v.spotted);
+      this.revenueStat.classList.toggle('met', !v.spotted);
+      this.revenueStat.classList.remove('people');
+    } else if (v.level === 5) {
+      // No money to spend: this slot counts animals killed against the limit.
+      setText(this.revenueCap, `Animals killed · lose at ${FIGHT.killLimit}`);
+      setText(this.revenueVal, `${v.killed} / ${FIGHT.killLimit}`);
+      pct = (v.killed / FIGHT.killLimit) * 100;
+      this.revenueStat.classList.toggle('over', v.killed > 0);
+      this.revenueStat.classList.remove('met', 'people');
+    } else if (mission && spend?.type === 'spend') {
+      // Mission levels have no visitors. This slot tracks the spending star.
+      setText(this.revenueCap, `Spent · ★ up to ${formatMoney(spend.max)}`);
       setText(this.revenueVal, formatMoney(v.spent));
-      pct = (v.spent / Math.max(1, hunt.spendStar)) * 100;
-      this.revenueStat.classList.toggle('over', v.spent > hunt.spendStar);
+      pct = (v.spent / Math.max(1, spend.max)) * 100;
+      this.revenueStat.classList.toggle('over', v.spent > spend.max);
       this.revenueStat.classList.remove('met', 'people');
     } else {
       // Guests keep paying in the dark. Once the park evacuates, this slot shows who is still in the park.
@@ -695,25 +787,37 @@ export class Hud {
           ? 'Secure them within'
           : v.phase === 'ended'
             ? 'Game over'
-            : hunt
-              ? 'Park opens in'
+            : mission
+              ? mission.clock === 'dawn'
+                ? 'Dawn in'
+                : 'Park opens in'
               : 'Until blackout';
     setText(this.clockCap, caption);
     setText(this.clockVal, v.phase === 'ended' ? '' : formatClock(v.clockSeconds));
     this.clock.classList.toggle('danger', v.phase === 'blackout' || v.phase === 'restored');
-    this.clock.classList.toggle('urgent', (v.phase === 'build' || v.phase === 'hunt') && v.clockSeconds <= 60);
+    this.clock.classList.toggle('urgent', (v.phase === 'build' || v.phase === 'mission') && v.clockSeconds <= 60);
 
     let dinos: string;
-    if (hunt) dinos = v.phase === 'briefing' ? `${v.loose} loose` : `${v.loose} loose · ${v.returned} back`;
+    if (mission && mission.carryHome) dinos = v.phase === 'briefing' ? `${v.loose} loose` : `${v.loose} loose · ${v.returned} back`;
+    else if (mission) dinos = v.phase === 'briefing' || !v.secured ? `${v.loose} loose` : `${v.loose} loose · ${v.secured} secured`;
     else if (v.phase === 'briefing' || v.phase === 'build') dinos = v.penned ? `${v.penned} penned` : 'None yet';
     else if (v.loose) dinos = `${v.loose} loose · ${v.secured} secured`;
     else if (v.phase === 'blackout' && v.penned) dinos = `None loose · ${v.penned} penned`;
     else dinos = v.secured ? `None loose · ${v.secured} secured` : 'None loose';
     setText(this.dinoVal, dinos);
 
-    // Level 2's third star is about troops, so this slot counts them. Level 1 has nothing to show here.
-    const losses = hunt?.thirdStar.type === 'noLosses';
-    this.casualtyStat.classList.toggle('off', !!hunt && !losses);
+    // The last slot follows the level: level 4 counts substations fixed, and levels whose stars are about troops count
+    // them. Level 1 has nothing to show here.
+    const losses = !!mission?.stars.some((g) => g.type === 'noTroopsLost');
+    this.casualtyStat.classList.toggle('off', !!mission && !losses && v.level !== 4);
+    if (v.level === 4) {
+      setText(this.casualtyCap, 'Power');
+      setText(this.casualtyVal, `${v.fixed} of ${v.substations}`);
+      this.casualtyStat.classList.remove('bad');
+      this.casualtyStat.classList.toggle('good', v.substations > 0 && v.fixed === v.substations);
+      return;
+    }
+    this.casualtyStat.classList.remove('good');
     setText(this.casualtyCap, losses ? 'Troops lost' : 'Casualties');
     setText(this.casualtyVal, losses ? String(v.troopsLost) : `${v.casualties} / ${v.casualtyLimit}`);
     this.casualtyStat.classList.toggle('bad', losses ? v.troopsLost > 0 : v.casualties > 0);
@@ -764,6 +868,7 @@ export class Hud {
     this.placePanel.classList.toggle('hidden', panel !== 'place');
     this.trainPanel.classList.toggle('hidden', panel !== 'train');
     this.exhibitPanel.classList.toggle('hidden', panel !== 'exhibit');
+    this.subPanel.classList.toggle('hidden', panel !== 'substation');
   }
 
   closePanels(): void {
@@ -771,6 +876,12 @@ export class Hud {
     this.placePanel.classList.add('hidden');
     this.trainPanel.classList.add('hidden');
     this.exhibitPanel.classList.add('hidden');
+    this.subPanel.classList.add('hidden');
+  }
+
+  /** Level 5 trains nothing, so HQ's button goes. */
+  setHq(visible: boolean): void {
+    if (this.hqBtn.classList.contains('hidden') === visible) this.hqBtn.classList.toggle('hidden', !visible);
   }
 
   showPlacement(v: PlaceView): void {
@@ -854,6 +965,10 @@ export class Hud {
     const row = this.exBreakout.parentElement!;
     row.classList.toggle('hidden', !v.breakout);
     if (v.breakout) setText(this.exBreakout, afterBlackout(v.breakout.now));
+    this.exBreaksOut.parentElement!.classList.toggle('hidden', !v.breaksOut);
+    if (v.breaksOut) setText(this.exBreaksOut, v.breaksOut);
+    this.exPower.parentElement!.classList.toggle('hidden', !v.powerFrom);
+    if (v.powerFrom) setText(this.exPower, v.powerFrom);
     const canReinforce = v.reinforceCost !== null;
     this.reinforceBtn.classList.toggle('hidden', !canReinforce);
     if (canReinforce) {
@@ -869,7 +984,11 @@ export class Hud {
         : canReinforce
           ? `Concrete: ${FENCE.concreteHp} HP per segment instead of ${FENCE.chainLinkHp}.${holds}`
           : v.closed
-            ? 'The fence is on. Animals inside stay inside.'
+            ? v.fence.startsWith('No power')
+              ? v.powerFrom
+                ? 'No power: fix its substation to seal it.'
+                : 'No power. The animals inside stay put unless something breaks in.'
+              : 'The fence is on. Animals inside stay inside.'
             : 'Fences can only be reinforced before the blackout.',
     );
   }
@@ -878,9 +997,32 @@ export class Hud {
     return this.openPanel === 'exhibit' ? this.exhibitId : 0;
   }
 
+  showSubstation(v: SubstationView): void {
+    this.updateSubstation(v);
+    this.show('substation');
+  }
+
+  updateSubstation(v: SubstationView): void {
+    this.substationId = v.id;
+    setText(this.subTitle, v.name);
+    const icon = substationIcon(v.fixed);
+    if (this.subIcon.innerHTML !== icon) this.subIcon.innerHTML = icon;
+    setText(this.subPowers, v.powers);
+    setText(this.subStatus, v.status);
+    const width = `${Math.round(v.progress * 100)}%`;
+    if (this.subBar.style.width !== width) this.subBar.style.width = width;
+    this.subPanel.classList.toggle('fixed', v.fixed);
+    if (this.subNote.classList.contains('hidden') !== v.fixed) this.subNote.classList.toggle('hidden', v.fixed);
+  }
+
+  get shownSubstation(): number {
+    return this.openPanel === 'substation' ? this.substationId : 0;
+  }
+
   /** Puts the open panel beside a screen rectangle without covering the bars. */
   anchor(target: ScreenRect): void {
-    const panel = this.openPanel === 'place' ? this.placePanel : this.openPanel === 'train' ? this.trainPanel : this.openPanel === 'exhibit' ? this.exhibitPanel : null;
+    const panels: Record<Panel, HTMLElement> = { place: this.placePanel, train: this.trainPanel, exhibit: this.exhibitPanel, substation: this.subPanel };
+    const panel = this.openPanel ? panels[this.openPanel] : null;
     if (!panel) return;
     const gap = 10;
     const margin = 8;
@@ -1103,18 +1245,54 @@ export class Hud {
 
     const grid = el('div', 'end-grid');
     const s = r.spending;
-    if (r.hunt && r.level !== 3) {
-      const cfg = HUNTS[r.level];
-      const h = r.hunt;
-      const darted = r.log.filter((e) => e.type === 'back' && e.how === 'darted').length;
-      const walked = h.returned - darted;
-      const back: [string, string][] = [[`${cap(animalNoun(h.kind, 2))} darted`, String(darted)]];
-      if (walked) back.push(['Walked back on their own', String(walked)]);
-      back.push(['Still loose', String(h.loose - h.returned)], ['Troops trained', String(r.troopsTrained)], ['Troops lost', String(r.troopsLost)]);
-      grid.append(
-        section('Spending', [['Troops', formatMoney(s.troops)]], [`Total (★ up to ${formatMoney(cfg.spendStar)})${s.troops <= cfg.spendStar ? ' ✓' : ''}`, formatMoney(s.troops)]),
-        section(cfg.nest ? 'The nest' : 'The roundup', back, ['Time left', r.won ? formatClock(h.timeLeft) : '0:00']),
-      );
+    if (r.mission && r.level !== 3) {
+      const cfg = MISSIONS[r.level];
+      const m = r.mission;
+      const spend = cfg.stars.find((g) => g.type === 'spend');
+      const spending = () =>
+        section(
+          'Spending',
+          [['Troops', formatMoney(s.troops)]],
+          spend?.type === 'spend'
+            ? [`Total (★ up to ${formatMoney(spend.max)})${s.troops <= spend.max ? ' ✓' : ''}`, formatMoney(s.troops)]
+            : ['Total', formatMoney(s.troops)],
+        );
+      const timeLeft: [string, string] = ['Time left', r.won ? formatClock(m.timeLeft) : '0:00'];
+      if (r.level === 4) {
+        grid.append(
+          section(
+            'The repairs',
+            [
+              ['Substations fixed', `${m.fixed} of ${m.substations}`],
+              ['Animals contained', String(r.dinosContained)],
+              ['Animals darted', String(r.dinosSecured)],
+              ['Engineer seen', m.spotted ? 'Yes' : 'Never'],
+              ['Troops lost', `${r.troopsLost} of ${m.team}`],
+            ],
+            timeLeft,
+          ),
+        );
+      } else if (r.level === 5) {
+        grid.append(
+          section(
+            'The fight',
+            [
+              ['Animals darted', String(r.dinosSecured)],
+              ['Animals killed', String(m.killed)],
+              ['Troops lost', `${r.troopsLost} of ${m.team}`],
+              ['Patrol 4x4', r.jeepsLost ? 'Wrecked' : 'Still running'],
+            ],
+            timeLeft,
+          ),
+        );
+      } else {
+        const darted = r.log.filter((e) => e.type === 'back' && e.how === 'darted').length;
+        const walked = m.returned - darted;
+        const back: [string, string][] = [[`${cap(animalNoun(m.kind, 2))} darted`, String(darted)]];
+        if (walked) back.push(['Walked back on their own', String(walked)]);
+        back.push(['Still loose', String(m.loose - m.returned)], ['Troops trained', String(r.troopsTrained)], ['Troops lost', String(r.troopsLost)]);
+        grid.append(spending(), section(cfg.nest ? 'The nest' : 'The roundup', back, timeLeft));
+      }
     } else {
       const revenueRows: [string, string][] = r.exhibits.length
         ? r.exhibits.map((e) => [`${e.name} · ${e.visits} visits`, formatMoney(e.revenue)])
@@ -1151,7 +1329,7 @@ export class Hud {
       );
     }
     b.append(...parts, grid);
-    // After a win in level 1 or 2, the next level is the obvious step. Retry stays beside it.
+    // After a win, the next level is the obvious step. Retry stays beside it.
     const next = r.won && this.levels.includes((r.level + 1) as LevelId);
     this.nextBtn.classList.toggle('hidden', !next);
     this.retryBtn.classList.toggle('primary', !next);

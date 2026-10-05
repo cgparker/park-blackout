@@ -2,33 +2,34 @@ import {
   BLACKOUT,
   ECONOMY,
   FENCE,
+  FIGHT,
   MAP,
   SCORING,
   TIPS,
-  UNIT_KINDS,
   UNITS,
   type AnimalKind,
   type ExhibitKind,
-  type HuntConfig,
   type LevelId,
   type MapConfig,
+  type MissionConfig,
   type UnitKind,
 } from '../config';
 import { containDino, evictFromPens, spawnAnimals, updateDinos, type Dino } from './dinos';
 import { buildSegments, inFootprint, reinforceCost, type Exhibit } from './exhibit';
 import { createGrid, Tile, type Grid, type Point } from './grid';
 import { guarded, nearestExhibit, troopsNear } from './guard';
-import { huntConfig, setupHunt } from './levels';
+import { missionConfig, setupMission } from './levels';
 import type { LogEntry } from './log';
 import { distanceField } from './nav';
 import { planTower, type PlacementPlan, type TowerPlan } from './placement';
+import { onSubstation, type Substation } from './power';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
-import { createUnit, isTroop, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
+import { canDart, createUnit, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
 import { evacuate, updateVisitors, type Visitor } from './visitors';
 
-/** `hunt` is levels 1 and 2: the park is built and closed, and the clock runs until it opens. */
-export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'hunt' | 'ended';
+/** `mission` is every level but the blackout: the park is built and closed, and the clock runs until it opens (or until dawn). */
+export type Phase = 'briefing' | 'build' | 'blackout' | 'restored' | 'mission' | 'ended';
 export type CasualtyCause = 'raptor' | 'trex' | 'stampede';
 
 export type GameEvent =
@@ -40,12 +41,23 @@ export type GameEvent =
   | { type: 'blackout' }
   | { type: 'evacuation'; kind: AnimalKind }
   | { type: 'powerRestored'; contained: number }
+  /** Level 4: a substation is fixed and its pens have power. `last` when it was the last one. */
+  | { type: 'substationFixed'; id: number; contained: number; last: boolean }
   | { type: 'trained'; unitId: number; kind: UnitKind }
   | { type: 'towerBuilt'; unitId: number }
   | { type: 'unitLost'; unitId: number; kind: UnitKind; x: number; y: number; by: AnimalKind | null }
+  /** Level 5: troops climbed into the 4x4, or out of it. */
+  | { type: 'boarded'; unitId: number; jeepId: number }
+  | { type: 'unloaded'; jeepId: number; count: number }
   | { type: 'charge'; dinoId: number; x: number; y: number }
   | { type: 'dart'; x0: number; y0: number; x1: number; y1: number; heavy: boolean }
   | { type: 'bite'; x: number; y: number }
+  /** Level 5: one animal bit another. */
+  | { type: 'maul'; dinoId: number; victimId: number; x: number; y: number }
+  /** Level 5: an animal was killed in the fight. */
+  | { type: 'killed'; dinoId: number; kind: AnimalKind; x: number; y: number; by: AnimalKind | null }
+  /** Level 4: a raptor saw a troop (or was darted by it, or was called by one that did) and is coming for it. */
+  | { type: 'spotted'; dinoId: number; unitId: number; kind: UnitKind; x: number; y: number }
   /** A Triceratops starts to run. `byTroop`: a troop scared it, not a predator. */
   | { type: 'stampede'; dinoId: number; x: number; y: number; byTroop: boolean }
   | { type: 'fenceHit'; exhibitId: number; x: number; y: number }
@@ -60,7 +72,7 @@ export interface WorldOptions {
   seed?: number;
   buildPhaseSeconds?: number;
   startingMoney?: number;
-  /** 1 and 2 start in a built park with animals out. 3, the default, is the blackout. */
+  /** 3, the default, is the blackout. The others start in a built park with a mission. */
   level?: LevelId;
 }
 
@@ -72,18 +84,23 @@ export class World {
   readonly rng: Rng;
   buildPhaseSeconds: number;
   readonly level: LevelId;
-  /** Levels 1 and 2: the level's rules. null in the blackout level. */
-  readonly hunt: HuntConfig | null;
+  /** Every level but the blackout: the level's rules. null in the blackout level. */
+  readonly mission: MissionConfig | null;
   /** Level 2: where the raptors guard their nest, in world pixels. */
   readonly nest: Point | null;
   /** Troops HQ can train in this level. */
   readonly trainable: readonly UnitKind[];
-  /** Levels 1 and 2: animals back in a pen, darted and carried there or walked in. */
+  /** Mission levels: animals darted (and, in levels 1 and 2, carried home) or walked back into a powered pen. */
   returned = 0;
-  /** Levels 1 and 2: what is loose when the level starts, by kind. Empty in the blackout level. */
+  /** Mission levels: what is loose when the level starts, by kind. Empty in the blackout level. */
   readonly startedLoose: Partial<Record<AnimalKind, number>> = {};
+  /** Level 4: the substations. Empty in the other levels. */
+  readonly substations: Substation[] = [];
+  /** Levels 4 and 5: the troops the level starts with (not counting the 4x4). */
+  teamSize = 0;
 
   phase: Phase = 'briefing';
+  /** The whole park has power. Each pen also has its own (Exhibit.powered), which level 4 brings back one zone at a time. */
   powerOn = true;
   /** Seconds since the build phase started. */
   time = 0;
@@ -115,16 +132,25 @@ export class World {
   visitorsAtBlackout = 0;
   visitorsSafe = 0;
   troopsTrained = 0;
+  /** Troops lost, Engineers included. Not towers or the 4x4. */
   troopsLost = 0;
+  engineersLost = 0;
   towersBuilt = 0;
   towersLost = 0;
+  jeepsLost = 0;
   dinosSecured = 0;
   dinosContained = 0;
+  /** Level 5: animals killed in the fight. */
+  animalsKilled = 0;
+  /** Level 4: whether a raptor has ever seen the Engineer. */
+  engineerSpotted = false;
+  /** Level 4: troops a raptor has seen, so each one goes in the log once. */
+  private readonly spottedUnits = new Set<number>();
   result: Result | null = null;
 
-  /** What happened after the lights went out (or, in levels 1 and 2, after the start), for the end screen. */
+  /** What happened after the lights went out (or, in mission levels, after the start), for the end screen. */
   readonly log: LogEntry[] = [];
-  /** World time when the log's clock started (the power cut, or the start of levels 1 and 2), or -1. */
+  /** World time when the log's clock started (the power cut, or the start of a mission level), or -1. */
   private logStart = -1;
   private readonly escapedFrom = new Set<number>();
   private loggedEmpty = false;
@@ -149,15 +175,15 @@ export class World {
     this.rng = createRng(options.seed ?? Math.floor(Math.random() * 2 ** 31));
     this.buildPhaseSeconds = options.buildPhaseSeconds ?? BLACKOUT.buildPhaseSeconds;
     this.level = options.level ?? 3;
-    this.hunt = huntConfig(this.level);
-    const n = this.hunt?.nest;
+    this.mission = missionConfig(this.level);
+    const n = this.mission?.nest;
     this.nest = n ? { x: (n[0] + 0.5) * this.T, y: (n[1] + 0.5) * this.T } : null;
-    this.trainable = this.hunt?.units ?? UNIT_KINDS;
-    this.money = options.startingMoney ?? this.hunt?.startingMoney ?? ECONOMY.startingMoney;
+    this.trainable = this.mission?.units ?? BLACKOUT.units;
+    this.money = options.startingMoney ?? this.mission?.startingMoney ?? ECONOMY.startingMoney;
     this.fenceIndex = new Int32Array(this.grid.cols * this.grid.rows).fill(-1);
     this.gateField = this.pathField(this.map.gate);
-    if (this.hunt) {
-      setupHunt(this, this.hunt);
+    if (this.mission) {
+      setupMission(this, this.mission);
       for (const d of this.dinos) if (d.state === 'loose') this.startedLoose[d.kind] = (this.startedLoose[d.kind] ?? 0) + 1;
     }
   }
@@ -174,11 +200,11 @@ export class World {
     return t === Tile.Grass || t === Tile.Path || t === Tile.Gate;
   };
 
-  /** Dinosaurs go anywhere except rocks, water, HQ, towers, and standing fence. */
+  /** Dinosaurs go anywhere except rocks, water, HQ, towers, substations, and standing fence. */
   readonly dinoWalk = (x: number, y: number): boolean => {
     if (!this.grid.inBounds(x, y)) return false;
     const t = this.grid.get(x, y);
-    if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower) return false;
+    if (t === Tile.Rock || t === Tile.Water || t === Tile.HQ || t === Tile.Tower || t === Tile.Substation) return false;
     if (t !== Tile.Exhibit) return true;
     const ref = this.fenceIndex[this.grid.index(x, y)];
     if (ref < 0) return true;
@@ -199,41 +225,48 @@ export class World {
     return this.casualties.raptor + this.casualties.trex + this.casualties.stampede;
   }
 
-  /** Exhibits, towers, and concrete: before the blackout, and never in levels 1 and 2, where the park is already built. */
+  /** Exhibits, towers, and concrete: before the blackout, and never in mission levels, where the park is already built. */
   get canBuild(): boolean {
-    return !this.hunt && (this.phase === 'briefing' || this.phase === 'build');
+    return !this.mission && (this.phase === 'briefing' || this.phase === 'build');
   }
 
-  /** Seconds on the big clock: until the blackout, until power returns, until the park is overrun, or until it opens. */
+  /** Seconds on the big clock: until the blackout, until power returns, until the park is overrun, or until it opens (or dawn). */
   get clockSeconds(): number {
     switch (this.phase) {
       case 'briefing':
-        return this.hunt ? this.hunt.timeLimitSeconds : this.buildPhaseSeconds;
+        return this.mission ? this.mission.timeLimitSeconds : this.buildPhaseSeconds;
       case 'build':
         return Math.max(0, this.buildPhaseSeconds - this.phaseTime);
       case 'blackout':
         return Math.max(0, BLACKOUT.powerRestoreSeconds - this.phaseTime);
       case 'restored':
         return Math.max(0, BLACKOUT.overrunSeconds - this.phaseTime);
-      case 'hunt':
-        return Math.max(0, this.hunt!.timeLimitSeconds - this.phaseTime);
+      case 'mission':
+        return Math.max(0, this.mission!.timeLimitSeconds - this.phaseTime);
       default:
         return 0;
     }
   }
 
-  /** Seconds since the log's clock started: the power cut, or the start of levels 1 and 2. 0 before that. */
+  /** Seconds since the log's clock started: the power cut, or the start of a mission level. 0 before that. */
   get logTime(): number {
     return this.logStart < 0 ? 0 : this.time - this.logStart;
   }
 
-  /** Levels 1 and 2: no troops left, none on the way, and not enough money to train one. */
-  get outOfTroops(): boolean {
-    if (this.units.some((u) => !u.dead && isTroop(u)) || this.queue.length) return false;
-    return this.trainable.every((k) => this.money < UNITS[k].cost);
+  /**
+   * Mission levels: why the level can't be finished any more, or null. Level 4 needs an Engineer while a substation
+   * is down. A level won by darting everything needs a troop that can dart while anything is loose. A unit in
+   * training counts, and so does money enough to train one.
+   */
+  get stuck(): 'noEngineers' | 'noTroops' | null {
+    const can = (ok: (k: UnitKind) => boolean) =>
+      this.units.some((u) => !u.dead && ok(u.kind)) || this.queue.some((q) => ok(q.kind)) || this.trainable.some((k) => ok(k) && this.money >= UNITS[k].cost);
+    if (this.substations.some((s) => !s.fixed) && !can((k) => k === 'engineer')) return 'noEngineers';
+    if (this.mission?.win !== 'power' && this.looseCount > 0 && !can((k) => k !== 'tower' && canDart(k))) return 'noTroops';
+    return null;
   }
 
-  /** Spent on troops, the second star's measure in levels 1 and 2. */
+  /** Spent on troops, the second star's measure in the mission levels that have one. */
   get troopSpending(): number {
     return this.spending.troops;
   }
@@ -241,6 +274,13 @@ export class World {
   get looseCount(): number {
     let n = 0;
     for (const d of this.dinos) if (d.state === 'loose') n++;
+    return n;
+  }
+
+  /** Level 4: substations fixed so far. */
+  get fixedCount(): number {
+    let n = 0;
+    for (const s of this.substations) if (s.fixed) n++;
     return n;
   }
 
@@ -282,6 +322,20 @@ export class World {
     return this.visitors.find((v) => v.id === id);
   }
 
+  substationById(id: number): Substation | undefined {
+    return this.substations.find((s) => s.id === id);
+  }
+
+  /** Level 4: the substation whose block covers a tile. */
+  substationAtTile(tx: number, ty: number): Substation | undefined {
+    return this.substations.find((s) => onSubstation(s, tx, ty));
+  }
+
+  /** Level 4: the substation that powers an exhibit. */
+  substationFor(exhibitId: number): Substation | undefined {
+    return this.substations.find((s) => s.pens.includes(exhibitId));
+  }
+
   fenceAt(tx: number, ty: number): { exhibit: Exhibit; index: number } | null {
     if (!this.grid.inBounds(tx, ty)) return null;
     const ref = this.fenceIndex[this.grid.index(tx, ty)];
@@ -299,11 +353,19 @@ export class World {
   start(): void {
     if (this.phase !== 'briefing') return;
     this.phaseTime = 0;
-    if (this.hunt) {
-      // The park is built and closed. The clock runs until it opens.
-      this.phase = 'hunt';
+    if (this.mission) {
+      // The park is built and closed. The clock runs until it opens, or until dawn.
+      this.phase = 'mission';
       this.logStart = this.time;
-      this.log.push({ t: 0, type: 'start', loose: { ...this.startedLoose }, nest: !!this.nest });
+      this.log.push({
+        t: 0,
+        type: 'start',
+        loose: { ...this.startedLoose },
+        nest: !!this.nest,
+        substations: this.substations.length,
+        fight: !!this.mission.fights,
+        stealth: !!this.mission.stealth,
+      });
     } else {
       this.phase = 'build';
     }
@@ -325,7 +387,7 @@ export class World {
 
   /**
    * Puts an exhibit, its path, and its animals down without charging for them.
-   * `build` uses it after paying; levels 1 and 2 use it for the park they start with.
+   * `build` uses it after paying; mission levels use it for the park they start with.
    */
   addExhibit(plan: PlacementPlan): Exhibit {
     if (!plan.viewingSpot) throw new Error('Cannot build an invalid placement.');
@@ -343,6 +405,7 @@ export class World {
       viewingSpot: { ...plan.viewingSpot },
       segments: buildSegments(plan.footprint),
       reinforced: false,
+      powered: this.powerOn,
       visits: 0,
       revenue: 0,
       packTarget: null,
@@ -399,7 +462,10 @@ export class World {
     this.powerOn = false;
     // Nobody tells the guests. They keep touring and paying until the first animal gets out.
     this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
-    for (const ex of this.exhibits) ex.version++;
+    for (const ex of this.exhibits) {
+      ex.powered = false;
+      ex.version++;
+    }
     this.logStart = this.time;
     this.log.push({ t: 0, type: 'blackout', inPark: this.visitorsAtBlackout });
     this.events.push({ type: 'blackout' });
@@ -423,7 +489,7 @@ export class World {
     this.end(false, 'abandoned');
   }
 
-  // ------------------------------------------------------------ the blackout log
+  // ------------------------------------------------------------ the log
 
   /** An animal left its pen. Only the first one out of each exhibit is logged. */
   noteEscape(d: Dino): void {
@@ -441,15 +507,32 @@ export class World {
 
   noteLoss(kind: UnitKind, x: number, y: number, by: AnimalKind | null): void {
     if (this.logStart < 0) return;
-    const alone = kind !== 'tower' && troopsNear(this, x, y, TIPS.lonerRadiusTiles) <= TIPS.lonerMaxFriends;
+    const alone = kind !== 'tower' && kind !== 'jeep' && troopsNear(this, x, y, TIPS.lonerRadiusTiles) <= TIPS.lonerMaxFriends;
     this.log.push({ t: this.logTime, type: 'lost', kind, by, alone });
   }
 
-  /** Levels 1 and 2: an animal is back in a pen, darted or on its own. */
+  /** Mission levels: an animal is darted, or walked back into its own powered pen. */
   noteBack(d: Dino, how: 'darted' | 'walked'): void {
-    if (!this.hunt || this.logStart < 0) return;
+    if (!this.mission || this.logStart < 0) return;
     this.returned++;
     this.log.push({ t: this.logTime, type: 'back', kind: d.kind, how, left: this.looseCount });
+  }
+
+  /** Level 4: a raptor saw a troop, or bit one it wasn't after. The first time for each troop goes in the log. */
+  noteSpotted(d: Dino, u: Unit): void {
+    if (u.kind === 'engineer') this.engineerSpotted = true;
+    this.events.push({ type: 'spotted', dinoId: d.id, unitId: u.id, kind: u.kind, x: d.x, y: d.y });
+    if (this.logStart >= 0 && !this.spottedUnits.has(u.id)) {
+      this.spottedUnits.add(u.id);
+      this.log.push({ t: this.logTime, type: 'spotted', kind: u.kind });
+    }
+  }
+
+  /** Level 5: an animal was killed in the fight. */
+  noteKilled(d: Dino, by: AnimalKind | null): void {
+    this.animalsKilled++;
+    this.events.push({ type: 'killed', dinoId: d.id, kind: d.kind, x: d.x, y: d.y, by });
+    if (this.logStart >= 0) this.log.push({ t: this.logTime, type: 'killed', kind: d.kind, by });
   }
 
   /** Visitors still in the park. */
@@ -459,12 +542,38 @@ export class World {
     return n;
   }
 
+  /**
+   * Gives a pen its power back, the way the end of the blackout does: its gaps seal, its own animals inside its
+   * footprint are contained, and anyone else's caught inside is moved just outside. Returns how many were contained.
+   */
+  private powerPen(ex: Exhibit): number {
+    ex.powered = true;
+    for (const s of ex.segments) s.hp = s.maxHp;
+    ex.packTarget = null;
+    ex.version++;
+    let contained = 0;
+    for (const d of this.dinos) {
+      if (d.state === 'secured' || d.state === 'dead' || d.state === 'contained') continue;
+      const tx = Math.floor(d.x / this.T);
+      const ty = Math.floor(d.y / this.T);
+      if (!inFootprint(ex.footprint, tx, ty)) continue;
+      if (d.home === ex.id) {
+        containDino(this, d, ex);
+        contained++;
+      } else {
+        evictFromPens(this, d);
+      }
+    }
+    return contained;
+  }
+
   restorePower(): void {
     if (this.phase !== 'blackout') return;
     this.phase = 'restored';
     this.phaseTime = 0;
     this.powerOn = true;
     for (const ex of this.exhibits) {
+      ex.powered = true;
       for (const s of ex.segments) s.hp = s.maxHp;
       ex.packTarget = null;
       ex.version++;
@@ -488,6 +597,26 @@ export class World {
     this.events.push({ type: 'powerRestored', contained });
   }
 
+  /** Level 4: Engineers finished a substation. Its pens get their power back. */
+  fixSubstation(s: Substation): void {
+    if (s.fixed) return;
+    s.fixed = true;
+    s.workers = 0;
+    let contained = 0;
+    const kinds: ExhibitKind[] = [];
+    for (const id of s.pens) {
+      const ex = this.exhibitById(id);
+      if (!ex) continue;
+      contained += this.powerPen(ex);
+      kinds.push(ex.kind);
+    }
+    this.dinosContained += contained;
+    const last = this.substations.every((o) => o.fixed);
+    if (last) this.powerOn = true;
+    this.log.push({ t: this.logTime, type: 'fixed', name: s.name, pens: kinds, contained, last });
+    this.events.push({ type: 'substationFixed', id: s.id, contained, last });
+  }
+
   update(dt: number): void {
     if (this.phase === 'briefing' || this.phase === 'ended') return;
     this.time += dt;
@@ -508,12 +637,13 @@ export class World {
     updateVisitors(this, dt);
     updateUnits(this, dt);
     updateDinos(this, dt);
-    if (!this.evacuating && !this.powerOn) {
+    // Guests only exist in the blackout level.
+    if (!this.mission && !this.evacuating && !this.powerOn) {
       const first = this.dinos.find((d) => d.state === 'loose');
       if (first) this.startEvacuation(first.kind);
     }
     this.cleanup();
-    if (this.logStart >= 0 && !this.hunt) this.logMilestones();
+    if (this.logStart >= 0 && !this.mission) this.logMilestones();
     this.checkEnd();
   }
 
@@ -532,11 +662,17 @@ export class World {
   // ------------------------------------------------------------ internals
 
   private checkEnd(): void {
-    if (this.hunt) {
-      if (this.phase !== 'hunt') return;
-      if (this.looseCount === 0) this.end(true, 'secured');
-      else if (this.phaseTime >= this.hunt.timeLimitSeconds) this.end(false, 'timeUp');
-      else if (this.outOfTroops) this.end(false, 'noTroops');
+    const m = this.mission;
+    if (m) {
+      if (this.phase !== 'mission') return;
+      const powered = this.substations.every((s) => s.fixed);
+      if (powered && (m.win === 'power' || this.looseCount === 0)) this.end(true, 'secured');
+      else if (m.fights && this.animalsKilled >= FIGHT.killLimit) this.end(false, 'killed');
+      else if (this.phaseTime >= m.timeLimitSeconds) this.end(false, 'timeUp');
+      else {
+        const stuck = this.stuck;
+        if (stuck) this.end(false, stuck);
+      }
       return;
     }
     if (this.casualtyTotal >= SCORING.casualtyLimit) {

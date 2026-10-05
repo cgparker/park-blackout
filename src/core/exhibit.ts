@@ -21,6 +21,13 @@ export interface Exhibit {
   /** One segment per border tile, clockwise from the top-left corner. */
   segments: FenceSegment[];
   reinforced: boolean;
+  /** Whether its fence has power. Animals inside leave a powered fence alone, and nothing can damage it. */
+  powered: boolean;
+  /**
+   * Seconds into the level when the animals inside go for the fence while it has no power, when the level sets it
+   * (null: never on their own). Undefined means the animal's own breakout delay, as in the blackout.
+   */
+  breakoutAt?: number | null;
   visits: number;
   revenue: number;
   /** The segment a raptor pack is breaking, so the whole pack hits the same one. */

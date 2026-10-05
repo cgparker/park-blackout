@@ -1,6 +1,6 @@
 // Builds the 3D view's models from the Quaternius source packs (CC0) into public3d/.
 // Sources are not in the repo: put them in assets-src/ (see public3d/LICENSES.md).
-// Usage: node scripts/assets3d.mjs [dinos|people|nature], or no argument for everything.
+// Usage: node scripts/assets3d.mjs [dinos|people|engineers|nature], or no argument for everything.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -29,6 +29,8 @@ if (want('nature')) {
 
 const DINO_CLIPS = ['Idle', 'Walk', 'Run', 'Attack', 'Death'];
 const TROOP_CLIPS = ['Idle', 'Idle_Gun', 'Idle_Gun_Pointing', 'Gun_Shoot', 'Run', 'Run_Shoot', 'Walk', 'HitRecieve', 'Death'];
+/** Level 4's Engineer carries a toolbox, not a gun, and works with its hands. */
+const ENGINEER_CLIPS = ['Idle', 'Walk', 'Run', 'Interact', 'HitRecieve', 'Death'];
 const GUEST_CLIPS = ['Idle', 'Walk', 'Run', 'Wave', 'Death'];
 
 /** Leaf colour textures become the kit's white masks, tinted per tree at runtime. */
@@ -237,6 +239,11 @@ const GUEST_DETAIL = [
   [/Hair/, 0.25, 0.3, true],
   [/./, 0.3, 0.1, true],
 ];
+// One Engineer: level 4 has only one, and the two Workers look alike from the game's camera.
+const ENGINEERS = { 'umm/Worker.gltf': 'engineer' };
+if (want('people') || want('engineers')) {
+  for (const [src, out] of Object.entries(ENGINEERS)) await build(src, `people/${out}.glb`, { clips: ENGINEER_CLIPS, compress: true });
+}
 if (want('people')) {
   for (const [src, out] of Object.entries(TROOPS)) await build(src, `people/${out}.glb`, { clips: TROOP_CLIPS, compress: true });
   for (const [src, out] of Object.entries(GUESTS)) {
