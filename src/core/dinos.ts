@@ -3,7 +3,7 @@ import { damageUnit } from './combat';
 import { fenceRect, footprintCenter, inFootprint, type Exhibit, type FenceSegment } from './exhibit';
 import { Tile, type Point } from './grid';
 import { findPath, followPath, lineClear, nearestOpenTile, stepToward, toWaypoints, type PathFollower } from './nav';
-import { noticed, tracking } from './stealth';
+import { inView, noticed, tracking } from './stealth';
 import { onMap, type Unit } from './units';
 import { panicNear, type Visitor } from './visitors';
 import type { CasualtyCause, World } from './world';
@@ -68,6 +68,8 @@ export interface Dino extends PathFollower {
   charge: number;
   /** T. rex only: seconds until it can charge again. */
   chargeCooldown: number;
+  /** T. rex in level 5: seconds left in the roar it gives when it locks onto a troop. It stands and faces it. */
+  roar: number;
   /** T. rex only: direction of the current charge. */
   cdx: number;
   cdy: number;
@@ -84,6 +86,11 @@ export interface Dino extends PathFollower {
   seen: Point | null;
   /** Level 4: when it last reacted to being darted, so each dart sets it off once. */
   heardHit: number;
+  /**
+   * Level 4: seconds spent making out a troop in its cone. It stands still meanwhile, and hunts at
+   * STEALTH.noticeSeconds. With nobody in sight it counts back down to 0 before it walks on.
+   */
+  notice: number;
 }
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -133,6 +140,7 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       windup: 0,
       charge: 0,
       chargeCooldown: 0,
+      roar: 0,
       cdx: 0,
       cdy: 0,
       nest: null,
@@ -143,6 +151,7 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       lost: 0,
       seen: null,
       heardHit: -Infinity,
+      notice: 0,
     });
   }
 }
@@ -157,6 +166,7 @@ export function calm(d: Dino): void {
   d.lockId = 0;
   d.windup = 0;
   d.charge = 0;
+  d.roar = 0;
 }
 
 /** Where an animal can wander inside its pen (inside the fence line, minus its body). */
@@ -517,6 +527,10 @@ function focusPoint(w: World, ex: Exhibit, includeExhibits: boolean): Point {
 function updateLoosePredator(w: World, d: Dino, dt: number): void {
   const cfg = DINOS[d.kind];
   if (d.pause > 0) return;
+  if (d.roar > 0) {
+    roarStep(w, d, dt);
+    return;
+  }
   if (d.charge > 0) {
     chargeStep(w, d, dt);
     fightBites(w, d);
@@ -540,7 +554,7 @@ function updateLoosePredator(w: World, d: Dino, dt: number): void {
 
   const t = d.target;
   // Level 5: with raptors on it, the T. rex only pushes slowly toward the pen it's after.
-  const speed = d.kind === 'trex' && t?.type === 'segment' && raptorsOn(w, d) ? FIGHT.pushSpeed : cfg.speed;
+  const speed = d.kind === 'trex' && t?.type === 'segment' && raptorsOn(w, d) > 0 ? FIGHT.pushSpeed : cfg.speed;
   if (!t) {
     if (d.nest) roamNest(w, d, d.nest, dt);
     else wanderLoose(w, d, dt);
@@ -716,17 +730,20 @@ function targetAlive(w: World, t: DinoTarget): boolean {
  * 3. The nearest visitor within 10 tiles.
  * 4. Break into the nearest exhibit with animals still inside (and no power).
  * 5. The nearest visitor anywhere, then the nearest troop or tower anywhere (and lock on).
+ * In level 5, while FIGHT.shieldRaptors or more raptors are on it, it is too busy with them for 1 and 2.
  */
 function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const T = w.T;
+  const shielded = raptorsOn(w, d) >= FIGHT.shieldRaptors;
   if (d.lockId) {
     const u = lockedUnit(w, d);
-    if (u && dist(u, d) <= DINO_AI.trexLockBreakTiles * T) return { type: 'unit', id: u.id };
-    d.lockId = 0;
+    if (u && dist(u, d) <= DINO_AI.trexLockBreakTiles * T) {
+      if (!shielded) return { type: 'unit', id: u.id };
+    } else d.lockId = 0;
   }
-  if (w.time - d.lastHitTime <= DINO_AI.trexLockSeconds) {
+  if (!shielded && w.time - d.lastHitTime <= DINO_AI.trexLockSeconds) {
     const u = w.unitById(d.lastHitBy);
-    if (u && onMap(u) && dist(u, d) <= DINO_AI.trexLockRadiusTiles * T) return lockOn(d, u);
+    if (u && onMap(u) && dist(u, d) <= DINO_AI.trexLockRadiusTiles * T) return lockOn(w, d, u);
   }
   const near = nearestVisitor(w, d, DINO_AI.trexVisitorRadiusTiles * T);
   if (near) return { type: 'visitor', id: near.id };
@@ -736,16 +753,36 @@ function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const breakIn = chooseBreakIn(w, d);
   if (breakIn) return breakIn;
   // Level 5: with no pen left to break into, it stands and fights whatever raptors are on it.
-  if (w.mission?.fights && raptorsOn(w, d)) return null;
+  if (w.mission?.fights && raptorsOn(w, d) > 0) return null;
   const anyVisitor = nearestVisitor(w, d, Infinity);
   if (anyVisitor) return { type: 'visitor', id: anyVisitor.id };
   const anyUnit = nearestUnit(w, d, Infinity);
-  return anyUnit ? lockOn(d, anyUnit) : null;
+  return anyUnit ? lockOn(w, d, anyUnit) : null;
 }
 
-function lockOn(d: Dino, u: Unit): DinoTarget {
+/**
+ * It locks onto a troop. In level 5 it roars first: it stops and faces the troop for FIGHT.lockRoarSeconds before it
+ * moves or charges, so there is time to get that troop away.
+ */
+function lockOn(w: World, d: Dino, u: Unit): DinoTarget {
+  if (d.lockId !== u.id && w.mission?.fights) {
+    d.roar = FIGHT.lockRoarSeconds;
+    d.facing = Math.atan2(u.y - d.y, u.x - d.x);
+    d.path = [];
+    d.pathIndex = 0;
+    w.events.push({ type: 'roar', dinoId: d.id, unitId: u.id, x: d.x, y: d.y });
+  }
   d.lockId = u.id;
   return { type: 'unit', id: u.id };
+}
+
+/** Roaring: it faces its troop and stays where it is. Raptors in reach still get bitten. */
+function roarStep(w: World, d: Dino, dt: number): void {
+  d.roar = Math.max(0, d.roar - dt);
+  const u = lockedUnit(w, d);
+  if (u) d.facing = Math.atan2(u.y - d.y, u.x - d.x);
+  else d.roar = 0;
+  fightBites(w, d);
 }
 
 /** The nearest pen with animals still inside, no gap, and no power, and the outside spot by its nearest segment. */
@@ -861,17 +898,21 @@ function roamNest(w: World, d: Dino, nest: Point, dt: number): void {
 // ------------------------------------------------------------------ level 4: raptors on patrol
 
 /**
- * Level 4: a loose raptor that only knows what it sees. Calm, it walks its route and looks ahead. A troop it sees
- * (or one beside it, or one that darts it) it hunts, and it calls the others. Prey it loses sight of for a few
- * seconds it gives up on, and it goes back to its route.
+ * Level 4: a loose raptor that only knows what it sees. Calm, it walks its route and looks ahead. A troop in its cone
+ * makes it stop and stare: if the troop is still in sight after STEALTH.noticeSeconds, it hunts it and calls the
+ * others. One that walks into it is noticed at once. A dart sets it on the shooter: with the call if it saw the
+ * shot, alone if it didn't. Prey it loses sight of for a few seconds it gives up on, and it goes back to its route.
  */
 function stalk(w: World, d: Dino, dt: number): void {
   const cfg = DINOS.raptor;
-  // A dart tells it where the shooter is.
   if (d.lastHitTime > d.heardHit) {
     d.heardHit = d.lastHitTime;
     const u = w.unitById(d.lastHitBy);
-    if (u && onMap(u)) spot(w, d, u);
+    // Calm, it calls the other only if it saw who shot. Already on the hunt, it just turns on the shooter.
+    if (u && onMap(u)) {
+      if (d.target?.type !== 'unit' && inView(w, d, u.x, u.y)) spot(w, d, u);
+      else hunt(w, d, u);
+    }
   }
   let prey = d.target?.type === 'unit' ? w.unitById(d.target.id) : undefined;
   if (d.target && (!prey || !onMap(prey))) {
@@ -880,9 +921,18 @@ function stalk(w: World, d: Dino, dt: number): void {
   }
   if (!prey) {
     const seen = noticed(w, d);
-    if (seen) {
-      spot(w, d, seen);
-      prey = seen;
+    if (seen?.touch) {
+      spot(w, d, seen.unit);
+      prey = seen.unit;
+    } else if (seen) {
+      if (d.notice <= 0) w.noteNoticed(d, seen.unit);
+      d.notice += dt;
+      if (d.notice >= STEALTH.noticeSeconds) {
+        spot(w, d, seen.unit);
+        prey = seen.unit;
+      }
+    } else if (d.notice > 0) {
+      d.notice = Math.max(0, d.notice - dt);
     }
   }
   if (prey) {
@@ -894,13 +944,13 @@ function stalk(w: World, d: Dino, dt: number): void {
     const to = d.lost > 0 && d.seen ? d.seen : prey;
     if (d.lost >= STEALTH.giveUpSeconds) loseTrack(d);
     else chase(w, d, to.x, to.y, to === prey ? cfg.radius + UNITS[prey.kind].radius : 0, cfg.speed, dt);
-  } else {
+  } else if (d.notice <= 0) {
     walkRoute(w, d, dt);
   }
   biteTroops(w, d);
 }
 
-/** A raptor sees a troop, or is darted by it. It hunts it, and the others within earshot that aren't hunting come too. */
+/** A raptor makes out a troop, or sees it shoot. It hunts it, and the others within earshot that aren't hunting come too. */
 function spot(w: World, d: Dino, u: Unit): void {
   hunt(w, d, u);
   for (const o of w.dinos) {
@@ -911,6 +961,7 @@ function spot(w: World, d: Dino, u: Unit): void {
 
 function hunt(w: World, d: Dino, u: Unit): void {
   d.lost = 0;
+  d.notice = 0;
   d.seen = { x: u.x, y: u.y };
   if (d.target?.type === 'unit' && d.target.id === u.id) return;
   d.target = { type: 'unit', id: u.id };
@@ -925,6 +976,7 @@ function hunt(w: World, d: Dino, u: Unit): void {
 function loseTrack(d: Dino): void {
   d.target = null;
   d.lost = 0;
+  d.notice = 0;
   d.seen = null;
   d.wander = null;
   d.path = [];
@@ -1086,11 +1138,11 @@ function nearestRival(w: World, d: Dino, radius: number): Dino | null {
   return best;
 }
 
-/** Level 5: whether any loose raptor is on the T. rex, close enough to count as fighting it. */
-function raptorsOn(w: World, d: Dino): boolean {
-  if (!w.mission?.fights) return false;
+/** Level 5: how many loose raptors are on the T. rex, close enough to count as fighting it. */
+export function raptorsOn(w: World, d: Dino): number {
+  if (!w.mission?.fights) return 0;
   const reach = DINOS.trex.radius + DINOS.raptor.radius + FIGHT.engageTiles * w.T;
-  return w.dinos.some((o) => o.kind === 'raptor' && o.state === 'loose' && o.target?.type === 'dino' && o.target.id === d.id && dist(o, d) <= reach);
+  return w.dinos.filter((o) => o.kind === 'raptor' && o.state === 'loose' && o.target?.type === 'dino' && o.target.id === d.id && dist(o, d) <= reach).length;
 }
 
 /** A raptor fighting the T. rex bites it when it's in reach and its bite is ready. */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DINOS, FIGHT } from '../src/config';
 import type { LogEntry } from '../src/core/log';
 import type { Result } from '../src/core/report';
 import { nextTime, timelineLines } from '../src/ui/timeline';
@@ -264,9 +265,24 @@ describe('levels 4 and 5: timeline and next time', () => {
     expect(nextTime(level4({ won: false, reason: 'noEngineers', log: [start4, { t: 61, type: 'escape', kind: 'raptor', inPark: 0, evacuation: false }, lostTo('raptor')] }))).toBe(
       'Fix the west substation first. Its raptors go for their fence at 1:00.',
     );
-    expect(nextTime(level4({ won: false, reason: 'noEngineers', log: [start4, { t: 30, type: 'spotted', kind: 'engineer' }, lostTo('raptor')] }))).toMatch(/^Watch the cones on the ground\./);
-    expect(nextTime(level4({ log: [start4, { t: 30, type: 'spotted', kind: 'engineer' }] }))).toMatch(/^Keep the substation between the Engineer and the raptor/);
-    expect(nextTime(level4({ troopsLost: 1, log: [start4] }))).toMatch(/^Every raptor that sees a troop calls the other\./);
+    expect(nextTime(level4({ won: false, reason: 'noEngineers', log: [start4, { t: 30, type: 'spotted', kind: 'engineer' }, lostTo('raptor')] }))).toMatch(/^Watch the cones on the ground .* When a cone turns orange/);
+    expect(nextTime(level4({ log: [start4, { t: 30, type: 'spotted', kind: 'engineer' }] }))).toMatch(/^Watch a raptor go round once/);
+    expect(nextTime(level4({ troopsLost: 1, log: [start4] }))).toMatch(/^A raptor that sees who darts it calls the other\. Dart one from behind/);
     expect(nextTime(level4({ log: [start4] }))).toBeNull();
+  });
+
+  it('level 5 advice: speed when animals die, the 4x4 decoy when the T. rex takes a troop, then raptor bites, then the most hurt raptor', () => {
+    const level5 = (over: Partial<Result>): Result =>
+      result({ level: 5, revenue: 0, revenueTarget: 0, mission: { kind: 'raptor', loose: 4, returned: 4, timeLeft: 150, fixed: 0, substations: 0, spotted: false, killed: 0, team: 4 }, ...over });
+    const start5: LogEntry = { t: 0, type: 'start', loose: { trex: 1, raptor: 3 }, nest: false, substations: 0, fight: true, stealth: false };
+    const lost = (by: 'trex' | 'raptor'): LogEntry => ({ t: 20, type: 'lost', kind: 'tranq', by, alone: false });
+    const every = Math.ceil(DINOS.raptor.health / FIGHT.trexBite) * FIGHT.trexBiteSeconds;
+    expect(nextTime(level5({ won: false, reason: 'killed', mission: { kind: 'raptor', loose: 4, returned: 1, timeLeft: 100, fixed: 0, substations: 0, spotted: false, killed: 3, team: 4 }, log: [start5] }))).toBe(
+      `Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor every ${every} s.`,
+    );
+    expect(nextTime(level5({ troopsLost: 1, log: [start5, lost('trex')] }))).toMatch(/^When the T\. rex roars at a troop, load that troop in the 4x4 and keep driving around nearby/);
+    expect(nextTime(level5({ troopsLost: 1, log: [start5, lost('raptor')] }))).toBe('A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last 25 bites.');
+    expect(nextTime(level5({ mission: { kind: 'raptor', loose: 4, returned: 3, timeLeft: 150, fixed: 0, substations: 0, spotted: false, killed: 1, team: 4 }, log: [start5] }))).toMatch(/^The T\. rex always bites the most hurt raptor\./);
+    expect(nextTime(level5({ log: [start5] }))).toBeNull();
   });
 });

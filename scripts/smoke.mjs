@@ -557,16 +557,31 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.screenshot({ path: `${out}/11-level4-substation.png` });
   await page.tap('.substation-panel .close');
 
-  // Tap the Engineer, then the substation.
+  // The Engineer button selects the Engineer and looks at it; Stop shows with anything selected.
+  check('level 4 has an Engineer button, and no Stop with nothing selected', (await page.isVisible('.sel-engineer')) && !(await page.isVisible('.sel-stop')));
+  await page.tap('.sel-engineer');
+  check('the Engineer button selects the Engineer', await soon(async () => (await page.textContent('.sel-summary')) === '1 Engineer selected'), await page.textContent('.sel-summary'));
+  check('Stop shows once something is selected', await page.isVisible('.sel-stop'));
+  // Tap the Engineer, then the top side of the substation: it works from the side tapped.
   const eng = await world(() => {
     const u = window.__pb.world.units.find((u) => u.kind === 'engineer');
     return { id: u.id, x: u.x, y: u.y };
   });
+  const westTop = { x: west.x, y: west.y - 1.5 * T };
   await centerOn(page, (eng.x + west.x) / 2, (eng.y + west.y) / 2);
   await tapWorld(eng.x, eng.y);
+  await tapWorld(westTop.x, westTop.y);
+  const repairOrder = await world((id) => {
+    const w = window.__pb.world;
+    const e = w.units.find((u) => u.kind === 'engineer');
+    const s = w.substationById(id);
+    return { all: w.units.map((u) => `${u.kind}:${u.order}:${u.targetId}`).join(' '), destRow: e.dest ? Math.floor(e.dest.y / 40) : null, top: s.y - 1 };
+  }, west.id);
+  check('tap the Engineer, then a side of a substation, to fix it from there', repairOrder.all.includes(`engineer:repair:${west.id}`) && repairOrder.destRow === repairOrder.top, JSON.stringify(repairOrder));
+  await page.tap('.sel-stop');
+  check('Stop halts it', (await world(() => window.__pb.world.units.find((u) => u.kind === 'engineer').order)) === 'idle');
   await tapWorld(west.x, west.y);
-  const repairOrder = await world(() => window.__pb.world.units.map((u) => `${u.kind}:${u.order}:${u.targetId}`).join(' '));
-  check('tap the Engineer, then a substation, to fix it', repairOrder.includes(`engineer:repair:${west.id}`), repairOrder);
+  check('and a tap on the substation sends it again', (await world(() => window.__pb.world.units.find((u) => u.kind === 'engineer').order)) === 'repair');
   await world((id) => {
     const w = window.__pb.world;
     const s = w.substationById(id);
@@ -603,16 +618,23 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   }));
   await page.tap('.menu-resume');
 
-  // Walk the Tranq Squad into a raptor's view: it sees it and comes.
+  // Put the Tranq Squad in front of a raptor on open grass: it stops to make the squad out, then comes.
   await world(() => {
     const w = window.__pb.world;
-    const d = w.dinos.find((d) => d.state === 'loose');
+    const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
     const sq = w.units.find((u) => u.kind === 'tranq');
-    sq.x = d.x + Math.cos(d.facing) * 3 * 40;
-    sq.y = d.y + Math.sin(d.facing) * 3 * 40;
-    for (let i = 0; i < 6; i++) w.update(1 / 60);
+    Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, notice: 0, target: null, path: [], pathIndex: 0 });
+    Object.assign(sq, { x: 26.5 * 40, y: 16.5 * 40 });
+    for (let i = 0; i < 20; i++) w.update(1 / 60);
   });
-  check('a raptor that sees the squad says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'A raptor saw the Tranq Squad.'), await page.textContent('.toast'));
+  check('a raptor that sees the squad stops to make it out', (await world(() => window.__pb.world.dinos.find((d) => d.state === 'loose' && d.patrol).notice > 0)) === true);
+  check('with a tip on what that means', await tipIs('A raptor noticed your Tranq Squad'));
+  await page.tap('.tip-ok');
+  await world(() => {
+    const w = window.__pb.world;
+    for (let i = 0; i < 60; i++) w.update(1 / 60);
+  });
+  check('then it comes for the squad, and says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'A raptor is after the Tranq Squad.'), await page.textContent('.toast'));
   check('and the Engineer is still unseen', (await page.textContent('.stat.revenue .val')) === 'Unseen');
   if (await soon(() => page.isVisible('.tip'), 1500)) await page.tap('.tip-ok');
 
@@ -629,6 +651,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.next-level');
   check('Next level opens the level 5 briefing', await soon(async () => (await world(() => window.__pb.world.level)) === 5 && (await page.textContent('.brief-title')) === 'Break up the fight'));
   check('the level 5 briefing names the team', (await page.textContent('.brief-intro')).includes('2 Heavy Teams, 2 Tranq Squads, and a Patrol 4x4'), await page.textContent('.brief-intro'));
+  check('and follows on from the night', (await page.textContent('.brief-intro')).startsWith('The two raptors from the night came back with a third'), await page.textContent('.brief-intro'));
 
   await page.tap('.start');
   check('level 5 opens with a tip on the fight', await tipIs('They are killing each other'));
@@ -636,6 +659,8 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('then a tip on the 4x4', await tipIs('The Patrol 4x4'));
   await page.tap('.tip-ok');
   check('level 5 has no money and no training', (await page.locator('.stat.money.off').count()) === 1 && !(await page.isVisible('.hq-btn')));
+  check('and no Engineer button', !(await page.isVisible('.sel-engineer')));
+  const health5 = await world(() => Object.fromEntries(window.__pb.world.dinos.map((d) => [d.id, d.health])));
   check('the top bar counts animals killed', await soon(async () => (await page.textContent('.stat.revenue .cap')) === 'Animals killed · lose at 3' && (await page.textContent('.stat.revenue .val')) === '0 / 3'));
 
   // Tap a Heavy Team, then the 4x4, to load it.
@@ -665,7 +690,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
     return { aboard: u.aboard, gap: Math.hypot(u.x - jeep.x, u.y - jeep.y), order: jeep.order };
   }, [team.h.id, team.j.id]);
   check('the troop climbs out where the 4x4 stops', out5.aboard === 0 && out5.order === 'idle' && out5.gap < 2 * T, JSON.stringify(out5));
-  check('the fight wounds the animals', (await world(() => window.__pb.world.dinos.some((d) => d.health < (d.kind === 'trex' ? 1200 : 150)))) === true);
+  check('the fight wounds the animals', (await world((h) => window.__pb.world.dinos.some((d) => d.health < h[d.id]), health5)) === true);
   await page.screenshot({ path: `${out}/14-level5-fight.png` });
 
   await dartAll('heavy');

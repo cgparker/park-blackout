@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS, DINO_AI, DINOS, FIGHT, GRID, MAP, NEST, UNITS, VISITORS, type AnimalKind } from '../config';
+import { COLORS, DINO_AI, DINOS, FIGHT, GRID, MAP, NEST, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
 import type { Dino } from '../core/dinos';
 import { fenceRect, type Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
@@ -167,11 +167,17 @@ export class WorldView {
         case 'charge':
           this.float('Charge!', e.x, e.y - DINOS.trex.radius - 16, '#ff9a4d', 1.2);
           break;
+        case 'roar':
+          this.float('Roar!', e.x, e.y - DINOS.trex.radius - 16, '#ff9a4d', 1.4);
+          break;
         case 'maul':
           this.markers.push({ x: e.x, y: e.y, life: 0.3, color: COLORS.health });
           break;
         case 'killed':
           this.float('Killed', e.x, e.y - DINOS[e.kind].radius - 14, '#ff6b6b', 1.8);
+          break;
+        case 'noticed':
+          this.float('?', e.x, e.y - DINOS.raptor.radius - 16, '#ffae5a', 1);
           break;
         case 'spotted':
           this.float('!', e.x, e.y - DINOS.raptor.radius - 16, '#ff6b5a', 1.4);
@@ -533,8 +539,9 @@ export class WorldView {
   }
 
   /**
-   * Level 4: a raptor on patrol shows what it sees as a pale cone, cut short by cover. One on the hunt shows a red
-   * line to its prey and a ring around it instead.
+   * Level 4: a raptor on patrol shows what it sees as a pale cone, cut short by cover. While it makes out a troop the
+   * cone turns orange and a ring fills around it; once it's sure, it hunts, and shows a red line to its prey and a ring
+   * around it instead.
    */
   private drawCones(): void {
     const g = this.coneGfx;
@@ -549,12 +556,21 @@ export class WorldView {
         continue;
       }
       const pts = viewCone(w, d);
+      const k = Math.min(1, d.notice / STEALTH.noticeSeconds);
+      const color = k > 0 ? COLORS.coneNotice : COLORS.cone;
       g.beginPath();
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
       g.closePath();
-      g.fillStyle(COLORS.cone, 0.16).fillPath();
-      g.lineStyle(1.5, COLORS.cone, 0.45).strokePath();
+      g.fillStyle(color, 0.16 + 0.14 * k).fillPath();
+      g.lineStyle(1.5 + k, color, 0.45 + 0.4 * k).strokePath();
+      if (k > 0) {
+        const r = DINOS.raptor.radius + 7;
+        g.lineStyle(3, COLORS.coneNotice, 0.95);
+        g.beginPath();
+        g.arc(d.x, d.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k, false);
+        g.strokePath();
+      }
     }
   }
 

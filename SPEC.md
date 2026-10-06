@@ -87,10 +87,12 @@ Right after the blackout. It's night, the guests are gone, and the power is stil
 - **Substations.** Each one powers the pens around it, and a cable on the ground runs from it to each of them. The Engineer fixes a substation by standing beside it (section 6): 20 s of work. Work done stays done if the Engineer walks away.
 - **A fixed substation powers its pens,** as when the power comes back in level 3: animals inside are contained, and the gaps seal. Animals already out stay loose.
 - **Pens without power:** their animals go for the fence at a set time, which the pen's panel shows ("Breaks out in 0:48").
-- **Raptors on patrol** (section 8): each walks its own route and stops at each turn to look around. Each sees a cone ahead of it, drawn on the ground, and rock, pens, HQ, and substations block its view. A raptor that sees a troop, or hears one right beside it, comes for it and calls the other.
+- **Raptors on patrol** (section 8): each walks its own route, starting somewhere along it and going either way round, and stops at each turn to look around. Each sees a cone ahead of it, drawn on the ground, and rock, pens, HQ, and substations block its view.
+- **Noticing:** a raptor takes 0.8 s to make out a troop in its cone. It stops, and its cone turns orange while a ring fills around it. If the troop is still in sight when the ring is full, the raptor comes for it and calls the other. A troop that walks right into a raptor is noticed at once.
+- **Darts:** a raptor that sees who darts it calls the other. One darted from out of its cone comes for the shooter alone.
 - **Win:** every substation fixed before dawn. Loose raptors can stay loose.
 - **Lose:** dawn comes first, or the Engineer is lost. Losing the Tranq Squad doesn't end the level.
-- **Stars:** win; lose no troops; never spotted (no raptor ever sees the Engineer).
+- **Stars:** win; lose no troops; never spotted (no raptor ever notices the Engineer, even for a moment).
 
 | Pen | At the start | Powered by |
 |---|---|---|
@@ -103,18 +105,18 @@ Right after the blackout. It's night, the guests are gone, and the power is stil
 | Raptor | Route |
 |---|---|
 | South | Round and round the south substation, a tile out from where the Engineer stands, stopping at each corner |
-| North | Up the east path, round the west side of the north substation to the top, and back down |
+| North | A loop: up the east path, past the west side of the north substation a tile out, along the top, a look at its east side, and down the east edge |
 
-The west substation is safe, beside HQ. The north one has a quiet side, the top, but the way there is watched whenever the north raptor reaches the top of its route. The south one has no quiet side: the raptor circles it, so the Engineer keeps the block between them and moves around it as the raptor does, or the Tranq Squad draws both raptors away and is lost.
+The west substation is safe, beside HQ. The north one has no quiet side: the north raptor watches each side in turn, and the east edge, so the Engineer works in the gaps (about 37 to 47 s) and keeps the block between them when the raptor comes round. The south one has no quiet side either: the raptor circles it, so the Engineer keeps the block between them and moves around it as the raptor does. The Tranq Squad can draw both raptors away and be lost, or dart one from behind, out of its cone, and fight it alone.
 
 ### Level 5: Showdown
 
 The park is closed for repairs after the blackout, and some fences still have no power. The T. rex and a raptor pack got out through dead fences, and they are fighting each other in the middle of the park.
 
 - **A fixed team:** 2 Heavy Teams, 2 Tranq Squads, and a Patrol 4x4 start beside HQ (section 6). HQ trains nothing, and there is no money.
-- **The fight** (section 8): animals hurt each other, and an animal at 0 health is killed. Left alone, the T. rex kills the first raptor at about 0:21 and another about every 24 s after.
+- **The fight** (section 8): animals hurt each other, and an animal at 0 health is killed. Left alone, the T. rex kills the first raptor at about 0:12 and another every 15 s after.
 - **The fight spreads.** While it fights, the T. rex keeps pushing slowly toward the nearest pen without power that still has animals inside, and breaks in. Raptors there come out and join the fight, and Triceratops stampede out.
-- **Whoever you dart turns on you.** A darted raptor goes after the troop that darted it for 5 s, then back to the fight. A darted T. rex locks on as usual (section 8), and the raptors follow it, still biting.
+- **Whoever you dart turns on you.** A darted raptor goes after the troop that darted it for 5 s, then back to the fight. A darted T. rex locks on as usual (section 8): it roars at the troop for 2 s, then goes after it, and the raptors follow it, still biting. While two or more raptors are on it, though, the T. rex is too busy to lock on.
 - Pens with power hold, as in levels 1 and 2. Animals in pens without power never go for their fences on their own.
 - A darted animal is secured and taken away, as in level 3.
 - **Win:** nothing loose: every fighter, and anything the fight let out, is darted.
@@ -127,9 +129,9 @@ The park is closed for repairs after the blackout, and some fences still have no
 | Northwest pasture | 2 Triceratops inside, powered |
 | T. rex paddock | Open and empty: the T. rex is in the fight |
 | East raptor pen | Open and empty: its 3 raptors are in the fight |
-| South pasture | 2 Triceratops inside, no power |
+| South pasture | 2 Triceratops inside, powered |
 
-The fight starts north of the rocks in the east, about 23 tiles from HQ. On foot, a Heavy Team takes about 13 s to get there; the 4x4 takes about 5 s. Left alone, the fight breaks into the south pasture at about 0:29 and the west raptor pen at about 0:54.
+The fight starts north of the rocks in the east, about 23 tiles from HQ. On foot, a Heavy Team takes about 13 s to get there; the 4x4 takes about 5 s. Left alone, the fight breaks into the west raptor pen at about 0:24, and the third animal dies at about 0:42.
 
 ## 4. Map
 
@@ -208,7 +210,7 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 ### Engineers (level 4)
 
 - An Engineer fixes a broken substation while it stands still on one of the tiles around it. Engineers there together add their work (level 4 has only one).
-- Select the Engineer and tap a substation: it walks to it and starts. Troops in the same selection go with it and stand guard around it.
+- Select the Engineer and tap a substation, or a tile beside it: the Engineer walks to the work tile nearest the tap and starts, so the player picks the side. Troops selected with it ignore that tap. With only troops selected, a tap on a substation sends them to it.
 - Engineers can't dart, and they ignore attack orders. Animals go after them like any troop, and they scare Triceratops like any troop.
 - In level 4, idle troops hold fire at a raptor that isn't after anyone, so a troop waiting in cover doesn't give itself away. An attack order still darts it.
 
@@ -216,7 +218,7 @@ This is what makes spacing cost money: a visitor walking between exhibits isn't 
 
 An open-top patrol vehicle in the team's colors. It moves Heavy Teams faster.
 
-- **Get in:** select troops and tap the 4x4. They walk to it and climb in, up to 2.
+- **Get in:** select troops and tap the 4x4. They walk to it and climb in, up to 2. Heavy Teams get the seats first, then whoever is nearest; the rest walk over and stop beside it.
 - **Drive:** select the 4x4 and tap the map. It drives there and everyone climbs out beside it. Tap an animal instead, and it drives to within 3.5 tiles of it, and the troops jump out and attack it.
 - Troops inside can't dart, and animals can't reach them. Animals attack the 4x4 itself like a troop. At 0 HP it's wrecked, and the troops inside climb out unhurt.
 - A T. rex locked onto a troop that climbs in goes after the 4x4 instead, so a troop it has picked can be driven out of reach.
@@ -244,31 +246,31 @@ An open-top patrol vehicle in the team's colors. It moves Heavy Teams faster.
 | Tap an exhibit with nothing selected | Exhibit panel: visits, revenue, fence HP, Reinforce button |
 | Tap HQ | Training panel |
 | Tap **Tower** in the bottom bar, then the map | Place a Tranq Tower |
-| Tap a substation with Engineers selected | Fix it (troops selected with them stand guard) |
+| Tap a substation, or a tile beside it, with the Engineer selected | Fix it from the work tile nearest the tap (other troops selected ignore the tap) |
 | Tap a substation with nothing selected | Substation panel: which pens it powers, and how far the fix has got |
 | Tap the Patrol 4x4 with troops selected | Climb in |
 | Tap the map or an animal with the 4x4 selected | Drive there and climb out, or drop the troops to attack it |
 | Tap the pause button (right end of the top bar) | Pause menu: **Resume**, **Restart**, **End game** |
 | Tap an arrow at the edge of the map | Look at the off-screen animal or broken fence it points to |
 
-HUD buttons: **Select All Troops** and **Clear Selection**. Select all picks Engineers and the 4x4 too.
+HUD buttons: **Select All Troops** and **Clear Selection**, and with anything selected, **Stop**, which halts the selected troops where they stand. Select all picks Engineers and the 4x4 too. Level 4 adds **Engineer**, which selects the Engineer and moves the camera to it.
 
 ### Mouse
 
-Left-click to select, left-drag for a selection box, right-click to move or attack, WASD or arrow keys to pan, scroll wheel to zoom. Esc clears the selection, and with nothing selected it opens the pause menu. P pauses too.
+Left-click to select, left-drag for a selection box, right-click to move or attack, WASD or arrow keys to pan, scroll wheel to zoom. H stops the selected troops. Esc clears the selection, and with nothing selected it opens the pause menu. P pauses too.
 
 ### HUD
 
 - **Top bar:** money, revenue vs. target, the countdown (large, centered), casualties (x/8), and the pause button. In Act 2 the countdown switches to time until power returns, and the bar adds loose and secured dinosaur counts. Revenue keeps counting in the dark. Once the park evacuates, that slot shows how many visitors are still in the park.
 - **Top bar in levels 1 and 2:** money, spent vs. the star's cap (red past it), the countdown until the park opens, loose and back counts, and in level 2 troops lost. The bottom bar has no build buttons.
-- **Top bar in level 4:** whether a raptor has seen the Engineer ("Unseen" in green, "Spotted" in red, for the third star), the countdown until dawn, the loose count, and how many substations are fixed ("Power 1 of 3"). No money. The bottom bar has no HQ button.
-- **View cones:** in level 4, each raptor on patrol shows what it sees as a pale cone on the ground, cut short by rock, pens, HQ, and substations. A raptor on the hunt shows a red line to its prey and a ring around it instead, and "!" rises over a raptor when it spots someone.
+- **Top bar in level 4:** whether a raptor has noticed the Engineer ("Unseen" in green, "Spotted" in red, for the third star), the countdown until dawn, the loose count, and how many substations are fixed ("Power 1 of 3"). No money. The bottom bar has no HQ button.
+- **View cones:** in level 4, each raptor on patrol shows what it sees as a pale cone on the ground, cut short by rock, pens, HQ, and substations. While it makes out a troop, its cone turns orange, a ring fills around it, and "?" rises over it. A raptor on the hunt shows a red line to its prey and a ring around it instead, and "!" rises over a raptor when it comes for someone. The banner, or a toast for the squad, says "A raptor is after the Engineer."
 - **Top bar in level 5:** animals killed (x/3), the countdown until the park opens, loose and secured counts, and troops lost. No money. The bottom bar has no HQ button.
 - **Health bars:** in level 5, a red bar under an animal's sedation bar shows its health once it's hurt.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 - **Pause menu:** stops the clock and shows how each star goal is going. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
 - **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors. In levels 1 and 2 it says how long the team takes to sedate one of the loose animals.
-- **When the power goes out** the camera moves to show every exhibit. At the start of levels 1, 2, and 5 it shows HQ and every loose animal. At the start of level 4 it shows HQ and the substations.
+- **When the power goes out** the camera moves to show every exhibit. At the start of levels 1, 2, and 5 it shows HQ and every loose animal. At the start of level 4 it shows HQ and the substations. With tips on, it goes back to that view once the opening tips are read.
 - **Edge arrows:** in Act 2, and all through levels 1, 2, 4, and 5, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
 
 ### Tips
@@ -277,8 +279,8 @@ Short tips teach the two defense lessons from section 13: guard each raptor pen,
 
 - A tip appears when it's useful, once per session: when you build your first raptor pen, when you build the T. rex paddock, at the 1:00 warning (first how the evacuation works, if the park has an animal that breaks out on its own, then whether a raptor pen has no troops nearby), when raptors kill visitors beside an unguarded pen, and when the T. rex kills a troop that was on its own.
 - Level 1 has its own: at the start (how to train a squad), when the first squad is ready (how to send it after a Triceratops), and the first time a troop makes a Triceratops run (come at it from the open side). Level 2: at the start (raptors guard the nest; go in as one group, and pull back if it goes badly), and when raptors kill a troop (a group darts them down first; Heavy Teams last 25 bites).
-- Level 4: at the start (stay out of the cones; rock, pens, and substations block them; a raptor that sees a troop calls the other), right after it (fix the west substation; its raptors go for their fence at 1:00), when a substation is fixed (its pens are sealed; which pen on a timer is next), the first time a raptor sees a troop (the Engineer can't outrun them, and a raptor goes for whoever darts it; or, for the squad, two raptors are too many but buy the Engineer time), and when the Tranq Squad is lost (the raptors go back to their routes).
-- Level 5: at the start (the animals are wounding each other; whoever you dart turns on you), right after it (how to load and drive the 4x4), the first time the T. rex winds up a charge (load its target into the 4x4 and drive away), when the fight breaks into a pen, and when the first animal is killed.
+- Level 4: at the start (stay out of the cones; rock, pens, and substations block them; a raptor takes a moment to make out a troop, and its cone turns orange while it does; once it's sure, it comes and calls the other), right after it (tap the Engineer, then the side of the west substation to work from; its raptors go for their fence at 1:00), when a substation is fixed (its pens are sealed; which pen on a timer is next), the first time a raptor notices a troop (get out of sight before the ring fills; for the Engineer, being noticed at all costs its star), the first time a raptor comes for a troop (whether it called the other; the Engineer can't outrun them, and a raptor goes for whoever darts it; or, for the squad, two raptors are too many but buy the Engineer time, and one alone can be darted down), and when the Tranq Squad is lost (the raptors go back to their routes).
+- Level 5: at the start (the animals are wounding each other; a raptor you dart turns on you, and so does the T. rex once fewer than two raptors are on it), right after it (how to load and drive the 4x4), the first time the T. rex roars at a troop (load that troop into the 4x4 and keep driving around nearby while the others dart it), when the fight breaks into a pen (put it down before it reaches the next one), and when the first animal is killed.
 - The game pauses while a tip is open, and the camera moves to what the tip is about. Orders still work while paused.
 - **Got it** closes the tip. **Hide tips** turns tips off. The briefing has a **Show tips** checkbox, and the choice is remembered on that device.
 
@@ -337,21 +339,25 @@ When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
 The T. rex and raptors fight each other. In the other levels they ignore each other.
 
-- Every animal has health: a raptor 150, the T. rex 1,200. Health and sedation are separate. Darts don't hurt, and wounds don't put an animal to sleep.
+- Every animal has health: a raptor 100, the T. rex 1,200. Health and sedation are separate. Darts don't hurt, and wounds don't put an animal to sleep.
 - **Raptors** within 8 tiles of a loose T. rex go for it instead of troops. They spread around it and keep circling, and each bites it for 5 health once a second. A raptor darted in the last 5 s goes for the troop that darted it instead, if that troop is within 8 tiles.
 - **The T. rex** bites the most wounded raptor in reach for 20 health every 3 s. That's on top of its bites on troops, which work as before.
-- **While raptors are on it,** the T. rex walks toward the nearest pen without power that still has animals inside at 12 px/s instead of 90, and breaks in as in the blackout. With no such pen it stands its ground. A T. rex locked onto a troop goes after the troop at full speed instead, and the fight goes with it.
+- **While raptors are on it,** the T. rex walks toward the nearest pen without power that still has animals inside at 20 px/s instead of 90, and breaks in as in the blackout. With no such pen it stands its ground. A T. rex locked onto a troop goes after the troop at full speed instead, and the fight goes with it.
+- **The shield:** while two or more raptors are on it, the T. rex is too busy for troops. A dart doesn't lock it on, and a lock it already has waits until fewer than two are on it.
+- **The roar:** when the T. rex locks onto a troop, it stops and faces it for 2 s, and "Roar!" rises over it. Then it goes after the troop, charges included. Raptors in reach still get bitten while it roars.
 - **An animal at 0 health is killed.** It falls and stays down a few seconds. It counts toward the level's limit of 3.
 
 ### Raptors on patrol (level 4)
 
 Level 4's loose raptors only know what they see. In the other levels raptors hunt the nearest troop or guest they can reach.
 
-- **Patrol:** each walks its route at 45 px/s and stops at each turn for 2.5 s, looking 70 degrees either way.
-- **Sight:** a cone 90 degrees wide and 5 tiles long, ahead of it. Rock, pens, HQ, towers, and substations block it; water and paths don't. It also notices a troop within 1.2 tiles, whichever way it looks.
-- **Spotted:** a raptor that notices a troop, or is darted by one, hunts it at full speed and calls the other raptor, wherever it is. It keeps track of its prey up to 10 tiles away in clear sight. Out of sight, it runs to where it last saw it, and goes back to its route after 4 s without seeing it again.
+- **Patrol:** each starts at a random point on its route, going either way round. It walks the route at 45 px/s and stops at each turn for 2.5 s, looking 70 degrees either way.
+- **Sight:** a cone 90 degrees wide and 5 tiles long, ahead of it. Rock, pens, HQ, towers, and substations block it; water and paths don't. A troop that walks into it, within 0.6 tiles, is noticed at once, whichever way it looks.
+- **Noticing:** a troop in its cone takes 0.8 s to make out. The raptor stops, its cone turns orange, and a ring fills around it. If the troop is still in sight when the ring is full, the raptor spots it. If the troop gets out of sight first, the ring drains at the same rate, and the raptor walks on once it's empty. Being noticed at all costs the Engineer's star.
+- **Spotted:** a raptor that spots a troop hunts it at full speed and calls the other raptor, wherever it is. It keeps track of its prey up to 10 tiles away in clear sight. Out of sight, it runs to where it last saw it, and goes back to its route after 4 s without seeing it again.
+- **Darts:** a calm raptor that sees who darts it spots the shooter and calls the other. One darted from out of its cone, or one already on the hunt, goes after the shooter alone.
 - Raptors that break out of the west pen use the same sight, wandering instead of walking a route.
-- A Tranq Squad darts one raptor down in 6 s and loses about half its HP doing it. Two at once kill it, and since a raptor that spots a troop calls the other, a fight is almost always two.
+- A Tranq Squad darts one raptor down in 6 s and loses about half its HP doing it. Two at once kill it. So the squad can take a raptor it darts from behind, but not two.
 
 ## 9. Winning and losing
 
@@ -398,9 +404,9 @@ Level 4's timeline adds each substation fixed, with the pens it sealed, each pen
 - The T. rex's locked-on target gets an orange ring. Before a charge, an orange arc fills around the T. rex and "Charge!" floats up; while charging it has an orange ring and streak.
 - Level 2's nest: a brown disc ringed with twigs, with three pale eggs.
 - Level 4's substations: a dark steel block with a yellow lightning bolt, a red light while broken, and a progress ring while Engineers work. Fixed, it glows cyan. A thin cable runs along the ground to each pen it powers, gray when off and cyan when on. Pens without power keep gray fences while the others turn cyan.
-- Level 4's raptors on patrol: a pale yellow cone on the ground for what each one sees; a red line and ring once it's after someone.
+- Level 4's raptors on patrol: a pale yellow cone on the ground for what each one sees. It turns orange, with a ring filling around the raptor, while the raptor makes out a troop, and "?" rises over it. Once it's after someone, "!" rises over it and a red line and ring replace the cone.
 - Engineer: a small blue circle with a yellow ring. Patrol 4x4: a navy rounded rectangle with a white roll bar, pointing where it's going, with a blue dot for each troop inside.
-- Level 5: a red health bar under an animal's sedation bar once it's hurt. A killed animal turns dark, gets a red cross, and fades.
+- Level 5: a red health bar under an animal's sedation bar once it's hurt. A killed animal turns dark, gets a red cross, and fades. "Roar!" rises over the T. rex when it locks onto a troop.
 
 ### 3D build (all five levels)
 
@@ -416,9 +422,9 @@ A test build, `slice.html`, draws every level in real 3D with three.js, to try t
 - Dinosaurs: animated models with patterned skin. At night their eyes catch the light faintly.
 - Building (level 3): picking an exhibit or a tower shows a preview on the ground, green where it fits and red where it doesn't, with the new path tiles and the viewing spot, or the tower's range. Tap the map to move it. Dust rises where something is built or reinforced.
 - Guests (level 3): six models in their own colours of skin, hair, and clothes. They walk the paths, wave, hold up glowing phones in the dark, and run when they see danger. A guest who is killed falls and stays down a few seconds.
-- The blackout: level 3 starts by day. When the power is cut, the park goes dark: moonlight, troop flashlights, HQ floodlights, and tower searchlights. When the power comes back, so does the day.
-- Words float up as in the 2D game: money paid (payments that land together show as one sum), Breach!, Secured, and Charge!. The T. rex's intent shows on the ground as in the 2D game: an orange ring under its target, a filling arc and a line during the wind-up, and a ring and streak while it charges.
-- Level 4 plays at night. Substations are fenced transformer yards with a warning sign and a beacon, red while broken and cyan once fixed; sparks fly while the Engineer works, and a fixed one's pens get their fence glow and lamps back. The Engineer is a park worker in a yellow hard hat and an orange high-visibility vest, with a toolbox instead of a gun. Each raptor on patrol casts a pale cone of what it sees on the ground, cut short by cover and fading toward its far edge, which a thin outline marks. Once a raptor is after someone, a red line runs from it to its prey and a red ring sits under the prey instead.
+- The blackout: level 3 starts by day. When the power is cut, the park goes dark: moonlight, troop flashlights, HQ floodlights, and tower searchlights. When the power comes back, so does the day. Level 4 has no troop flashlights.
+- Words float up as in the 2D game: money paid (payments that land together show as one sum), Breach!, Secured, Charge!, and Roar!, and "?" and "!" over a raptor on patrol. The T. rex's intent shows on the ground as in the 2D game: an orange ring under its target, a filling arc and a line during the wind-up, and a ring and streak while it charges.
+- Level 4 plays at night. Substations are fenced transformer yards with a warning sign and a beacon, red while broken and cyan once fixed; sparks fly while the Engineer works, and a fixed one's pens get their fence glow and lamps back. The Engineer is a park worker in a yellow hard hat and an orange high-visibility vest, with a toolbox instead of a gun. Troops carry no flashlights here, since light means nothing to the raptors. Each raptor on patrol casts a pale cone of what it sees on the ground, cut short by cover and fading toward its far edge, which a thin outline marks, and a yellow ring at its feet marks it at the tip of its cone. While it makes out a troop, its cone turns orange and an orange ring fills around it. Once a raptor is after someone, a red line runs from it to its prey and a red ring sits under the prey instead.
 - Level 5: the Patrol 4x4 is an open-top 4x4 with a roll bar, a light bar, and a spare wheel, in navy and white with the team's shield on the doors. It's built from shapes, with no maker's grille or badges. Troops inside ride in the seats. Hurt animals flinch, and a killed one falls and stays down a few seconds.
 - Night: a test switch turns the blackout lighting on and off by hand, without changing the rules.
 - Assets: Quaternius models (CC0) and textures generated for the project. `public3d/LICENSES.md` lists them.
@@ -535,34 +541,41 @@ Level 2, 4:00 on the clock and $21,000. Stars at $13,500 or less and no troops l
 | 1 Heavy + 4 Tranq | $15,000 | Won 16 of 16, lost 0.6 | Won 2 of 16 |
 | 2 Heavy + 2 Tranq | $16,500 | Won 16 of 16, lost 0.6 | Won 15 of 16, lost 1.9 |
 
-Level 4, 3:30 until dawn, one Engineer and one Tranq Squad. The west raptors go for their fence at 1:00 and the T. rex at 1:50. Stars for no troops lost and never spotted. The scripted Engineer fixes the west substation, then the north one, then the south one. Sneaking, it moves only through tiles no raptor sees now or in the next 2 s (read off their routes, with a tile of margin), waits in cover when there's no safe way on, and works from whichever side of the block is out of sight. Its decisions come every 0.5 to 2 s, like a person's reaction time.
+Level 4, 3:30 until dawn, one Engineer and one Tranq Squad. The west raptors go for their fence at 1:00 and the T. rex at 1:50. Stars for no troops lost and never spotted (no raptor ever notices the Engineer). Each raptor starts at a random point on its route, so every seed opens differently. The scripted Engineer fixes the west substation, then the north one, then the south one. Sneaking, it moves only through tiles no raptor sees now or in the next 2 s (read off their routes by path, corners and stops included, with a tile of margin), waits in cover when there's no safe way on, steps back into cover when a cone comes its way, and works from whichever side of the block is out of sight. Its decisions come every 0.5 to 2 s, like a person's reaction time.
 
-| Plan | Result | Fixed at | Engineer seen | Troops lost (of 2) | Stars |
+| Plan | Result | Fixed at | Engineer noticed | Troops lost (of 2) | Stars |
 |---|---|---|---|---|---|
-| Sneak, decisions every 0.5 s | Won 16 of 16, 1:53 to 1:55 left | 0:21, 0:54, 1:34 | Never | 0 | ★★★ |
-| Sneak, every 1 s | Won 16 of 16, 1:52 to 1:53 left | 0:21, 0:57, 1:36 | Never | 0 | ★★★ |
-| Sneak, every 1.5 s, less careful | Won 15 of 16, 0:52 to 1:23 left | 0:21, 1:18, 2:18 | In 1 | 0.1 | ★★★ in 15 |
-| Sneak, every 2 s | Lost 16 of 16 | 0:22, then the T. rex gets out first | Never | 1 | |
-| Sneak, Tranq Squad draws the raptors off at the south substation | Won 16 of 16, 1:52 to 1:57 left | 0:21, 0:54, 1:34 | Never | 1 | ★★ |
-| Sneak, Tranq Squad darts the south raptor | Lost 16 of 16 | 0:21, 0:54 | Always | 2 | |
-| Straight to each substation | Lost 16 of 16 | 0:21 | Always, at about 0:30 | 1 | |
+| Sneak, decisions every 0.5 s | Won 15 of 16, 1:54 to 2:07 left | 0:21, 0:55, 1:29 | In 3 | 0.1 | ★★★ in 13, ★★ in 2 |
+| Sneak, every 1 s | Won 15 of 16, 1:41 to 2:01 left | 0:21, 0:59, 1:38 | In 4 | 0.1 | ★★★ in 12, ★★ in 3 |
+| Sneak, every 1.5 s, less careful | Won 16 of 16, 1:19 to 1:51 left | 0:21, 1:07, 1:51 | Never | 0 | ★★★ |
+| Sneak, every 2 s | Won 9 of 16, 0:45 to 1:35 left | 0:22, 1:24, 2:19 | In 6 | 0.4 | ★★★ in 7, ★★ in 2 |
+| Sneak, every 1 s, reading only the cones as they are | Won 15 of 16, 1:40 to 2:02 left | 0:21, 0:59, 1:34 | In 11 | 0.1 | ★★★ in 5, ★★ in 10 |
+| Sneak, Tranq Squad draws the raptors off at the south substation | Won 15 of 16, 1:56 to 2:08 left | 0:21, 0:55, 1:26 | In 3 | 0.5 | ★★★ in 7, ★★ in 7, ★ in 1 |
+| Sneak, Tranq Squad sent straight at the south raptor | Won 14 of 16, 1:57 to 2:08 left | 0:21, 0:55, 1:25 | In 3 | 0.2 | ★★★ in 12, ★★ in 2 |
+| Sneak, Tranq Squad darts the south raptor from behind | Won 16 of 16, 1:56 to 2:08 left | 0:21, 0:55, 1:26 | In 3 | 0.1 | ★★★ in 13, ★★ in 2, ★ in 1 |
+| Straight to each substation | Won 1 of 16 | 0:21, then the Engineer is lost in 15 | Always | 0.9 | ★★ in 1 |
 
-Level 5, 3:00 on the clock, 2 Heavy Teams, 2 Tranq Squads, and the 4x4. Stars for no troops lost and no animal killed. Troops dart raptors first unless the row says otherwise.
+A squad sent straight at the south raptor reaches dart range from outside its cone in 13 of 16 games, and the raptor comes alone. In the other 3 it sees the squad and calls the other: once the squad is lost, and twice the Engineer, caught going in while the raptors were busy. The script that reads only the cones as they are wins as often, but a raptor notices the Engineer in 11 of 16 games, so learning the routes is what earns the third star.
 
-| Plan | Result | Animals killed | Troops lost (of 4) | Stars |
-|---|---|---|---|---|
-| Heavy Teams in the 4x4 to the fight | Won 16 of 16 | 0 | 2.4 | ★★ |
-| Same, and the 4x4 pulls the T. rex's target away | Won 16 of 16 | 0 | 0.2 | ★★★ in 13 of 16 |
-| 4x4, T. rex first | Won 16 of 16 | 0 | 2.4 | ★★ |
-| Everyone walks | Won 16 of 16 | 0 | 2.9 | ★★ |
-| Everyone walks, T. rex first | Won 14 of 16, lost 2 to running out of troops | 0.1 | 2.6 | ★★ |
-| 4x4, orders start after 10 s | Won 16 of 16 | 0 | 2.1 | ★★ |
-| Everyone walks, orders start after 20 s | Won 16 of 16 | 1.0 | 2.2 | ★ |
-| 4x4, orders every 3 s | Won 16 of 16 | 0 | 1.5 | ★★ |
+Level 5, 3:00 on the clock, 2 Heavy Teams, 2 Tranq Squads, and the 4x4. Stars for no troops lost and no animal killed. Troops dart raptors first unless the row says otherwise. Every win ends with 2:15 to 2:43 left.
 
-Left alone, the T. rex kills a raptor at about 0:21, 0:45, and 1:09, so doing nothing loses at about 1:09. The fight breaks into the south pasture at about 0:29 and the west raptor pen at about 0:54. The T. rex costs troops: about two of four unless the troop it locks onto is driven away in the 4x4, which takes the troop out of reach and the T. rex after the 4x4 until it gives up.
+| Plan | Result | Animals killed | Troops lost (of 4) | Pen broken | Stars |
+|---|---|---|---|---|---|
+| Heavy Teams in the 4x4 to the fight | Won 16 of 16 | 0 | 1.0 | Never | ★★ |
+| Same, and the 4x4 decoys the T. rex | Won 16 of 16 | 0 | 0 | Never | ★★★ |
+| Same, and the 4x4 drives the T. rex's target off | Won 16 of 16 | 0 | 0 | Never | ★★★ |
+| 4x4, T. rex first | Won 16 of 16 | 1.0 | 0 | Never | ★★ |
+| 4x4, the most hurt raptor, then the T. rex | Won 16 of 16 | 0 | 1.0 | Never | ★★ |
+| Same, and the 4x4 decoys the T. rex | Won 16 of 16 | 0 | 0 | Never | ★★★ |
+| Everyone walks | Won 16 of 16 | 0 | 1.7 | Never | ★★ |
+| Everyone walks, T. rex first | Won 16 of 16 | 1.0 | 0 | Never | ★★ |
+| 4x4, orders start after 10 s | Won 14 of 16, lost 2 to 3 animals killed | 1.3 | 1.5 | In 2 | ★ |
+| Everyone walks, orders start after 20 s | Won 16 of 16 | 1.0 | 2.2 | Always | ★ |
+| 4x4, orders every 3 s | Won 16 of 16 | 0 | 2.0 | Never | ★★ |
 
-`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each other level: level 1 is won twice in 20 (random orders rarely corner anything in time), and level 2 is won 14 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together. Level 4 is never won at random: the Engineer is lost in all 20. Level 5 is won twice in 20; 10 lose every troop and 8 let 3 animals die.
+Left alone, the T. rex kills a raptor at about 0:12, 0:27, and 0:42, so doing nothing loses at about 0:42. The fight breaks into the west raptor pen at about 0:24. Whichever side the troops dart first, the other costs a star: darting the raptors first frees the T. rex, which takes a troop (it roars first, and a troop driven off in the 4x4 is safe), and darting the T. rex first, while the raptors shield it, costs a raptor, since the T. rex kills one every 15 s. Only the 4x4 decoy, or driving the T. rex's target off, saves both.
+
+`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each other level: level 1 is won twice in 20 (random orders rarely corner anything in time), and level 2 is won 14 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together. Level 4 is never won at random: the Engineer is lost in 19 of 20, and dawn comes first in the other. Level 5 is won 5 times in 20, four of them with one star; 13 let 3 animals die and 2 lose every troop.
 
 What to watch in playtests:
 
@@ -578,8 +591,8 @@ What to watch in playtests:
 - Building extra cheap pastures can lower revenue, because visitors spend their short visits on $10 exhibits. That's intended, and the end screen shows revenue per exhibit.
 - Level 1's clock is the lever for how hard it feels. At 2:30 one squad sometimes runs out of time even in the scripted runs, and two usually earn three stars. A person tapping orders is much slower, so two or three squads should be the norm. If it's too hard, try 3:00; if it's too easy, 2:00. The time star needs 1:00 left either way.
 - Level 2 is easy to win once troops go in together, and the stars carry the challenge. If it feels too easy, lower the starting money: at $15,000, five Tranq Squads or two Heavy Teams still fit, with less room to recover from a bad first fight.
-- Level 4 is a stealth level, and the scripts show its shape: patience wins all three stars, walking straight in loses, and spending the Tranq Squad as a decoy costs one star. A careful script finishes with almost 2:00 to spare, so dawn is a backstop; the real clock is the T. rex at 1:50, which ends a slow game (the 2 s script). If people get caught too often, the levers are the cone (`STEALTH.sightTiles`, `coneDeg`), the stops (`lookSeconds`, `lookDeg`), and the patrol speed. If the south substation is too hard to work unseen, widen the south route (`MISSIONS[4].park[3].patrols`).
-- Level 5's win is easy and its stars carry the challenge: speed saves the animals, and the 4x4 saves the troops. If no animal ever dies, lower the raptors' health (`DINOS.raptor.health`); each 30 is about 4.5 s off the first death. If the T. rex feels unbeatable without losses, `FIGHT.trexBite` and the team are the levers.
+- Level 4 is a stealth level, and the scripts show its shape: patience wins, walking straight in loses, and the third star needs the routes learned, not just the cones read. The squad has two uses now: a decoy that often costs a star, or an ambush from behind that takes one raptor out of the level. A careful script finishes with about 2:00 to spare, so dawn is a backstop; the real clock is the T. rex at 1:50. The slowest script (every 2 s) loses its Engineer to the T. rex in 3 of 16 games, and to the raptors in 4 more. If people get caught too often, the levers are the noticing beat (`STEALTH.noticeSeconds`), the cone (`sightTiles`, `coneDeg`), the stops (`lookSeconds`, `lookDeg`), and the patrol speed. If a squad sent straight at a raptor wins too easily, the cone is the lever: a wider one sees more of the ways in.
+- Level 5's win is easy and its stars carry the challenge: speed saves the pen, the order of darting costs a troop or an animal, and the 4x4 saves both. If animals die too fast, raise the raptors' health (`DINOS.raptor.health`); each 30 is about 4.5 s more before the first death. If the T. rex first is too safe, lower `FIGHT.shieldRaptors` or raise the raptors' bite on it; if the decoy is too hard to pull off, `FIGHT.lockRoarSeconds` is the time a player gets to react.
 
 ## 14. Later, not now
 

@@ -56,6 +56,8 @@ export interface ViewWorld {
   substations?: readonly SubstationView[];
   cones?: readonly ConeView[];
   working?: ReadonlyMap<number, Point>;
+  /** Level 4: troops carry no lights, since light means nothing to the raptors. */
+  stealth?: boolean;
 }
 
 export type Quality = 'high' | 'low' | 'still';
@@ -820,7 +822,7 @@ export class View3D {
     if (this.night) {
       const troops: { pos: THREE.Vector3; dir: THREE.Vector3 }[] = [];
       for (const u of w.units) {
-        if (u.kind === 'tower' || u.dead || u.aboard) continue;
+        if (u.kind === 'tower' || u.dead || u.aboard || w.stealth) continue;
         const dir = V3(Math.cos(u.facing), 0, Math.sin(u.facing));
         troops.push({ pos: V3(u.x / w.T, u.kind === 'heavy' ? 0.4 : 0.32, u.y / w.T), dir });
       }

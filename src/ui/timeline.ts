@@ -301,11 +301,11 @@ function gridAdvice(r: Result): string | null {
     if (escapes.some((e) => e.type === 'escape' && e.kind === 'raptor') && raptors !== null) {
       return `Fix the west substation first. Its raptors go for their fence at ${clock(raptors)}.`;
     }
-    if (seen || lost) return 'Watch the cones on the ground. Wait in cover until a raptor turns away: it can’t see through rock, pens, or substations.';
+    if (seen || lost) return 'Watch the cones on the ground and wait in cover until a raptor turns away. When a cone turns orange, get out of it before the raptor is sure.';
     return 'Keep moving. Work done on a substation stays done, so fix what you can and come back.';
   }
-  if (seen) return 'Keep the substation between the Engineer and the raptor, and move around it as the raptor walks around. The block hides you.';
-  if (r.troopsLost) return 'Every raptor that sees a troop calls the other. To keep the Tranq Squad, keep it out of sight too.';
+  if (seen) return 'Watch a raptor go round once before you send the Engineer in. A substation’s block hides whoever is on its far side.';
+  if (r.troopsLost) return 'A raptor that sees who darts it calls the other. Dart one from behind, out of its cone, and it comes alone.';
   return null;
 }
 
@@ -316,11 +316,13 @@ function fightAdvice(r: Result): string | null {
   const byTrex = losses.filter((e) => e.type === 'lost' && e.by === 'trex').length;
   if (!r.won && r.reason === 'abandoned' && !killed && !losses.length) return null;
   if (r.reason === 'killed' || (!r.won && killed >= 2)) {
-    return 'Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor about every 30 s.';
+    // A bite every FIGHT.trexBiteSeconds on the most hurt raptor, until it's gone.
+    const every = Math.ceil(DINOS.raptor.health / FIGHT.trexBite) * FIGHT.trexBiteSeconds;
+    return `Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor every ${every} s.`;
   }
-  if (byTrex) return 'When the T. rex locks onto a troop, load that troop in the 4x4 and drive it away while the others keep darting.';
-  if (losses.length) return 'A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last 25 bites.';
-  if (killed) return 'Dart the raptors first, from the far side of the T. rex. Every raptor you take out is one it can’t kill.';
+  if (byTrex) return 'When the T. rex roars at a troop, load that troop in the 4x4 and keep driving around nearby: the T. rex chases the 4x4 while the others dart it.';
+  if (losses.length) return `A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last ${Math.round(UNITS.heavy.hp / DINOS.raptor.troopDamage)} bites.`;
+  if (killed) return 'The T. rex always bites the most hurt raptor. Dart that one first, while the others keep the T. rex busy.';
   return null;
 }
 

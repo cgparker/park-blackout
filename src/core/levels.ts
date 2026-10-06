@@ -67,11 +67,7 @@ export function setupMission(w: World, cfg: MissionConfig): void {
       }
       const route = p.patrols?.[i];
       if (route?.length) {
-        const stops = route.map(([x, y]) => ({ x: (x + 0.5) * T, y: (y + 0.5) * T }));
-        letOut(w, d, stops[0].x, stops[0].y, null);
-        d.patrol = stops;
-        d.patrolIndex = stops.length > 1 ? 1 : 0;
-        d.facing = Math.atan2(stops[d.patrolIndex].y - d.y, stops[d.patrolIndex].x - d.x);
+        startPatrol(w, d, route);
         return;
       }
       const spot = p.out?.[i];
@@ -116,6 +112,43 @@ function placeSubstation(w: World, i: number, name: string, tile: readonly [numb
     ex.version++;
   }
   return { id: i + 1, name, x, y, pens: pens.map((e) => e.id), work: 0, workers: 0, fixed: false };
+}
+
+/**
+ * Puts a raptor on its patrol route somewhere different each game: either way round, anywhere along it, so the
+ * patrols have to be read, not remembered.
+ */
+function startPatrol(w: World, d: Dino, route: readonly (readonly [number, number])[]): void {
+  const T = w.T;
+  const stops = route.map(([x, y]) => ({ x: (x + 0.5) * T, y: (y + 0.5) * T }));
+  if (w.rng() < 0.5) stops.reverse();
+  d.patrol = stops;
+  if (stops.length < 2) {
+    letOut(w, d, stops[0].x, stops[0].y, null);
+    d.patrolIndex = 0;
+    return;
+  }
+  // A point along a random leg, then on toward that leg's end. Legs are walked by path, so a straight line can
+  // cross cover: slide back toward the leg's start until the point is on open ground.
+  const from = Math.floor(w.rng() * stops.length);
+  const to = (from + 1) % stops.length;
+  const a = stops[from];
+  const b = stops[to];
+  const open = (p: { x: number; y: number }) => w.dinoWalk(Math.floor(p.x / T), Math.floor(p.y / T));
+  let k = w.rng();
+  let p = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+  for (let i = 0; i < 8 && !open(p); i++) {
+    k *= 0.5;
+    p = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+  }
+  if (!open(p)) p = { x: a.x, y: a.y };
+  letOut(w, d, p.x, p.y, null);
+  if (!open(d)) {
+    d.x = p.x;
+    d.y = p.y;
+  }
+  d.patrolIndex = to;
+  d.facing = Math.atan2(b.y - d.y, b.x - d.x);
 }
 
 function letOut(w: World, d: Dino, x: number, y: number, nest: Dino['nest']): void {

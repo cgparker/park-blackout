@@ -5,7 +5,7 @@ import { BLACKOUT, CAMERA, DINOS, EXHIBITS, EXHIBIT_KINDS, FIGHT, INPUT, SCORING
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { substationCenter } from '../core/power';
-import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderMove, orderRepair, passengers, type Unit } from '../core/units';
+import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderHold, orderMove, orderRepair, passengers, type Unit } from '../core/units';
 import { World, type GameEvent } from '../core/world';
 import type { Params } from '../params';
 import { MARGIN } from '../render3d/terrain';
@@ -76,6 +76,8 @@ export class SliceGame {
   private readonly keys = new Set<string>();
   private readonly seenTips = new Set<TipId>();
   private tipQueue: Tip[] = [];
+  /** Mission levels: the view the level opened on, to go back to once the opening tips are read. */
+  private startFrame: (() => void) | null = null;
   private escapeToasts = new Map<string, number>();
   private breaches: { x: number; y: number; until: number }[] = [];
   private arrowTargets = new Map<string, Point>();
@@ -370,12 +372,23 @@ export class SliceGame {
         this.selected = new Set(this.world.units.filter(canCommand).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
+      hold: () => orderHold(this.world, this.selected),
+      selectEngineer: () => {
+        const e = this.world.units.find((u) => u.kind === 'engineer' && canCommand(u));
+        if (!e) return;
+        this.selected = new Set([e.id]);
+        if (this.hud.panel) this.closePanels();
+        this.moveCamera({ x: e.x / this.world.T, z: e.y / this.world.T, dist: this.cam.dist });
+      },
       tipDone: () => this.nextTip(),
       tipsOff: () => {
         this.session.tips = false;
         saveTipsOn(false);
         this.tipQueue = [];
         this.hud.hideTip();
+        const back = this.startFrame;
+        this.startFrame = null;
+        back?.();
         this.hud.toast('Tips are off. Turn them back on from the briefing.');
       },
       openMenu: () => this.openMenu(),
@@ -441,7 +454,8 @@ export class SliceGame {
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
     const troops = w.units.reduce((n, u) => (canCommand(u) ? n + 1 : n), 0);
-    this.hud.setTroops(troops, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild);
+    const engineer = w.units.some((u) => u.kind === 'engineer' && canCommand(u));
+    this.hud.setTroops(troops, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild, engineer);
     this.hud.setHq(w.trainable.length > 0);
     if (this.hud.panel === 'place') {
       const r = this.placementRect();
@@ -552,14 +566,16 @@ export class SliceGame {
               : w.dinos.filter((d) => d.state === 'loose').map((d) => ({ x: d.x / T, y: d.y / T }));
           if (w.nest) pts.push({ x: w.nest.x / T, y: w.nest.y / T });
           this.frame(pts, true);
+          // The opening tips each point the camera at something; when they're done, it goes back to this view.
+          this.startFrame = this.session.tips ? () => this.frame(pts, true) : null;
           break;
         }
         case 'spotted': {
           this.float('!', e.x / T, 0.95, e.y / T, '#ff6b5a', 1.4);
           if (spotted.has(e.unitId)) break;
           spotted.add(e.unitId);
-          if (e.kind === 'engineer') this.hud.showBanner('A raptor saw the Engineer.', 'danger', 3);
-          else this.hud.toast(`A raptor saw the ${UNITS[e.kind].name}.`);
+          if (e.kind === 'engineer') this.hud.showBanner('A raptor is after the Engineer.', 'danger', 3);
+          else this.hud.toast(`A raptor is after the ${UNITS[e.kind].name}.`);
           break;
         }
         case 'substationFixed': {
@@ -606,6 +622,12 @@ export class SliceGame {
           break;
         case 'charge':
           this.float('Charge!', e.x / T, 1.6, e.y / T, '#ff9a4d', 1.2);
+          break;
+        case 'roar':
+          this.float('Roar!', e.x / T, 1.6, e.y / T, '#ff9a4d', 1.4);
+          break;
+        case 'noticed':
+          this.float('?', e.x / T, 0.95, e.y / T, '#ffae5a', 1);
           break;
         case 'trained':
           this.hud.toast(`${UNITS[e.kind].name} ready`);
@@ -660,6 +682,9 @@ export class SliceGame {
     const tip = this.world.phase === 'ended' ? undefined : this.tipQueue.shift();
     if (!tip) {
       this.hud.hideTip();
+      const back = this.startFrame;
+      this.startFrame = null;
+      back?.();
       return;
     }
     this.hud.showTip(tip.title, tip.body);
@@ -894,6 +919,7 @@ export class SliceGame {
         if (this.hud.menuOpen) this.hud.hideMenu();
         else this.openMenu();
       } else if (key === 'n') this.setNight(!this.night);
+      else if (key === 'h' && !this.blocked) orderHold(this.world, this.selected);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     window.addEventListener('blur', () => this.keys.clear());
@@ -1157,11 +1183,15 @@ export class SliceGame {
     }
     const g = this.view.groundAt(sx, sy);
     if (!g) return;
-    const sub = w.substationAtTile(Math.floor(g.x), Math.floor(g.z));
+    // With an Engineer selected, a tap on a broken substation or the tiles around it sends it to the side tapped.
+    const tx = Math.floor(g.x);
+    const ty = Math.floor(g.z);
+    const engineer = [...this.selected].some((id) => w.unitById(id)?.kind === 'engineer');
+    const near = engineer ? w.substationNearTile(tx, ty) : undefined;
+    const sub = near && !near.fixed ? near : w.substationAtTile(tx, ty);
     if (sub) {
-      orderRepair(w, this.selected, sub.id);
-      const c = substationCenter(sub, w.T);
-      this.view.markMove(c.x / w.T, c.y / w.T);
+      const to = orderRepair(w, this.selected, sub.id, engineer ? { x: g.x * w.T, y: g.z * w.T } : undefined) ?? substationCenter(sub, w.T);
+      this.view.markMove(to.x / w.T, to.y / w.T);
       return;
     }
     const x = clamp(g.x, 0.05, w.grid.cols - 0.05) * w.T;

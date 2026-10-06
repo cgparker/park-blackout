@@ -20,7 +20,7 @@ import {
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { substationCenter } from '../core/power';
-import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderMove, orderRepair, passengers, type Unit } from '../core/units';
+import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderHold, orderMove, orderRepair, passengers, type Unit } from '../core/units';
 import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
@@ -98,6 +98,8 @@ export class GameScene extends Phaser.Scene {
   /** Tips already shown this session (Retry doesn't repeat them), and tips waiting their turn. */
   private readonly seenTips = new Set<TipId>();
   private tipQueue: Tip[] = [];
+  /** Mission levels: the view the level opened on, to go back to once the opening tips are read. */
+  private startFrame: (() => void) | null = null;
   private showFps = false;
   private resizeHandler: (() => void) | null = null;
   /** A camera move in progress (to the park at the blackout, or to an arrow's target). Any pan or zoom cancels it. */
@@ -232,6 +234,14 @@ export class GameScene extends Phaser.Scene {
         this.selected = new Set(this.world.units.filter(canCommand).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
+      hold: () => orderHold(this.world, this.selected),
+      selectEngineer: () => {
+        const e = this.world.units.find((u) => u.kind === 'engineer' && canCommand(u));
+        if (!e) return;
+        this.selected = new Set([e.id]);
+        if (this.hud.panel) this.closePanels();
+        this.moveCamera(e.x, e.y, this.zoomLevel);
+      },
       tipDone: () => this.nextTip(),
       openMenu: () => this.openMenu(),
       resume: () => this.hud.hideMenu(),
@@ -248,6 +258,9 @@ export class GameScene extends Phaser.Scene {
         saveTipsOn(false);
         this.tipQueue = [];
         this.hud.hideTip();
+        const back = this.startFrame;
+        this.startFrame = null;
+        back?.();
         this.hud.toast('Tips are off. Turn them back on from the briefing.');
       },
       debugSpeed: (s) => {
@@ -324,7 +337,8 @@ export class GameScene extends Phaser.Scene {
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
 
-    this.hud.setTroops(w.units.filter(canCommand).length, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild);
+    const engineer = w.units.some((u) => u.kind === 'engineer' && canCommand(u));
+    this.hud.setTroops(w.units.filter(canCommand).length, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild, engineer);
     this.hud.setHq(w.trainable.length > 0);
 
     switch (this.hud.panel) {
@@ -372,8 +386,8 @@ export class GameScene extends Phaser.Scene {
         case 'spotted': {
           if (spotted.has(e.unitId)) break;
           spotted.add(e.unitId);
-          if (e.kind === 'engineer') this.hud.showBanner('A raptor saw the Engineer.', 'danger', 3);
-          else this.hud.toast(`A raptor saw the ${UNITS[e.kind].name}.`);
+          if (e.kind === 'engineer') this.hud.showBanner('A raptor is after the Engineer.', 'danger', 3);
+          else this.hud.toast(`A raptor is after the ${UNITS[e.kind].name}.`);
           break;
         }
         case 'started':
@@ -382,7 +396,10 @@ export class GameScene extends Phaser.Scene {
             const loose = w.dinos.filter((d) => d.state === 'loose');
             // Level 4 is about the substations; the others about what is loose.
             const subs = w.substations.map((s) => substationCenter(s, T));
-            this.frame(w.level === 4 ? subs : [...loose, ...(w.nest ? [w.nest] : [])], true);
+            const pts = w.level === 4 ? subs : [...loose, ...(w.nest ? [w.nest] : [])];
+            this.frame(pts, true);
+            // The opening tips each point the camera at something; when they're done, it goes back to this view.
+            this.startFrame = this.session.tips ? () => this.frame(pts, true) : null;
           }
           break;
         case 'warning':
@@ -607,6 +624,9 @@ export class GameScene extends Phaser.Scene {
     const tip = this.world.phase === 'ended' ? undefined : this.tipQueue.shift();
     if (!tip) {
       this.hud.hideTip();
+      const back = this.startFrame;
+      this.startFrame = null;
+      back?.();
       return;
     }
     this.hud.showTip(tip.title, tip.body);
@@ -770,6 +790,9 @@ export class GameScene extends Phaser.Scene {
       });
       kb.on('keydown-P', (e: KeyboardEvent) => {
         if (fresh(e)) (this.hud.menuOpen ? this.hud.hideMenu() : this.openMenu());
+      });
+      kb.on('keydown-H', (e: KeyboardEvent) => {
+        if (fresh(e) && this.world.phase !== 'briefing') orderHold(this.world, this.selected);
       });
     }
   }
@@ -974,11 +997,15 @@ export class GameScene extends Phaser.Scene {
       this.view.markAttack(dino.x, dino.y);
       return;
     }
-    const sub = w.substationAtTile(Math.floor(p.x / T), Math.floor(p.y / T));
+    // With an Engineer selected, a tap on a broken substation or the tiles around it sends it to the side tapped.
+    const tx = Math.floor(p.x / T);
+    const ty = Math.floor(p.y / T);
+    const engineer = [...this.selected].some((id) => w.unitById(id)?.kind === 'engineer');
+    const near = engineer ? w.substationNearTile(tx, ty) : undefined;
+    const sub = near && !near.fixed ? near : w.substationAtTile(tx, ty);
     if (sub) {
-      orderRepair(w, this.selected, sub.id);
-      const c = substationCenter(sub, T);
-      this.view.markMove(c.x, c.y);
+      const to = orderRepair(w, this.selected, sub.id, engineer ? p : undefined) ?? substationCenter(sub, T);
+      this.view.markMove(to.x, to.y);
       return;
     }
     orderMove(w, this.selected, p.x, p.y);

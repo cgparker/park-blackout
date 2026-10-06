@@ -4,6 +4,7 @@ import type { Point } from '../core/grid';
 import { guarded, nearestExhibit, troopsNear } from '../core/guard';
 import { substationCenter } from '../core/power';
 import type { GameEvent, World } from '../core/world';
+import { numberWord } from './levels';
 
 /**
  * Tips that teach the two defense lessons the balance runs found:
@@ -28,6 +29,7 @@ export type TipId =
   | 'nest'
   | 'raptorBites'
   | 'stealth'
+  | 'noticed'
   | 'engineer'
   | 'powered'
   | 'spotted'
@@ -165,7 +167,7 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'stealth',
           title: 'Stay out of sight',
-          body: 'Two raptors walk the east side of the park. The cone in front of each one shows what it sees, and rock, pens, and substations block its view. A raptor that sees a troop comes for it and calls the other.',
+          body: 'Two raptors walk the east side of the park. The cone in front of each one shows what it sees, and rock, pens, and substations block its view. A raptor takes a moment to make out a troop in its cone, and the cone turns orange while it does. Once it’s sure, it comes for the troop and calls the other.',
           focus: raptor ? { x: raptor.x, y: raptor.y } : null,
         });
         const { pen, substation } = firstToBreak(w);
@@ -173,7 +175,7 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'engineer',
           title: `Fix the ${substation?.name.toLowerCase() ?? 'nearest'} substation`,
-          body: `Tap the Engineer, then the substation beside HQ. It works while it stands beside it, and work done stays done if it has to leave.${when}`,
+          body: `Tap the Engineer, then the side of the substation beside HQ that it should work from. It works while it stands beside it, and work done stays done if it has to leave.${when}`,
           focus: substation ? substationCenter(substation, T) : HQ_CENTER,
         });
         break;
@@ -190,16 +192,28 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         });
         break;
       }
-      case 'spotted': {
+      case 'noticed': {
         const engineer = e.kind === 'engineer';
         out.push({
-          id: 'spotted',
-          title: `A raptor saw ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`,
-          body: engineer
-            ? 'It’s coming, and it called the other. The Engineer can’t outrun them. A raptor goes for whoever darts it, so the Tranq Squad can draw them off.'
-            : 'It’s coming, and it called the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.',
+          id: 'noticed',
+          title: `A raptor noticed ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`,
+          body: `It stopped to make out what it saw. Get out of its cone, or behind cover, before the ring fills, or it comes and calls the other.${engineer ? ' Being noticed at all costs the Engineer’s star.' : ''}`,
           focus: { x: e.x, y: e.y },
         });
+        break;
+      }
+      case 'spotted': {
+        const engineer = e.kind === 'engineer';
+        // A raptor darted by a troop it never saw comes alone, so say whether the other one is coming too.
+        const both = w.dinos.filter((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === e.unitId).length > 1;
+        const body = engineer
+          ? both
+            ? 'It’s coming, and it called the other. The Engineer can’t outrun them. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw them off.'
+            : 'It’s coming. The Engineer can’t outrun it. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw it off.'
+          : both
+            ? 'It’s coming, and it called the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.'
+            : 'It’s coming on its own. A Tranq Squad can put down one raptor, so keep darting.';
+        out.push({ id: 'spotted', title: `A raptor is after ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`, body, focus: { x: e.x, y: e.y } });
         break;
       }
       case 'unitLost':
@@ -227,7 +241,7 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'fight',
           title: 'They are killing each other',
-          body: 'The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. Whatever you dart turns on you: a raptor for a few seconds, the T. rex until it loses you.',
+          body: `The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. A raptor you dart turns on you for a few seconds. The T. rex is too busy for you while ${numberWord(FIGHT.shieldRaptors)} or more raptors are on it; after that, it comes for whoever darts it.`,
           focus: rex ? { x: rex.x, y: rex.y } : null,
         });
         out.push({
@@ -242,15 +256,15 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'penBroken',
           title: 'The fight broke into a pen',
-          body: 'The T. rex pushes toward pens with no power, and the animals inside get out. Take the raptors off it before it reaches the next one.',
+          body: 'The T. rex pushes toward pens with no power, and the animals inside join the fight. Put it down before it reaches the next one.',
           focus: { x: e.x, y: e.y },
         });
         break;
-      case 'charge':
+      case 'roar':
         out.push({
           id: 'jeepKite',
           title: 'The T. rex picked a target',
-          body: `The orange ring marks the troop it is after. Load that troop into the 4x4 and drive away: the T. rex goes after the 4x4 and gives up past ${DINO_AI.trexLockBreakTiles} tiles, while the others keep darting it.`,
+          body: `The orange ring marks the troop it roared at. Load that troop into the 4x4 and keep driving around nearby: the T. rex chases the 4x4 instead, and the others can dart it while it does. More than ${DINO_AI.trexLockBreakTiles} tiles away, it gives up.`,
           focus: { x: e.x, y: e.y },
         });
         break;

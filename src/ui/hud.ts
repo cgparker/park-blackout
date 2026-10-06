@@ -56,6 +56,10 @@ export interface HudHandlers {
   closePanel(): void;
   selectAll(): void;
   clearSelection(): void;
+  /** Stop the selected troops where they are. */
+  hold(): void;
+  /** Level 4: select the Engineer and look at it. */
+  selectEngineer(): void;
   debugSpeed(speed: number): void;
   debugBlackout(): void;
   debugMoney(): void;
@@ -288,6 +292,8 @@ export class Hud {
   private readonly hqMeta: HTMLElement;
   private readonly selectAllBtn: HTMLButtonElement;
   private readonly clearBtn: HTMLButtonElement;
+  private readonly holdBtn: HTMLButtonElement;
+  private readonly engineerBtn: HTMLButtonElement;
   private readonly selSummary: HTMLElement;
 
   private readonly placePanel: HTMLElement;
@@ -442,7 +448,13 @@ export class Hud {
     this.selectAllBtn.addEventListener('click', () => this.handlers?.selectAll());
     this.clearBtn = button('sel-btn sel-clear');
     this.clearBtn.addEventListener('click', () => this.handlers?.clearSelection());
-    troopGroup.append(hqBtn, this.selSummary, this.selectAllBtn, this.clearBtn);
+    this.holdBtn = button('sel-btn sel-stop hidden', 'Stop');
+    this.holdBtn.setAttribute('aria-label', 'Stop the selected troops where they are');
+    this.holdBtn.addEventListener('click', () => this.handlers?.hold());
+    this.engineerBtn = button('sel-btn sel-engineer hidden', 'Engineer');
+    this.engineerBtn.setAttribute('aria-label', 'Select the Engineer');
+    this.engineerBtn.addEventListener('click', () => this.handlers?.selectEngineer());
+    troopGroup.append(hqBtn, this.selSummary, this.engineerBtn, this.holdBtn, this.selectAllBtn, this.clearBtn);
     this.bottomBar.append(this.buildGroup, troopGroup);
 
     // ------------------------------------------------ placement panel
@@ -851,8 +863,11 @@ export class Hud {
     }
   }
 
-  setTroops(total: number, selected: number, summary: string, queued: number, wide: boolean): void {
+  /** `engineer`: level 4, with an Engineer on the map to jump to. */
+  setTroops(total: number, selected: number, summary: string, queued: number, wide: boolean, engineer = false): void {
     setText(this.hqMeta, `Queue ${queued}/${SQUAD.queueMax}`);
+    if (this.holdBtn.classList.contains('hidden') !== (selected === 0)) this.holdBtn.classList.toggle('hidden', selected === 0);
+    if (this.engineerBtn.classList.contains('hidden') !== !engineer) this.engineerBtn.classList.toggle('hidden', !engineer);
     setText(this.selectAllBtn, `Select all ${total}`);
     setText(this.clearBtn, selected ? `Clear ${selected}` : 'Clear');
     if (this.selectAllBtn.disabled !== (total === 0)) this.selectAllBtn.disabled = total === 0;

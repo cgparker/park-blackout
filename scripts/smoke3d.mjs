@@ -1,7 +1,9 @@
 // Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
 // and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
-// out at the blackout and come back with the power. Level 4: night, raptors' view cones, a substation's
-// panel, and the Engineer sent to fix it. Level 5: troops loaded into the 4x4 and driven. Saves screenshots
+// out at the blackout and come back with the power. Level 4: night, raptors' view cones with no troop
+// flashlights, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from
+// the side tapped, and a raptor's cone turning orange as it makes out a troop. Level 5: troops loaded into the
+// 4x4 and driven. Saves screenshots
 // along the way. Uses a software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
@@ -263,6 +265,14 @@ step(`level 4: ${s.phase}, night ${s.night}, ${s.raptors} raptors, ${s.cones} co
 if (s.phase !== 'mission' || !s.night) fail('level 4 should start at night');
 if (s.cones !== s.raptors || s.raptors !== 2) fail('each raptor on patrol should show its view cone');
 if (s.hq) fail('level 4 trains nothing, so the HQ button should be hidden');
+// No troop flashlights here, and a ring at each raptor's feet so it can be found at the tip of its cone.
+const marks = await page.evaluate(() => {
+  const v = window.__pb3d.view;
+  return { lights: v.effects.flashlights.filter((b) => b.cone.visible).length, rings: [...v.cones.sets.values()].filter((c) => c.mark.visible).length };
+});
+step(`level 4: ${marks.lights} flashlights on, ${marks.rings} raptor rings`);
+if (marks.lights) fail('level 4 troops should carry no flashlights');
+if (marks.rings !== 2) fail('each raptor on patrol should have a ring at its feet');
 // Look at the south raptor and its cone.
 const south = await page.evaluate(() => {
   const d = window.__pb3d.world.dinos.find((d) => d.state === 'loose');
@@ -281,15 +291,38 @@ await page.waitForTimeout(500);
 if (!(await page.isVisible('.substation-panel'))) fail('tapping a substation should open its panel');
 await page.screenshot({ path: `${out}/10-level4-substation.png`, timeout: 240000 });
 await page.click('.substation-panel .close');
-// Tap the Engineer, then the substation.
-const ep = await screenOf(s.engineer.x, s.engineer.y, 0.25);
-await page.touchscreen.tap(ep.x, ep.y);
+// The Engineer button selects the Engineer; Stop shows once something is selected.
+if (!(await page.isVisible('.sel-engineer')) || (await page.isVisible('.sel-stop'))) fail('level 4 should show the Engineer button, and no Stop with nothing selected');
+await page.click('.sel-engineer');
 await page.waitForTimeout(400);
+const picked = await page.evaluate(() => {
+  const g = window.__pb3d;
+  return [...g.selected].map((id) => g.world.unitById(id).kind).join(' ');
+});
+step(`Engineer button selects: ${picked}`);
+if (picked !== 'engineer') fail('the Engineer button should select the Engineer');
+if (!(await page.isVisible('.sel-stop'))) fail('Stop should show once something is selected');
+// Then a tap above the substation sends it to work from the top side.
+await look(wc.x, wc.y);
+await page.waitForTimeout(400);
+const top = await screenOf(wc.x, wc.y - 1.5 * 40, 0);
+await page.touchscreen.tap(top.x, top.y);
+await page.waitForTimeout(400);
+const sent = await page.evaluate(() => {
+  const w = window.__pb3d.world;
+  const e = w.units.find((u) => u.kind === 'engineer');
+  return { order: e.order, row: e.dest ? Math.floor(e.dest.y / 40) : null, top: w.substations[0].y - 1 };
+});
+step(`Engineer order: ${JSON.stringify(sent)}`);
+if (sent.order !== 'repair' || sent.row !== sent.top) fail('a tap above a substation should send the Engineer to fix it from the top side');
+await page.click('.sel-stop');
+await page.waitForTimeout(300);
+const stopped = await page.evaluate(() => window.__pb3d.world.units.find((u) => u.kind === 'engineer').order);
+if (stopped !== 'idle') fail(`Stop should halt the Engineer, not leave it on ${stopped}`);
 await page.touchscreen.tap(sp.x, sp.y);
 await page.waitForTimeout(400);
 const order = await page.evaluate(() => window.__pb3d.world.units.find((u) => u.kind === 'engineer').order);
-step(`Engineer order: ${order}`);
-if (order !== 'repair') fail('tapping the Engineer, then a substation, should send it to fix it');
+if (order !== 'repair') fail('a tap on the substation should send the Engineer again');
 await page.evaluate(() => {
   const w = window.__pb3d.world;
   for (let i = 0; i < 60 * 12; i++) w.update(1 / 60);
@@ -305,6 +338,42 @@ s = await w4();
 step(`fixed ${s.fixed}`);
 if (s.fixed !== 1) fail('the Engineer should fix the west substation');
 await page.screenshot({ path: `${out}/12-level4-fixed.png`, timeout: 240000 });
+// Put the Tranq Squad in front of a raptor on open grass. Hold the game still while it makes the squad out:
+// its cone turns orange and a ring fills at its feet.
+await page.click('.sel-clear').catch(() => undefined);
+const watcher = await page.evaluate(() => {
+  const g = window.__pb3d;
+  const w = g.world;
+  const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
+  const sq = w.units.find((u) => u.kind === 'tranq');
+  Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, notice: 0, target: null, path: [], pathIndex: 0 });
+  Object.assign(sq, { x: 26.5 * 40, y: 16.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
+  for (let i = 0; i < 25; i++) w.update(1 / 60);
+  g.speed = 0;
+  return d.id;
+});
+await look(25 * 40, 16.5 * 40);
+await page.waitForTimeout(2000);
+const seeing = await page.evaluate((id) => {
+  const g = window.__pb3d;
+  const c = g.view.cones.sets.get(id);
+  return { notice: g.world.dinos.find((d) => d.id === id).notice, arcs: c.arcs.filter((a) => a.visible).length, fan: c.fan.material.color.getHexString() };
+}, watcher);
+step(`noticing: ${JSON.stringify(seeing)}`);
+if (!(seeing.notice > 0) || seeing.arcs < 1 || seeing.fan !== 'ff8a2a') fail('a raptor making out a troop should show an orange cone and a filling ring');
+await page.screenshot({ path: `${out}/12b-level4-noticing.png`, timeout: 240000 });
+await page.evaluate(() => {
+  const g = window.__pb3d;
+  g.speed = 1;
+  for (let i = 0; i < 60; i++) g.world.update(1 / 60);
+});
+let toast = '';
+for (let i = 0; i < 20 && toast !== 'A raptor is after the Tranq Squad.'; i++) {
+  await page.waitForTimeout(250);
+  toast = (await page.locator('.toast').textContent().catch(() => '')) ?? '';
+}
+step(`toast: ${toast}`);
+if (toast !== 'A raptor is after the Tranq Squad.') fail('once sure, the raptor should come for the squad, and say so');
 
 // ---------------------------------------------------------------- level 5
 await page.goto(`${url}#debug.level-5.${quality}`, { timeout: 300000 });

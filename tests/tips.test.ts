@@ -143,10 +143,27 @@ describe('tips in levels 4 and 5', () => {
     expect(start[1].body).toMatch(/Its raptors go for their fence at 1:00\.$/);
     const fixed = tipsFor(w, [{ type: 'substationFixed', id: w.substations[0].id, contained: 3, last: false }]);
     expect(ids(fixed)).toEqual(['powered']);
+    const noticed = tipsFor(w, [{ type: 'noticed', dinoId: 1, unitId: 2, kind: 'engineer', x: 0, y: 0 }]);
+    expect(noticed[0].title).toBe('A raptor noticed the Engineer');
+    expect(noticed[0].body).toMatch(/before the ring fills.*costs the Engineer’s star\.$/);
+    expect(tipsFor(w, [{ type: 'noticed', dinoId: 1, unitId: 3, kind: 'tranq', x: 0, y: 0 }])[0].body).not.toMatch(/star/);
     const seen = tipsFor(w, [{ type: 'spotted', dinoId: 1, unitId: 2, kind: 'engineer', x: 0, y: 0 }]);
-    expect(seen[0].title).toBe('A raptor saw the Engineer');
+    expect(seen[0].title).toBe('A raptor is after the Engineer');
     expect(ids(tipsFor(w, [{ type: 'unitLost', unitId: 3, kind: 'tranq', x: 0, y: 0, by: 'raptor' }]))).toEqual(['squadLost']);
-    for (const t of [...start, ...fixed, ...seen]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+    for (const t of [...start, ...fixed, ...noticed, ...seen]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+  });
+
+  it('a raptor after a troop says whether it called the other: one darted by a troop it never saw comes alone', () => {
+    const w = new World({ seed: 1, level: 4 });
+    w.start();
+    const squad = w.units.find((u) => u.kind === 'tranq')!;
+    const [a, b] = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
+    const ev = [{ type: 'spotted' as const, dinoId: a.id, unitId: squad.id, kind: 'tranq' as const, x: 0, y: 0 }];
+    a.target = { type: 'unit', id: squad.id };
+    expect(tipsFor(w, ev)[0].body).toMatch(/^It’s coming on its own\. A Tranq Squad can put down one raptor/);
+    b.target = { type: 'unit', id: squad.id };
+    expect(tipsFor(w, ev)[0].body).toMatch(/^It’s coming, and it called the other\. Two raptors are too many/);
+    for (const t of tipsFor(w, ev)) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 
   it('after the west substation, the tip points at the next pen on a timer', () => {
@@ -162,9 +179,14 @@ describe('tips in levels 4 and 5', () => {
     w.start();
     const start = tipsFor(w, w.events);
     expect(ids(start)).toEqual(['fight', 'jeep']);
-    expect(ids(tipsFor(w, [{ type: 'breach', exhibitId: 1, kind: 'pasture', x: 0, y: 0 }]))).toEqual(['penBroken']);
+    expect(start[0].body).toMatch(/too busy for you while two or more raptors are on it/);
+    expect(ids(tipsFor(w, [{ type: 'breach', exhibitId: 1, kind: 'raptor', x: 0, y: 0 }]))).toEqual(['penBroken']);
     expect(ids(tipsFor(w, [{ type: 'killed', dinoId: 1, kind: 'raptor', x: 0, y: 0, by: 'trex' }]))).toEqual(['killed']);
-    expect(ids(tipsFor(w, [{ type: 'charge', dinoId: 1, x: 0, y: 0 }]))).toEqual(['jeepKite']);
-    for (const t of start) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+    // The roar, when it picks a troop, teaches the 4x4 decoy; the charge that follows has no tip of its own.
+    const roar = tipsFor(w, [{ type: 'roar', dinoId: 1, unitId: 2, x: 0, y: 0 }]);
+    expect(ids(roar)).toEqual(['jeepKite']);
+    expect(roar[0].body).toMatch(/keep driving around nearby: the T\. rex chases the 4x4 instead/);
+    expect(ids(tipsFor(w, [{ type: 'charge', dinoId: 1, x: 0, y: 0 }]))).toEqual([]);
+    for (const t of [...start, ...roar]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 });

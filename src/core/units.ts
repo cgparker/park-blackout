@@ -224,20 +224,23 @@ export function orderAttack(w: World, ids: Iterable<number>, dinoId: number): vo
 }
 
 /**
- * Level 4: Engineers walk to the open tiles around a substation, one each, and fix it.
- * Anyone else in the group goes along and stands guard around it.
+ * Level 4: Engineers walk to the open tiles around a substation, one each, and fix it. With `at` (where the player
+ * tapped), they take the tiles nearest that spot, so the player picks the side; otherwise the tiles nearest themselves.
+ * Anyone else in the group stays where it is, so a squad selected along with the Engineer doesn't follow it into the
+ * open. Sent on their own, troops go and stand by the substation. Returns where the first Engineer is going.
  */
-export function orderRepair(w: World, ids: Iterable<number>, substationId: number): void {
+export function orderRepair(w: World, ids: Iterable<number>, substationId: number, at?: Point): Point | null {
   const s = w.substationById(substationId);
-  if (!s) return;
+  if (!s) return null;
   const units = liveUnits(w, ids);
   const engineers = units.filter((u) => u.kind === 'engineer');
   const others = units.filter((u) => u.kind !== 'engineer');
   const c = substationCenter(s, w.T);
-  if (others.length) orderMove(w, others.map((u) => u.id), c.x, c.y);
+  if (others.length && !engineers.length) orderMove(w, others.map((u) => u.id), c.x, c.y);
+  if (!engineers.length) return null;
   if (s.fixed) {
-    if (engineers.length) orderMove(w, engineers.map((u) => u.id), c.x, c.y);
-    return;
+    orderMove(w, engineers.map((u) => u.id), c.x, c.y);
+    return c;
   }
   const spots = workTiles(s, w.unitWalk).map((t) => ({ x: (t.x + 0.5) * w.T, y: (t.y + 0.5) * w.T }));
   // Spots another Engineer is already headed for are taken.
@@ -245,12 +248,15 @@ export function orderRepair(w: World, ids: Iterable<number>, substationId: numbe
     w.units.filter((u) => u.kind === 'engineer' && u.order === 'repair' && u.targetId === s.id && !engineers.includes(u) && u.dest).map((u) => `${u.dest!.x},${u.dest!.y}`),
   );
   const free = spots.filter((p) => !taken.has(`${p.x},${p.y}`));
+  let first: Point | null = null;
   for (const u of engineers) {
     const pool = free.length ? free : spots;
+    const from = at ?? u;
     let bi = 0;
     let bd = Infinity;
     pool.forEach((p, i) => {
-      const d = Math.hypot(p.x - u.x, p.y - u.y);
+      // Nearest the tap; between equally near tiles, nearest the Engineer.
+      const d = Math.hypot(p.x - from.x, p.y - from.y) + (at ? Math.hypot(p.x - u.x, p.y - u.y) * 1e-3 : 0);
       if (d < bd) {
         bd = d;
         bi = i;
@@ -258,19 +264,46 @@ export function orderRepair(w: World, ids: Iterable<number>, substationId: numbe
     });
     const spot = pool[bi] ?? c;
     if (free.length) free.splice(bi, 1);
+    first ??= spot;
     u.order = 'repair';
     u.targetId = s.id;
     u.dest = spot;
     planRoute(w, u, spot.x, spot.y);
   }
+  return first;
 }
 
-/** Level 5: troops walk to the 4x4 and climb in, as long as there are seats. */
+/** Stop where you are: troops and the 4x4 drop their orders and stand still. Riders stay in. */
+export function orderHold(w: World, ids: Iterable<number>): void {
+  for (const u of liveUnits(w, ids)) {
+    if (u.kind === 'tower') continue;
+    u.order = 'idle';
+    u.targetId = 0;
+    u.dest = null;
+    u.path = [];
+    u.pathIndex = 0;
+  }
+}
+
+/**
+ * Level 5: troops walk to the 4x4 and climb in. When more are sent than there are seats, the slowest get them (the
+ * 4x4 is for Heavy Teams), nearest first, and the rest walk over and stop beside it.
+ */
 export function orderBoard(w: World, ids: Iterable<number>, jeepId: number): void {
   const jeep = w.unitById(jeepId);
   if (!jeep || jeep.dead || jeep.kind !== 'jeep') return;
-  for (const u of liveUnits(w, ids)) {
-    if (!isTroop(u)) continue;
+  const troops = liveUnits(w, ids).filter(isTroop);
+  // Seats already promised to troops on their way in.
+  const coming = w.units.filter((u) => u.order === 'board' && u.targetId === jeep.id && !troops.includes(u)).length;
+  let seats = seatsFree(w, jeep) - coming;
+  const away = (u: Unit) => Math.hypot(u.x - jeep.x, u.y - jeep.y);
+  troops.sort((a, b) => UNITS[a.kind].speed - UNITS[b.kind].speed || away(a) - away(b));
+  for (const u of troops) {
+    if (seats <= 0) {
+      orderMove(w, [u.id], jeep.x, jeep.y);
+      continue;
+    }
+    seats--;
     u.order = 'board';
     u.targetId = jeep.id;
     u.dest = null;

@@ -335,7 +335,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'Raptor',
     plural: 'Raptors',
     sedation: 60,
-    health: 150,
+    health: 100,
     speed: 160,
     wanderSpeed: 34,
     wanderPauseSeconds: [0.4, 1.5],
@@ -573,11 +573,13 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
         y: 17,
         open: 'right',
         animals: 2,
+        // Each raptor starts somewhere along its route, either way round, so no two nights are the same.
         patrols: [
           // South: round and round the south substation, a tile out from where an Engineer would stand.
           [[25, 18], [30, 18], [30, 23], [25, 23]],
-          // North: up the east path, round the west side of the north substation to the top, and back.
-          [[31, 12], [31, 5], [29, 1], [31, 5]],
+          // North: up the east path, over the top of the north substation a tile out, a look back at its east side,
+          // down the east edge, and back. Every side, and the east edge, is watched some of the time.
+          [[31, 12], [31, 5], [29, 0], [36, 0], [36, 3], [37, 9]],
         ],
       },
       { kind: 'pasture', x: 22, y: 20 },
@@ -611,7 +613,8 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
       { kind: 'pasture', x: 8, y: 8 },
       { kind: 'trex', x: 27, y: 7, open: 'bottom', out: [[28, 11]] },
       { kind: 'raptor', x: 33, y: 17, open: 'left', out: [[27, 10.2], [29.3, 10.6], [28, 12]] },
-      { kind: 'pasture', x: 22, y: 20, powered: false, breakoutAt: null },
+      // The south pasture has power of its own, as in level 4, so the fight heads for the west raptor pen.
+      { kind: 'pasture', x: 22, y: 20 },
     ],
     nest: null,
     fights: true,
@@ -637,20 +640,26 @@ export const GRID = {
 
 /**
  * Level 4's raptors on patrol. Each walks its route and sees a cone ahead of it, but not through rock, a pen,
- * HQ, or a substation. Whatever it sees, it hunts, and it calls the others.
+ * HQ, or a substation. Whatever it makes out, it hunts, and it calls the others. A dart from a troop it can't
+ * see sends it after the shooter alone.
  */
 export const STEALTH = {
   /** How far a raptor sees, in tiles, and how wide its view is, in degrees. */
   sightTiles: 5,
   coneDeg: 90,
-  /** It notices a troop this close (tiles), whichever way it's looking. */
-  hearTiles: 1.2,
+  /** A troop this close (tiles) has walked into it: noticed at once, whichever way it's looking. Touching distance. */
+  hearTiles: 0.6,
+  /**
+   * A troop in its cone takes this long to make out. It stops where it is, its cone turns orange, and it hunts once
+   * the time is up. A troop that gets out of sight first is lost, and the raptor takes as long to settle back.
+   */
+  noticeSeconds: 0.8,
   /** Walking speed on its route (px/s). */
   patrolSpeed: 45,
   /** At each stop on its route it looks around for this long, turning this far each way. */
   lookSeconds: 2.5,
   lookDeg: 70,
-  /** A raptor that spots a troop calls the others within this many tiles, and they come too: the whole park. */
+  /** A raptor that spots a troop, or sees who darted it, calls the others within this many tiles: the whole park. */
   alertTiles: 40,
   /** On the hunt it keeps track of its prey this far away (tiles), in any direction... */
   chaseSightTiles: 10,
@@ -676,7 +685,11 @@ export const FIGHT = {
   /** Raptors on the T. rex keep circling it at this many radians per second, each from its own side. */
   circleSpeed: 0.5,
   /** While raptors are on it, the T. rex pushes toward a pen without power at this speed (px/s) instead of its own. */
-  pushSpeed: 12,
+  pushSpeed: 20,
+  /** While this many raptors or more are on the T. rex, it is too busy with them to lock onto a troop that darts it. */
+  shieldRaptors: 2,
+  /** When the T. rex locks onto a troop, it roars: it stands facing the troop this long before it moves or charges. */
+  lockRoarSeconds: 2,
   /** Animals killed before the level is lost. */
   killLimit: 3,
   /** A killed animal stays down this long before it's gone. */
@@ -768,4 +781,6 @@ export const COLORS = {
   /** Level 4: what a raptor on patrol sees, and the line to a troop it's after. */
   cone: 0xffd36b,
   coneAlert: 0xff5a4a,
+  /** Level 4: a raptor making out a troop in its cone. */
+  coneNotice: 0xff8a2a,
 };

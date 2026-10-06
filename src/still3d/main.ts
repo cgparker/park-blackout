@@ -192,6 +192,8 @@ async function main(): Promise<void> {
     e.x = (south.x - 0.5) * 40;
     e.y = (south.y + 0.5) * 40;
     for (let i = 0; i < 60 * num('t', 6); i++) w.update(1 / 60);
+    // notice=seconds: the south raptor partway through making out a troop.
+    if (Q.has('notice')) w.dinos.find((d) => d.patrol)!.notice = num('notice', 0.5);
     world = viewOf(w);
     cam = { x: south.x + 1, z: south.y - 1 };
     dist = num('dist', 16);

@@ -22,7 +22,7 @@ import { missionConfig, setupMission } from './levels';
 import type { LogEntry } from './log';
 import { distanceField } from './nav';
 import { planTower, type PlacementPlan, type TowerPlan } from './placement';
-import { onSubstation, type Substation } from './power';
+import { onSubstation, workTiles, type Substation } from './power';
 import { buildResult, type EndReason, type Result } from './report';
 import { createRng, type Rng } from './rng';
 import { canDart, createUnit, unitsAfterBuild, updateTraining, updateUnits, type QueueItem, type Unit } from './units';
@@ -50,13 +50,17 @@ export type GameEvent =
   | { type: 'boarded'; unitId: number; jeepId: number }
   | { type: 'unloaded'; jeepId: number; count: number }
   | { type: 'charge'; dinoId: number; x: number; y: number }
+  /** Level 5: the T. rex locked onto a troop and roars before it comes. */
+  | { type: 'roar'; dinoId: number; unitId: number; x: number; y: number }
   | { type: 'dart'; x0: number; y0: number; x1: number; y1: number; heavy: boolean }
   | { type: 'bite'; x: number; y: number }
   /** Level 5: one animal bit another. */
   | { type: 'maul'; dinoId: number; victimId: number; x: number; y: number }
   /** Level 5: an animal was killed in the fight. */
   | { type: 'killed'; dinoId: number; kind: AnimalKind; x: number; y: number; by: AnimalKind | null }
-  /** Level 4: a raptor saw a troop (or was darted by it, or was called by one that did) and is coming for it. */
+  /** Level 4: a raptor has started to make out a troop in its cone. It stands still, staring. */
+  | { type: 'noticed'; dinoId: number; unitId: number; kind: UnitKind; x: number; y: number }
+  /** Level 4: a raptor made out a troop (or was darted by it, or was called by one that did) and is coming for it. */
   | { type: 'spotted'; dinoId: number; unitId: number; kind: UnitKind; x: number; y: number }
   /** A Triceratops starts to run. `byTroop`: a troop scared it, not a predator. */
   | { type: 'stampede'; dinoId: number; x: number; y: number; byTroop: boolean }
@@ -331,6 +335,11 @@ export class World {
     return this.substations.find((s) => onSubstation(s, tx, ty));
   }
 
+  /** Level 4: the substation whose block, or ring of work tiles around it, takes in a tile. */
+  substationNearTile(tx: number, ty: number): Substation | undefined {
+    return this.substations.find((s) => onSubstation(s, tx, ty) || workTiles(s, this.unitWalk).some((t) => t.x === tx && t.y === ty));
+  }
+
   /** Level 4: the substation that powers an exhibit. */
   substationFor(exhibitId: number): Substation | undefined {
     return this.substations.find((s) => s.pens.includes(exhibitId));
@@ -518,10 +527,24 @@ export class World {
     this.log.push({ t: this.logTime, type: 'back', kind: d.kind, how, left: this.looseCount });
   }
 
-  /** Level 4: a raptor saw a troop, or bit one it wasn't after. The first time for each troop goes in the log. */
+  /**
+   * Level 4: a raptor has started to make out a troop in its cone. That is being seen: for the Engineer it costs
+   * the star, even if it gets away before the raptor is sure.
+   */
+  noteNoticed(d: Dino, u: Unit): void {
+    this.noteSeen(u);
+    this.events.push({ type: 'noticed', dinoId: d.id, unitId: u.id, kind: u.kind, x: d.x, y: d.y });
+  }
+
+  /** Level 4: a raptor is after a troop it made out, walked into, saw shoot, or bit. */
   noteSpotted(d: Dino, u: Unit): void {
-    if (u.kind === 'engineer') this.engineerSpotted = true;
+    this.noteSeen(u);
     this.events.push({ type: 'spotted', dinoId: d.id, unitId: u.id, kind: u.kind, x: d.x, y: d.y });
+  }
+
+  /** The first time each troop is seen goes in the log. */
+  private noteSeen(u: Unit): void {
+    if (u.kind === 'engineer') this.engineerSpotted = true;
     if (this.logStart >= 0 && !this.spottedUnits.has(u.id)) {
       this.spottedUnits.add(u.id);
       this.log.push({ t: this.logTime, type: 'spotted', kind: u.kind });

@@ -1,4 +1,4 @@
-import { EXHIBITS, MAP, MISSIONS, UNITS, type AnimalKind, type LevelId, type MissionLevelId } from '../config';
+import { EXHIBITS, FIGHT, MAP, MISSIONS, UNITS, type AnimalKind, type LevelId, type MissionLevelId } from '../config';
 import { animalNoun } from '../core/report';
 
 /**
@@ -104,9 +104,10 @@ export function briefingFor(level: LevelId, seconds: number, villain: string): B
       title: `Power back on by dawn`,
       intro: `The blackout is over, but the power isn’t back: ${villain} wrecked the park’s ${word(n)} substations on the way out, and ${word(count)} raptors are on patrol. You have ${teamWords(4)}. Fix all ${word(n)} substations before dawn, ${clock(cfg.timeLimitSeconds)} away, and keep out of the raptors’ sight.`,
       controls: [
-        'Tap the Engineer, then a substation, to fix it. Work done stays done.',
-        'The cone in front of a raptor is what it sees. Rock, pens, and substations block it.',
-        'Tap a pen to see when its animals break out.',
+        'Tap the Engineer, then the side of a substation to work from. Work done stays done.',
+        'A raptor’s cone is what it sees. Rock, pens, and substations block it.',
+        'The cone turns orange while the raptor makes you out. Get out of sight before it’s sure.',
+        'Stop halts the selected troops. Tap a pen to see when its animals break out.',
         move,
         look,
       ],
@@ -115,11 +116,11 @@ export function briefingFor(level: LevelId, seconds: number, villain: string): B
   if (level === 5) {
     return {
       title: 'Break up the fight',
-      intro: `The T. rex and a raptor pack got out through fences still being fixed, and they are fighting. Every animal killed is lost to the park, and the fight is heading for pens with no power. You have ${teamWords(5)}. Dart them all before the park opens in ${clock(MISSIONS[5].timeLimitSeconds)}.`,
+      intro: `The two raptors from the night came back with a third, and the T. rex broke out through a fence still being fixed. Now they are fighting, and every animal killed is lost to the park. The west raptor pen lost power again, and the fight is heading for it. You have ${teamWords(5)}. Dart them all before the park opens in ${clock(MISSIONS[5].timeLimitSeconds)}.`,
       controls: [
-        'Tap troops, then tap the 4x4 to load two.',
+        'Tap troops, then tap the 4x4 to load two. Heavy Teams get the seats first.',
         'Tap the 4x4, then tap the map to drive. Tap an animal to drop the troops beside it.',
-        'Tap a troop, then a dinosaur to dart it. Whatever you dart comes for you.',
+        `Tap a troop, then a dinosaur to dart it. Whatever you dart comes for you, but not the T. rex while ${numberWord(FIGHT.shieldRaptors)} raptors are on it.`,
         move,
         look,
       ],

@@ -43,14 +43,22 @@ export function inView(w: World, d: Looker, x: number, y: number): boolean {
   return lineOfSight(w, d.x, d.y, x, y);
 }
 
-/** Whether a calm raptor notices a troop: one it can see, or one right beside it, whichever way it looks. */
-export function notices(w: World, d: Looker, u: Unit): boolean {
-  if (!onMap(u) || !isTroop(u)) return false;
-  return Math.hypot(u.x - d.x, u.y - d.y) <= STEALTH.hearTiles * w.T || inView(w, d, u.x, u.y);
+/** Whether a troop has walked into a raptor: touching distance, whichever way it looks. */
+export function touching(w: World, d: Point, u: Unit): boolean {
+  return Math.hypot(u.x - d.x, u.y - d.y) <= STEALTH.hearTiles * w.T;
 }
 
-/** The troop a calm raptor notices now, the nearest if it notices several, or null. */
-export function noticed(w: World, d: Looker): Unit | null {
+/** Whether a calm raptor notices a troop: one in its cone, or one touching it. */
+export function notices(w: World, d: Looker, u: Unit): boolean {
+  if (!onMap(u) || !isTroop(u)) return false;
+  return touching(w, d, u) || inView(w, d, u.x, u.y);
+}
+
+/**
+ * The troop a calm raptor notices now, the nearest if it notices several, and whether it walked into the raptor
+ * (noticed at once) or is only in its cone (it takes STEALTH.noticeSeconds to make out). Null if none.
+ */
+export function noticed(w: World, d: Looker): { unit: Unit; touch: boolean } | null {
   let best: Unit | null = null;
   let bestD = Infinity;
   for (const u of w.units) {
@@ -60,7 +68,7 @@ export function noticed(w: World, d: Looker): Unit | null {
       bestD = dd;
     }
   }
-  return best;
+  return best ? { unit: best, touch: touching(w, d, best) } : null;
 }
 
 /** Whether a raptor on the hunt still sees its prey: near enough, in any direction, and not behind cover. */

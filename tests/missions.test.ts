@@ -6,7 +6,7 @@ import { Tile } from '../src/core/grid';
 import { passengers } from '../src/core/jeep';
 import { inReach, workTiles } from '../src/core/power';
 import { blocksSight, inView, notices } from '../src/core/stealth';
-import { canDart, enqueueUnit, orderAttack, orderBoard, orderMove, orderRepair, spawnUnit } from '../src/core/units';
+import { canDart, enqueueUnit, orderAttack, orderBoard, orderHold, orderMove, orderRepair, spawnUnit } from '../src/core/units';
 import { World, type GameEvent } from '../src/core/world';
 import { playGrid } from './stealth-player';
 
@@ -40,6 +40,16 @@ describe('level 4: the park after the blackout', () => {
   /** Puts the team somewhere quiet, away from the routes. */
   function parkTeam(w: World) {
     for (const u of w.units) Object.assign(u, at(3, 19));
+  }
+  /** A spot on open ground a few tiles ahead of a raptor, in its cone and in clear sight. */
+  function inFront(w: World, d: { x: number; y: number; facing: number }) {
+    for (const r of [3, 2.5, 3.5, 2, 4]) {
+      for (const da of [0, 0.2, -0.2, 0.4, -0.4]) {
+        const p = { x: d.x + Math.cos(d.facing + da) * r * T, y: d.y + Math.sin(d.facing + da) * r * T };
+        if (w.unitWalk(Math.floor(p.x / T), Math.floor(p.y / T)) && inView(w, d, p.x, p.y)) return p;
+      }
+    }
+    throw new Error('no open ground in front of the raptor');
   }
 
   it('starts dark, with one Engineer, one Tranq Squad, three broken substations, and two raptors on patrol', () => {
@@ -103,7 +113,7 @@ describe('level 4: the park after the blackout', () => {
     expect(d.look).toBe(0);
   });
 
-  it('a raptor sees what is in its cone and in range, not behind it or past cover, and hears a troop right beside it', () => {
+  it('a raptor sees what is in its cone and in range, not behind it or past cover, and notices a troop that walks into it', () => {
     const w = new World({ seed: 4, level: 4 });
     // Facing east from just west of the south substation's ring.
     const eye = { ...at(23, 17), facing: 0 };
@@ -121,12 +131,57 @@ describe('level 4: the park after the blackout', () => {
     expect(inView(w, west, (pen.footprint.x + pen.footprint.w + 0.5) * T, (pen.footprint.y + 2.5) * T)).toBe(false);
     expect(blocksSight(Tile.Rock) && blocksSight(Tile.Exhibit) && blocksSight(Tile.Substation) && blocksSight(Tile.HQ)).toBe(true);
     expect(blocksSight(Tile.Water) || blocksSight(Tile.Path) || blocksSight(Tile.Grass)).toBe(false);
-    // Behind it, but right beside it: heard.
+    // Behind it, but touching it: noticed. A tile behind it: not.
     const { e } = team(w);
-    Object.assign(e, { x: eye.x - 0.9 * T, y: eye.y });
+    Object.assign(e, { x: eye.x - (STEALTH.hearTiles - 0.1) * T, y: eye.y });
     expect(notices(w, eye, e)).toBe(true);
-    Object.assign(e, { x: eye.x - 2 * T, y: eye.y });
+    Object.assign(e, { x: eye.x - 1 * T, y: eye.y });
     expect(notices(w, eye, e)).toBe(false);
+  });
+
+  it('each raptor starts somewhere different along its route, either way round', () => {
+    const starts = new Set<string>();
+    const ways = new Set<string>();
+    for (let seed = 1; seed <= 10; seed++) {
+      const w = new World({ seed, level: 4 });
+      for (const d of raptors(w)) {
+        starts.add(`${Math.round(d.x / T)},${Math.round(d.y / T)}`);
+        ways.add(d.patrol!.map((p) => `${p.x},${p.y}`).join(' '));
+        expect(w.dinoWalk(Math.floor(d.x / T), Math.floor(d.y / T))).toBe(true);
+      }
+    }
+    expect(starts.size).toBeGreaterThan(12);
+    // Two routes, each walked both ways.
+    expect(ways.size).toBe(4);
+  });
+
+  it('a troop in a raptor’s cone takes a moment to make out: it stops and stares, and a troop that gets away in time is lost', () => {
+    const w = new World({ seed: 13, level: 4 });
+    w.start();
+    parkTeam(w);
+    const [a, b] = raptors(w);
+    const { e } = team(w);
+    a.look = 0;
+    Object.assign(e, inFront(w, a));
+    const x0 = a.x;
+    const y0 = a.y;
+    let events = run(w, STEALTH.noticeSeconds / 2);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'noticed', dinoId: a.id, unitId: e.id, kind: 'engineer' }));
+    expect(events.some((x) => x.type === 'spotted')).toBe(false);
+    expect(a.notice).toBeGreaterThan(0);
+    expect(Math.hypot(a.x - x0, a.y - y0)).toBeLessThan(1);
+    expect(a.target).toBeNull();
+    // Being made out at all costs the star, even if the Engineer gets away.
+    expect(w.engineerSpotted).toBe(true);
+    // Out of sight before it's sure: it settles, then walks on.
+    Object.assign(e, at(3, 19));
+    events = run(w, STEALTH.noticeSeconds + 0.5);
+    expect(events.some((x) => x.type === 'spotted')).toBe(false);
+    expect(a.notice).toBe(0);
+    expect(a.target).toBeNull();
+    expect(b.target).toBeNull();
+    run(w, 3);
+    expect(Math.hypot(a.x - x0, a.y - y0)).toBeGreaterThan(T / 2);
   });
 
   it('a raptor that sees the Engineer hunts it and calls the other; the star for never being seen is gone', () => {
@@ -135,8 +190,9 @@ describe('level 4: the park after the blackout', () => {
     parkTeam(w);
     const [a, b] = raptors(w);
     const { e } = team(w);
-    Object.assign(e, { x: a.x + Math.cos(a.facing) * 3 * T, y: a.y + Math.sin(a.facing) * 3 * T });
-    const events = run(w, 0.1);
+    a.look = 0;
+    Object.assign(e, inFront(w, a));
+    const events = run(w, STEALTH.noticeSeconds + 0.1);
     expect(events).toContainEqual(expect.objectContaining({ type: 'spotted', dinoId: a.id, unitId: e.id, kind: 'engineer' }));
     expect(a.target).toEqual({ type: 'unit', id: e.id });
     expect(b.target).toEqual({ type: 'unit', id: e.id });
@@ -153,8 +209,9 @@ describe('level 4: the park after the blackout', () => {
     parkTeam(w);
     const { sq } = team(w);
     const [a] = raptors(w);
-    Object.assign(sq, { x: a.x + Math.cos(a.facing) * 3 * T, y: a.y + Math.sin(a.facing) * 3 * T });
-    run(w, 0.1);
+    a.look = 0;
+    Object.assign(sq, inFront(w, a));
+    run(w, STEALTH.noticeSeconds + 0.1);
     expect(a.target).toEqual({ type: 'unit', id: sq.id });
     // The squad is suddenly far away, behind HQ.
     Object.assign(sq, at(1, 15));
@@ -163,7 +220,7 @@ describe('level 4: the park after the blackout', () => {
     expect(w.units.every((u) => !u.dead)).toBe(true);
   });
 
-  it('troops hold fire at a raptor that is not after anyone; a darted raptor comes for the shooter and calls the other', () => {
+  it('troops hold fire at a raptor that is not after anyone; one darted from out of its sight comes for the shooter alone', () => {
     const w = new World({ seed: 7, level: 4 });
     w.start();
     parkTeam(w);
@@ -185,9 +242,24 @@ describe('level 4: the park after the blackout', () => {
     const events = run(w, 1);
     expect(events.some((x) => x.type === 'dart')).toBe(true);
     expect(a.target).toEqual({ type: 'unit', id: sq.id });
-    expect(b.target).toEqual({ type: 'unit', id: sq.id });
+    expect(b.target).toBeNull();
     expect(events).toContainEqual(expect.objectContaining({ type: 'spotted', kind: 'tranq' }));
     expect(w.engineerSpotted).toBe(false);
+  });
+
+  it('a raptor that sees who darts it calls the other', () => {
+    const w = new World({ seed: 7, level: 4 });
+    w.start();
+    parkTeam(w);
+    const { sq } = team(w);
+    const [a, b] = raptors(w);
+    a.look = 0;
+    // In front of it, in its cone: the shot is seen.
+    Object.assign(sq, inFront(w, a));
+    sedate(w, a, UNITS.tranq.dartSedation, sq.id);
+    run(w, STEP);
+    expect(a.target).toEqual({ type: 'unit', id: sq.id });
+    expect(b.target).toEqual({ type: 'unit', id: sq.id });
   });
 
   it('a Tranq Squad darts one raptor down on its own, but two kill it', () => {
@@ -197,7 +269,8 @@ describe('level 4: the park after the blackout', () => {
     const [a, b] = raptors(one);
     sedate(one, b, 1000, 0);
     const { sq } = team(one);
-    Object.assign(sq, { x: a.x + Math.cos(a.facing) * 3 * T, y: a.y + Math.sin(a.facing) * 3 * T });
+    a.look = 0;
+    Object.assign(sq, inFront(one, a));
     run(one, 15, () => a.state !== 'loose');
     expect(a.state).toBe('secured');
     expect(sq.dead).toBe(false);
@@ -208,8 +281,9 @@ describe('level 4: the park after the blackout', () => {
     parkTeam(two);
     const [c, d] = raptors(two);
     const s2 = team(two).sq;
+    c.look = 0;
     Object.assign(d, { x: c.x, y: c.y + T });
-    Object.assign(s2, { x: c.x + Math.cos(c.facing) * 3 * T, y: c.y + Math.sin(c.facing) * 3 * T });
+    Object.assign(s2, inFront(two, c));
     run(two, 15, () => s2.dead);
     expect(s2.dead).toBe(true);
     // Losing the squad isn't losing the level: only the Engineer can fix the substations.
@@ -237,6 +311,47 @@ describe('level 4: the park after the blackout', () => {
     run(w, 15, () => west.fixed);
     expect(west.fixed).toBe(true);
     expect(inReach(west, e.x, e.y, T)).toBe(true);
+  });
+
+  it('a repair order sends the Engineer to the side tapped, and leaves the rest of the group where it is', () => {
+    const w = new World({ seed: 14, level: 4 });
+    w.start();
+    parkTeam(w);
+    const { e, sq } = team(w);
+    const north = w.substations[1];
+    // A tap on the east side of the block.
+    const to = orderRepair(w, [e.id, sq.id], north.id, at(north.x + 2, north.y + 1))!;
+    expect(Math.floor(to.x / T)).toBe(north.x + 2);
+    expect(e.order).toBe('repair');
+    expect(e.dest).toEqual(to);
+    expect(sq.order).toBe('idle');
+    // It only shuffles off the Engineer's spot; it doesn't head for the substation.
+    const sq0 = { x: sq.x, y: sq.y };
+    run(w, 2);
+    expect(Math.hypot(sq.x - sq0.x, sq.y - sq0.y)).toBeLessThan(T / 2);
+    expect(sq.order).toBe('idle');
+    // Without a tap point, the tile nearest the Engineer.
+    const near = orderRepair(w, [e.id], north.id)!;
+    const ring = workTiles(north, w.unitWalk).map((t) => ({ x: (t.x + 0.5) * T, y: (t.y + 0.5) * T }));
+    const best = Math.min(...ring.map((p) => Math.hypot(p.x - e.x, p.y - e.y)));
+    expect(Math.hypot(near.x - e.x, near.y - e.y)).toBeCloseTo(best, 5);
+    // A tap on the tiles around the block counts too.
+    expect(w.substationNearTile(north.x - 1, north.y)).toBe(north);
+    expect(w.substationNearTile(north.x - 2, north.y)).toBeUndefined();
+  });
+
+  it('Stop drops a troop’s orders where it stands', () => {
+    const w = new World({ seed: 15, level: 4 });
+    w.start();
+    parkTeam(w);
+    const { e } = team(w);
+    orderMove(w, [e.id], 20 * T, 19.5 * T);
+    run(w, 1);
+    orderHold(w, [e.id]);
+    expect(e.order).toBe('idle');
+    const p0 = { x: e.x, y: e.y };
+    run(w, 2);
+    expect(Math.hypot(e.x - p0.x, e.y - p0.y)).toBeLessThan(1);
   });
 
   it('a fixed substation powers its pens: gaps seal and animals inside are contained', () => {
@@ -326,9 +441,10 @@ describe('level 5: the fight', () => {
     const events = run(w, 40, () => w.animalsKilled > 0);
     const killed = events.find((e) => e.type === 'killed');
     expect(killed).toMatchObject({ type: 'killed', kind: 'raptor', by: 'trex' });
-    // About every 30 s with the numbers as set.
-    expect(w.phaseTime).toBeGreaterThan(20);
-    expect(w.phaseTime).toBeLessThan(40);
+    // One bite every FIGHT.trexBiteSeconds, the first at once, until the most wounded raptor's health runs out.
+    const bites = Math.ceil(DINOS.raptor.health / FIGHT.trexBite);
+    expect(w.phaseTime).toBeGreaterThan((bites - 1) * FIGHT.trexBiteSeconds - 1);
+    expect(w.phaseTime).toBeLessThan(bites * FIGHT.trexBiteSeconds + 5);
     expect(w.log.some((e) => e.type === 'killed')).toBe(true);
   });
 
@@ -371,6 +487,33 @@ describe('level 5: the fight', () => {
     expect(raptor.target?.type).toBe('dino');
   });
 
+  it('while two raptors are on it, the T. rex ignores whoever darts it; with fewer, it locks on and roars before it comes', () => {
+    const w = new World({ seed: 8, level: 5 });
+    w.start();
+    run(w, 2);
+    const rex = w.dinos.find((d) => d.kind === 'trex')!;
+    const heavy = w.units.find((u) => u.kind === 'heavy')!;
+    Object.assign(heavy, { x: rex.x - 4 * T, y: rex.y });
+    sedate(w, rex, 10, heavy.id);
+    run(w, 1.5);
+    expect(rex.lockId).toBe(0);
+    // Take the raptors off it.
+    for (const r of w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose')) sedate(w, r, 1000, 0);
+    Object.assign(heavy, { x: rex.x - 4 * T, y: rex.y });
+    sedate(w, rex, 10, heavy.id);
+    const x0 = rex.x;
+    const y0 = rex.y;
+    const events = run(w, 1, () => rex.lockId !== 0);
+    expect(rex.lockId).toBe(heavy.id);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'roar', dinoId: rex.id, unitId: heavy.id }));
+    // It stands and roars, then comes.
+    const more = run(w, FIGHT.lockRoarSeconds - 0.2);
+    expect(Math.hypot(rex.x - x0, rex.y - y0)).toBeLessThan(T / 2);
+    expect(more.some((e) => e.type === 'charge')).toBe(false);
+    run(w, 2);
+    expect(Math.hypot(rex.x - x0, rex.y - y0)).toBeGreaterThan(T / 2);
+  });
+
   it('three animals killed loses the level; darting every animal wins', () => {
     const w = new World({ seed: 5, level: 5 });
     w.start();
@@ -406,15 +549,16 @@ describe('level 5: the Patrol 4x4', () => {
     return { w, jeep, heavies, tranqs };
   };
 
-  it('troops climb in up to the seats, and the rest stop beside it', () => {
+  it('troops climb in up to the seats, Heavy Teams first, and the rest stop beside it', () => {
     const { w, jeep, heavies, tranqs } = setup();
-    const three = [...heavies, tranqs[0]];
-    orderBoard(w, three.map((u) => u.id), jeep.id);
-    run(w, 6);
-    expect(passengers(w, jeep).length).toBe(JEEP.seats);
-    const left = three.filter((u) => !u.aboard);
-    expect(left).toHaveLength(1);
-    expect(left[0].order).toBe('idle');
+    // Everyone at once, as Select all does: the Tranq Squads are nearer and faster, but the Heavy Teams get the seats.
+    const all = [...tranqs, ...heavies];
+    orderBoard(w, all.map((u) => u.id), jeep.id);
+    run(w, 8);
+    expect(passengers(w, jeep).map((u) => u.kind).sort()).toEqual(['heavy', 'heavy']);
+    const left = all.filter((u) => !u.aboard);
+    expect(left.map((u) => u.kind)).toEqual(['tranq', 'tranq']);
+    expect(left.every((u) => u.order === 'idle' && Math.hypot(u.x - jeep.x, u.y - jeep.y) < 2.5 * T)).toBe(true);
   });
 
   it('drives faster than a Heavy Team walks, and everyone climbs out where it stops', () => {

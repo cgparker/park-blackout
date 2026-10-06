@@ -1,10 +1,12 @@
 // A scripted player for level 4, shared by the balance runs and the tests. It watches the raptors the way a careful
 // person would: it moves the Engineer only through tiles no raptor sees now or in the next couple of seconds, waits
 // in cover when there is no safe way on, and works from whichever side of a substation is out of sight.
-import { MAP, STEALTH } from '../src/config';
+import { MAP, STEALTH, UNITS } from '../src/config';
 import type { Dino } from '../src/core/dinos';
+import type { Point } from '../src/core/grid';
+import { findPath, lineClear, toWaypoints } from '../src/core/nav';
 import { inReach, workTiles } from '../src/core/power';
-import { lineOfSight } from '../src/core/stealth';
+import { inView, lineOfSight } from '../src/core/stealth';
 import { orderAttack, orderMove, orderRepair, type Unit } from '../src/core/units';
 import { World } from '../src/core/world';
 
@@ -20,20 +22,52 @@ interface Pose {
   sweep: boolean;
 }
 
-/** Where a raptor on patrol is now and will be over the next few seconds, read off its route. */
-function poses(d: Dino, ahead: readonly number[]): Pose[] {
+/**
+ * The way a raptor walks from one point to another: straight when it can see the way, otherwise the shortest path
+ * pulled tight, the way `followPath` straightens it.
+ */
+function legPath(w: World, from: Point, to: Point): Point[] {
+  const walk = w.dinoWalk;
+  if (lineClear(walk, T, from.x, from.y, to.x, to.y, 0)) return [to];
+  const tiles = findPath(w.grid.cols, w.grid.rows, walk, Math.floor(from.x / T), Math.floor(from.y / T), Math.floor(to.x / T), Math.floor(to.y / T));
+  const pts = [...toWaypoints(tiles, T), to];
+  const out: Point[] = [];
+  let at = from;
+  let i = 0;
+  while (i < pts.length) {
+    let j = pts.length - 1;
+    while (j > i && !lineClear(walk, T, at.x, at.y, pts[j].x, pts[j].y, 0)) j--;
+    out.push(pts[j]);
+    at = pts[j];
+    i = j + 1;
+  }
+  return out;
+}
+
+/** Where a raptor on patrol is now and will be at each time ahead (ascending), walking its route the way it does. */
+function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
   const out: Pose[] = [{ x: d.x, y: d.y, facing: d.look > 0 ? d.lookBase : d.facing, sweep: d.look > 0 }];
   const route = d.patrol;
-  if (!route?.length) return out;
-  for (const t of ahead) {
-    let x = d.x;
-    let y = d.y;
-    let facing = d.facing;
-    let left = t;
-    let i = d.patrolIndex;
-    let look = d.look;
-    let sweep = false;
-    for (let guard = 0; guard < 6 && left > 0; guard++) {
+  if (!route?.length || d.target) return out;
+  let x = d.x;
+  let y = d.y;
+  let facing = d.facing;
+  let look = d.look;
+  // A raptor making something out stands still until it settles.
+  let hold = d.notice;
+  let i = d.patrolIndex;
+  let pts = look > 0 ? [] : d.pathIndex < d.path.length ? [...d.path.slice(d.pathIndex), route[i]] : legPath(w, d, route[i]);
+  let t = 0;
+  for (const target of ahead) {
+    let left = target - t;
+    let sweep = look > 0;
+    for (let guard = 0; guard < 64 && left > 1e-9; guard++) {
+      if (hold > 0) {
+        const used = Math.min(hold, left);
+        hold -= used;
+        left -= used;
+        continue;
+      }
       if (look > 0) {
         const used = Math.min(look, left);
         look -= used;
@@ -41,27 +75,36 @@ function poses(d: Dino, ahead: readonly number[]): Pose[] {
         sweep = true;
         if (look <= 0) {
           i = (i + 1) % route.length;
+          pts = legPath(w, { x, y }, route[i]);
           sweep = left <= 0.3;
         }
         continue;
       }
-      const stop = route[i];
-      const dist = Math.hypot(stop.x - x, stop.y - y);
+      const p = pts[0];
+      if (!p) {
+        look = STEALTH.lookSeconds;
+        continue;
+      }
+      const dist = Math.hypot(p.x - x, p.y - y);
       const step = STEALTH.patrolSpeed * left;
-      if (dist > 1e-6) facing = Math.atan2(stop.y - y, stop.x - x);
+      if (dist > 1e-6) facing = Math.atan2(p.y - y, p.x - x);
       if (step < dist) {
-        x += ((stop.x - x) / dist) * step;
-        y += ((stop.y - y) / dist) * step;
+        x += ((p.x - x) / dist) * step;
+        y += ((p.y - y) / dist) * step;
         left = 0;
         sweep = false;
       } else {
-        x = stop.x;
-        y = stop.y;
+        x = p.x;
+        y = p.y;
         left -= dist / STEALTH.patrolSpeed;
-        look = STEALTH.lookSeconds;
-        sweep = true;
+        pts.shift();
+        if (!pts.length) {
+          look = STEALTH.lookSeconds;
+          sweep = true;
+        }
       }
     }
+    t = target;
     out.push({ x, y, facing, sweep });
   }
   return out;
@@ -75,7 +118,7 @@ export function exposedMap(w: World, margin: number, ahead: readonly number[] = 
     if (d.state !== 'loose' || d.kind === 'triceratops') continue;
     // Anything hunting, and the T. rex, is trouble anywhere near it.
     const hunting = d.kind === 'trex' || d.target?.type === 'unit';
-    const list = hunting ? [] : poses(d, ahead);
+    const list = hunting ? [] : poses(w, d, ahead);
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         if (!w.unitWalk(x, y)) continue;
@@ -137,14 +180,15 @@ function search(w: World, sx: number, sy: number, pass: (x: number, y: number) =
 const goTo = (w: World, u: Unit, t: { x: number; y: number }) => orderMove(w, [u.id], (t.x + 0.5) * T, (t.y + 0.5) * T);
 
 /**
- * One decision for the Engineer: work if it's beside the next broken substation and out of sight; otherwise walk a
- * tile or two along a path no raptor watches, to a work tile no raptor watches; otherwise hold still in cover, or
- * step back into it.
+ * One decision for the Engineer: work if it's beside the next broken substation and out of sight now and for the next
+ * 2 s; otherwise walk a tile or two along a path no raptor watches, to a work tile no raptor watches; otherwise hold
+ * still in cover, or step back into it. With `foresight` off it judges by what the cones show now, like a person who
+ * hasn't learned the routes.
  */
-export function sneakStep(w: World, e: Unit, margin: number): void {
+export function sneakStep(w: World, e: Unit, margin: number, foresight = true): void {
   const goal = w.substations.find((s) => !s.fixed);
   if (!goal || e.dead) return;
-  const bad = exposedMap(w, margin);
+  const bad = exposedMap(w, margin, foresight ? [1, 2] : []);
   const cols = w.grid.cols;
   const safe = (x: number, y: number) => w.unitWalk(x, y) && !bad[y * cols + x];
   const ex = Math.floor(e.x / T);
@@ -178,20 +222,49 @@ export interface GridPlan {
   every?: number;
   /** Extra tiles of caution around what the raptors see. */
   margin?: number;
+  /** Whether the sneak knows where each raptor will be in the next 2 s (true), or only sees the cones now. */
+  foresight?: boolean;
   /**
    * 'home': the Tranq Squad stays at HQ. 'decoy': once the north substation is fixed, it walks into the south
    * raptor's view, and while the raptors chase it the Engineer goes straight to the south substation.
-   * 'dart': once the north one is fixed, it attacks the south raptor, and the Engineer does the same.
+   * 'dart': once the north one is fixed, it's sent straight at the south raptor with no care for its cone, and the
+   * Engineer goes in while the raptors are busy. Most ways in reach dart range from outside the cone.
+   * 'ambush': once the north one is fixed, it creeps up behind the south raptor, out of its cone, and darts it from
+   * there, so it comes alone; the Engineer goes in while it's busy.
    */
-  squad?: 'home' | 'decoy' | 'dart';
+  squad?: 'home' | 'decoy' | 'dart' | 'ambush';
 }
 
 export interface GridRun {
   world: World;
   /** Seconds into the level each substation was fixed. */
   fixed: number[];
-  /** When a raptor first saw the Engineer, or -1. */
+  /** When a raptor first noticed the Engineer (which costs the star), or -1. */
   seenAt: number;
+}
+
+/**
+ * One step of the squad's ambush: get three tiles behind the raptor, where its cone doesn't reach even when it looks
+ * around, and dart it once it's in range there. Returns true once the dart is ordered (or the raptor is gone).
+ */
+function ambush(w: World, squad: Unit, d: Dino): boolean {
+  if (d.state !== 'loose') return true;
+  const dist = Math.hypot(squad.x - d.x, squad.y - d.y);
+  const unseen = !inView(w, d, squad.x, squad.y) && d.notice <= 0 && !d.target;
+  if (unseen && dist <= UNITS.tranq.range - 12 && dist > (STEALTH.hearTiles + 0.5) * T && lineOfSight(w, squad.x, squad.y, d.x, d.y)) {
+    orderAttack(w, [squad.id], d.id);
+    return true;
+  }
+  const facing = d.look > 0 ? d.lookBase : d.facing;
+  for (const back of [3, 2.5, 3.5]) {
+    const x = d.x - Math.cos(facing) * back * T;
+    const y = d.y - Math.sin(facing) * back * T;
+    if (w.unitWalk(Math.floor(x / T), Math.floor(y / T))) {
+      orderMove(w, [squad.id], x, y);
+      break;
+    }
+  }
+  return false;
 }
 
 /** Plays level 4 to the end with a plan. */
@@ -205,18 +278,25 @@ export function playGrid(seed: number, plan: GridPlan): GridRun {
   let seenAt = -1;
   let next = 0;
   let sent = false;
+  let home = false;
   while (w.phase !== 'ended') {
     w.update(1 / 60);
     for (const ev of w.events) {
       if (ev.type === 'substationFixed') fixed.push(w.phaseTime);
-      if (ev.type === 'spotted' && ev.kind === 'engineer' && seenAt < 0) seenAt = w.phaseTime;
+      if ((ev.type === 'noticed' || ev.type === 'spotted') && ev.kind === 'engineer' && seenAt < 0) seenAt = w.phaseTime;
     }
     w.events = [];
     if (w.time < next || e.dead) continue;
     next = w.time + (plan.every ?? 0.5);
     const goal = w.substations.find((s) => !s.fixed);
     const south = goal === w.substations[2];
-    if (!squad.dead && south && !sent && plan.squad && plan.squad !== 'home') {
+    if (!squad.dead && south && !sent && plan.squad === 'ambush') sent = ambush(w, squad, southRaptor);
+    // Once the ambushed raptor is down, the squad goes back to HQ before the other one finds it.
+    else if (!squad.dead && sent && plan.squad === 'ambush' && southRaptor.state !== 'loose' && squad.order !== 'move' && !home) {
+      orderMove(w, [squad.id], 5.5 * T, 17.5 * T);
+      home = true;
+    }
+    else if (!squad.dead && south && !sent && plan.squad && plan.squad !== 'home') {
       if (plan.squad === 'decoy') orderMove(w, [squad.id], 27.5 * T, 16.5 * T);
       else orderAttack(w, [squad.id], southRaptor.id);
       sent = true;
@@ -225,7 +305,7 @@ export function playGrid(seed: number, plan: GridPlan): GridRun {
     const busy = sent && !squad.dead && w.dinos.some((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === squad.id);
     if (plan.engineer === 'rush' || busy) {
       if (goal && (e.order !== 'repair' || e.targetId !== goal.id)) orderRepair(w, [e.id], goal.id);
-    } else sneakStep(w, e, plan.margin ?? 1);
+    } else sneakStep(w, e, plan.margin ?? 1, plan.foresight ?? true);
   }
   return { world: w, fixed, seenAt };
 }
