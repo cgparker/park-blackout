@@ -172,8 +172,8 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   const breakoutText = () =>
     S(page, () => [...document.querySelectorAll('.exhibit-panel .line')].find((l) => l.textContent.startsWith('Breaks out'))?.querySelector('.value')?.textContent ?? '');
   const chainLink = await breakoutText();
-  check('the exhibit panel says when the animals break out', /^\d+ s after blackout$/.test(chainLink), chainLink);
-  check('the reinforce note says how long concrete holds them', (await page.textContent('.exhibit-panel .note')).includes('holds them in until about'));
+  check('the exhibit panel says when the animals break out, give or take', /^\d+ to \d+ s after blackout$/.test(chainLink), chainLink);
+  check('the reinforce note says how long concrete holds them', /holds them in until \d+ to \d+ s after blackout/.test(await page.textContent('.exhibit-panel .note')));
   await S(page, () => (window.__pb.world.money += 5000));
   await page.tap('.exhibit-panel .reinforce');
   check('Reinforce upgrades the fence', await world(() => window.__pb.world.exhibits[0].segments.every((s) => s.hp === 600)));

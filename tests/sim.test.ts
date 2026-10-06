@@ -396,7 +396,7 @@ describe('blackout and cascade', () => {
     expect(w.dinos.every((d) => d.state === 'penned')).toBe(true);
   });
 
-  it('the T. rex breaks chain-link in 3 hits after 10 seconds', () => {
+  it('the T. rex breaks chain-link in 3 hits after its 10 s delay, moved by this game\'s drift', () => {
     let rex!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (rex = place(w, 'trex', 20, 16)));
     const events = run(w, 40, () => w.dinos.some((d) => d.kind === 'trex' && d.state === 'loose'));
@@ -404,8 +404,30 @@ describe('blackout and cascade', () => {
     expect(breach).toBeTruthy();
     const hits = events.filter((e) => e.type === 'fenceHit' && e.exhibitId === rex.id);
     expect(hits).toHaveLength(3);
-    expect(w.phaseTime).toBeGreaterThan(DINOS.trex.breakoutDelaySeconds!);
-    expect(w.phaseTime).toBeLessThan(18);
+    const start = DINOS.trex.breakoutDelaySeconds! + rex.drift;
+    expect(w.phaseTime).toBeGreaterThan(start);
+    expect(w.phaseTime).toBeLessThan(start + 8);
+  });
+
+  it('the raptors and the T. rex each go for their fences a few seconds early or late, a new draw each game', () => {
+    const drifts: number[] = [];
+    for (let seed = 1; seed <= 12; seed++) {
+      let rex!: ReturnType<typeof place>;
+      let a!: ReturnType<typeof place>;
+      let b!: ReturnType<typeof place>;
+      blackoutWorld((w) => {
+        a = place(w, 'raptor', 9, 11);
+        b = place(w, 'raptor', 9, 4);
+        rex = place(w, 'trex', 20, 16);
+      }, seed);
+      // Every raptor pen moves together; the T. rex moves on its own.
+      expect(b.drift).toBe(a.drift);
+      expect(rex.drift).not.toBe(a.drift);
+      drifts.push(rex.drift, a.drift);
+    }
+    expect(drifts.every((d) => Math.abs(d) <= BLACKOUT.breakoutDriftSeconds)).toBe(true);
+    expect(drifts.some((d) => d < -2)).toBe(true);
+    expect(drifts.some((d) => d > 2)).toBe(true);
   });
 
   it('concrete takes the T. rex 8 hits', () => {
@@ -427,8 +449,8 @@ describe('blackout and cascade', () => {
     const events = run(w, 40, () => w.dinos.some((d) => d.state === 'loose'));
     const breach = events.find((e) => e.type === 'breach');
     expect(breach && breach.type === 'breach' && breach.x).toBe((pen.segments[weak].x + 0.5) * T);
-    expect(w.phaseTime).toBeGreaterThan(DINOS.raptor.breakoutDelaySeconds!);
-    expect(w.phaseTime).toBeLessThan(DINOS.raptor.breakoutDelaySeconds! + 3);
+    expect(w.phaseTime).toBeGreaterThan(DINOS.raptor.breakoutDelaySeconds! + pen.drift);
+    expect(w.phaseTime).toBeLessThan(DINOS.raptor.breakoutDelaySeconds! + pen.drift + 3);
     run(w, 1);
     expect(w.dinos.filter((d) => d.kind === 'raptor').every((d) => d.state === 'loose')).toBe(true);
   });
@@ -594,7 +616,7 @@ describe('combat', () => {
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const fp = pen.footprint;
     spawnUnit(w, 'heavy', { x: (fp.x + fp.w + 1.5) * T, y: (fp.y + 1.5) * T });
-    const events = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    const events = run(w, DINOS.raptor.breakoutDelaySeconds! + pen.drift - 1);
     expect(events.some((e) => e.type === 'dart')).toBe(false);
     expect(w.dinos.every((d) => d.sedation === DINOS[d.kind].sedation)).toBe(true);
   });
@@ -830,7 +852,7 @@ describe('towers', () => {
       const fp = pen.footprint;
       w.buildTower(planTower(w.grid, fp.x + fp.w + 1, fp.y + 1, w.money));
     });
-    const quiet = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    const quiet = run(w, DINOS.raptor.breakoutDelaySeconds! + pen.drift - 1);
     expect(quiet.some((e) => e.type === 'dart')).toBe(false);
     const fight = run(w, 40, () => w.dinosSecured > 0);
     expect(fight.some((e) => e.type === 'dart')).toBe(true);
@@ -926,7 +948,7 @@ describe('power return and scoring', () => {
 });
 
 describe('planning numbers and the blackout log', () => {
-  it('breakout estimates match the simulation within a second', () => {
+  it('breakout estimates match the simulation within a second, give or take the pen\'s drift', () => {
     for (const kind of ['trex', 'raptor'] as const) {
       for (const reinforced of [false, true]) {
         const w = new World({ seed: 11, startingMoney: RICH, buildPhaseSeconds: 1 });
@@ -935,7 +957,7 @@ describe('planning numbers and the blackout log', () => {
         w.start();
         run(w, 1 + 60, () => w.dinos.some((d) => d.state === 'loose'));
         const estimate = breakoutSeconds(kind, reinforced)!;
-        expect(Math.abs(w.phaseTime - estimate), `${kind} ${reinforced ? 'concrete' : 'chain-link'}`).toBeLessThan(1);
+        expect(Math.abs(w.phaseTime - (estimate + ex.drift)), `${kind} ${reinforced ? 'concrete' : 'chain-link'}`).toBeLessThan(1);
       }
     }
     expect(breakoutSeconds('pasture', false)).toBeNull();
@@ -1019,7 +1041,9 @@ describe('planning numbers and the blackout log', () => {
 
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
-    run(w, 30, () => w.evacuating);
+    run(w, 40, () => w.evacuating);
+    // The rest of the pack follows the first one out.
+    run(w, 1);
     w.quit();
     expect(w.result?.reason).toBe('abandoned');
     const end = w.result!.log.at(-1);

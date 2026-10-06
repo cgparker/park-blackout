@@ -1,4 +1,5 @@
 import {
+  BLACKOUT,
   COLORS,
   DINOS,
   EXHIBITS,
@@ -185,7 +186,12 @@ export interface BriefingView {
 export type Panel = 'place' | 'train' | 'exhibit' | 'substation';
 
 /** "14 s after the blackout" style text for planning numbers. */
-export const afterBlackout = (s: number | null) => (s === null ? 'Never on its own' : `${Math.round(s)} s after blackout`);
+/** "16 to 26 s": when a pen's animals get out, give or take its drift (BLACKOUT.breakoutDriftSeconds), which changes every game. */
+export const breakoutWindow = (s: number) => {
+  const d = BLACKOUT.breakoutDriftSeconds;
+  return d > 0 ? `${Math.max(0, Math.round(s - d))} to ${Math.round(s + d)} s` : `${Math.round(s)} s`;
+};
+export const afterBlackout = (s: number | null) => (s === null ? 'Never on its own' : `${breakoutWindow(s)} after blackout`);
 
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
@@ -991,7 +997,7 @@ export class Hud {
       const disabled = v.money < v.reinforceCost!;
       if (this.reinforceBtn.disabled !== disabled) this.reinforceBtn.disabled = disabled;
     }
-    const holds = canReinforce && v.breakout?.concrete != null ? ` It holds them in until about ${Math.round(v.breakout.concrete)} s.` : '';
+    const holds = canReinforce && v.breakout?.concrete != null ? ` It holds them in until ${breakoutWindow(v.breakout.concrete)} after blackout.` : '';
     setText(
       this.reinforceNote,
       v.reinforced

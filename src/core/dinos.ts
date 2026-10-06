@@ -430,10 +430,14 @@ function goLoose(w: World, d: Dino): void {
 
 // ------------------------------------------------------------------ predators in their pens
 
-/** Seconds into the level when animals in this pen go for the fence. Level 4 sets it per pen; otherwise it's the animal's own delay. */
+/**
+ * Seconds into the level when animals in this pen go for the fence. Level 4 sets it per pen; otherwise it's the
+ * animal's own delay, moved by the pen's drift for this game.
+ */
 function breakoutTime(ex: Exhibit, kind: AnimalKind): number {
   if (ex.breakoutAt !== undefined) return ex.breakoutAt ?? Infinity;
-  return DINOS[kind].breakoutDelaySeconds ?? Infinity;
+  const delay = DINOS[kind].breakoutDelaySeconds;
+  return delay === null ? Infinity : delay + ex.drift;
 }
 
 function updatePennedPredator(w: World, d: Dino, dt: number): void {

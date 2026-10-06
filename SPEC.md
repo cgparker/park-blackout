@@ -269,7 +269,7 @@ Left-click to select, left-drag for a selection box, right-click to move or atta
 - **Health bars:** in level 5, a red bar under an animal's sedation bar shows its health once it's hurt.
 - **Bottom bar:** exhibit and tower buttons (grayed out when unaffordable or at the limit) and selected-unit info.
 - **Pause menu:** stops the clock and shows how each star goal is going. **Restart** goes back to the briefing. **End game** ends the game now as a loss and shows the end screen.
-- **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out ("21 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors. In levels 1 and 2 it says how long the team takes to sedate one of the loose animals.
+- **Planning numbers:** before the blackout, the placement and exhibit panels say when that exhibit's animals break out, as a range since the time drifts each game ("13 to 29 s after blackout"), and the Reinforce note says how long concrete holds them. HQ shows each troop's sedation per second and how long the whole team, queue included, takes to sedate a T. rex and a pack of three raptors. In levels 1 and 2 it says how long the team takes to sedate one of the loose animals.
 - **When the power goes out** the camera moves to show every exhibit. At the start of levels 1, 2, and 5 it shows HQ and every loose animal. At the start of level 4 it shows HQ and the substations. With tips on, it goes back to that view once the opening tips are read.
 - **Edge arrows:** in Act 2, and all through levels 1, 2, 4, and 5, arrows at the edge of the map point at loose animals and fresh fence breaks that are off screen, with a count when several animals are together. Tap one to look there.
 
@@ -302,6 +302,7 @@ Not every dinosaur escapes. Each type follows its own rule, and the cascade come
 - **T. rex:** After 10 s, attacks the segment of its fence closest to the nearest visitor or other exhibit. Chain-link breaks in 3 hits; concrete in 8.
 - **Raptors:** After 18 s, every raptor in a pen attacks that pen's weakest segment together.
 - **Triceratops:** Never attack their own fence. They only get out if something else breaks it, or if they stampede through a damaged segment.
+- **Drift:** each game, the raptors (every pen together) and the T. rex each start up to 8 s earlier or later than these delays. So the T. rex isn't always out first, and the time between the two changes from game to game. The panels give the range.
 
 When a segment reaches 0 HP, it becomes a gap. Animals can leave through gaps.
 
@@ -472,37 +473,37 @@ The visit length decides how much spacing costs. At 40 s the spread park still e
 
 Whole blackouts (16 seeds each, `SEEDS=16 npm run balance`). The bank is spent at 3:30 and troops alternate Heavy and Tranq. Two defender styles: **massed** keeps every troop together and sends them all at the nearest loose predator; **split** posts troops at the predator pens' viewing spots, raptor pens first, and each one fights whatever comes near it. About 52 visitors are in the park when the power goes out. Nobody leaves until the first animal gets out, and the guests pay the park about $1,400 to $2,200 in the dark.
 
-Dense T. rex park (about $30,500 to spend). The T. rex gets out first, at about 14 s, and that starts the evacuation. The raptors follow at about 21 s, or about 28 s behind concrete.
+Dense T. rex park (about $30,500 to spend). The T. rex usually gets out first, at about 14 s (6 to 22 s with the drift), and that starts the evacuation. The raptors follow at about 21 s (13 to 29 s), or about 28 s behind concrete (20 to 36 s). In some games the raptors get out first, into a full park.
 
 | Defense | Spent | Result |
 |---|---|---|
-| Nothing | $0 | Overrun 16 of 16 |
-| 5 troops, massed | $18,750 (58%) | Won 13 (10 with ★★★), overrun 3 |
-| 6 troops, massed | $21,000 (65%) | Won 16 of 16 |
-| 7 troops, massed | $23,250 (72%) | Won 16 of 16 |
-| Whole bank, massed (10 troops) | $30,000 | Won 16 of 16 |
-| Whole bank, split (10 troops) | $30,000 | Won 16 of 16 |
-| Concrete on every pen, rest split (8 troops) | $28,350 | Overrun 12, won 4, losing 7.2 troops |
-| Concrete on the raptor pens only, rest split (10 troops) | $29,850 | Won 16 of 16, all ★★★ |
-| 2 towers, rest massed (7 troops) | $28,500 | Won 16 of 16 |
+| Nothing | $0 | Overrun 13, shut down 3 |
+| 5 troops, massed | $18,750 (58%) | Won 11 (6 with ★★★), overrun 4, shut down 1 |
+| 6 troops, massed | $21,000 (65%) | Won 15 (10 with ★★★), shut down 1 |
+| 7 troops, massed | $23,250 (72%) | Won 15 (12 with ★★★), shut down 1 |
+| Whole bank, massed (10 troops) | $30,000 | Won 16 (8 with ★★★) |
+| Whole bank, split (10 troops) | $30,000 | Won 16 (8 with ★★★) |
+| Concrete on every pen, rest split (8 troops) | $28,350 | Won 12 (7 with ★★★), overrun 4, losing 5.6 troops |
+| Concrete on the raptor pens only, rest split (10 troops) | $29,850 | Won 16 (13 with ★★★) |
+| 2 towers, rest massed (7 troops) | $28,500 | Won 14 (7 with ★★★), overrun 1, shut down 1 |
 
-Visitor deaths: at most 4 in a game with any troop defense, and usually none.
+Visitor deaths: none or a few in most games with a troop defense, but up to 9 when the raptors get out before the T. rex.
 
-Dense three-raptor park (about $24,200 to spend). With no T. rex, the raptors are the first out, at about 21 s (about 28 s behind concrete), into a full park.
+Dense three-raptor park (about $24,200 to spend). With no T. rex, the raptors are the first out, at about 21 s (13 to 29 s; about 28 s behind concrete), into a full park.
 
 | Defense | Spent | Result |
 |---|---|---|
 | Nothing | $0 | Shut down 16 of 16 |
 | 5 troops, massed | $18,750 (73%) | Shut down 14, won 2 |
-| 6 troops, massed | $21,000 (82%) | Shut down 16 of 16 |
+| 6 troops, massed | $21,000 (82%) | Shut down 13, won 3 |
 | Whole bank, massed (7 troops) | $23,250 | Shut down 14, won 2 |
 | Whole bank, split (7 troops) | $23,250 | Won 12, shut down 3, overrun 1 |
-| Concrete, rest split (6 troops) | $22,650 | Won 15, overrun 1 |
-| 2 towers, rest massed (5 troops) | $24,000 | Won 8, shut down 8 |
+| Concrete, rest split (6 troops) | $22,650 | Won 11, shut down 4, overrun 1 |
+| 2 towers, rest massed (5 troops) | $24,000 | Won 10, shut down 6 |
 
-About 4 to 6 visitors die with split troops, concrete or not, and 7 or 8 with everything else.
+About 5 visitors die with split troops, concrete or not, and 7 or 8 with everything else.
 
-Raptors took on level 4's senses (DECISIONS 141 to 152), which made both parks easier, and then learned to hunt as a pack (153 to 163). A raptor makes out a guest at once and goes for it alone, and calls the pack only for a troop, so raptors spread through the crowd: massed troops lose the raptor park to guest deaths almost every time again, while split troops still hold it in 12 to 15 games of 16. The pack didn't move the T. rex park, since a Heavy Team puts a raptor down in two darts and a group with Heavy Teams breaks a pack. Taking the roar out of level 3 (decision 164) did: concrete on every pen with split troops is overrun 12 times in 16 (never with the roar), and 5 massed troops 3 times (once with it). Six or more troops together, or troops posted at concrete raptor pens, still hold it every time. Before the senses changed, 5 massed troops were overrun in all 16 T. rex park games, concrete on every pen with split troops in 12, and split troops lost the raptor park 14 times in 16.
+Raptors took on level 4's senses (DECISIONS 141 to 152), which made both parks easier, and then learned to hunt as a pack (153 to 163). A raptor makes out a guest at once and goes for it alone, and calls the pack only for a troop, so raptors spread through the crowd: massed troops lose the raptor park to guest deaths almost every time again, while split troops still hold it in 12 to 15 games of 16. The pack didn't move the T. rex park, since a Heavy Team puts a raptor down in two darts and a group with Heavy Teams breaks a pack. Taking the roar out of level 3 (decision 164) made thin defenses pay, and the breakout drift (decision 165) means no plan is safe every time. The best plan, concrete on the raptor pens with troops posted at each pen, earns three stars in 13 of 16 games (40 of 48 in a longer run), down from every game: in the rest the raptors get out close behind the T. rex, or ahead of it, while guests are still in the park. Before the senses changed, 5 massed troops were overrun in all 16 T. rex park games, concrete on every pen with split troops in 12, and split troops lost the raptor park 14 times in 16.
 
 Fights on open grass (troops and towers in a block, dinosaurs released 6 tiles away, 5 seeds each). The raptors head for the block, one makes it out and calls the rest, and they circle it out of dart range before they strike together. The block's back is near the park's edge, so they spread along the open side.
 
@@ -581,16 +582,16 @@ Level 5, 3:00 on the clock, 2 Heavy Teams, 2 Tranq Squads, and the 4x4. Stars fo
 
 Left alone, the T. rex kills a raptor at about 0:12, 0:27, and 0:42, so doing nothing loses at about 0:42. The fight breaks into the west raptor pen at about 0:24. Whichever side the troops dart first, the other costs a star: darting the raptors first frees the T. rex, which takes a troop (it roars first, and a troop driven off in the 4x4 is safe), and darting the T. rex first, while the raptors shield it, costs a raptor, since the T. rex kills one every 15 s. Only the 4x4 decoy, or driving the T. rex's target off, saves both.
 
-`npm run stress` plays 40 random blackout games: 2 wins, 13 overruns, 25 shutdowns. Careless play loses. It also plays 20 random games of each other level: level 1 is won twice in 20 (random orders rarely corner anything in time), and level 2 is won 19 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together. Level 4 is never won at random: the Engineer is lost in all 20. Level 5 is won 4 times in 20, two of them with one star; 14 let 3 animals die and 2 lose every troop.
+`npm run stress` plays 40 random blackout games: 2 wins, 12 overruns, 26 shutdowns. Careless play loses. It also plays 20 random games of each other level: level 1 is won twice in 20 (random orders rarely corner anything in time), and level 2 is won 19 times in 20, because random buying spends the whole $21,000 and random attack orders send most troops at the nest together. Level 4 is never won at random: the Engineer is lost in all 20. Level 5 is won 4 times in 20, two of them with one star; 14 let 3 animals die and 2 lose every troop.
 
 What to watch in playtests:
 
-- Each park punishes a different mistake. The raptor park loses to guest deaths unless troops guard each pen: massed troops are shut down in 14 to 16 games of 16, and split troops win 12 to 15. The T. rex park punishes troops spread thin: concrete on every pen with split troops is overrun 12 times in 16, and 5 massed troops 3 times, while 6 or more together hold.
+- Each park punishes a different mistake. The raptor park loses to guest deaths unless troops guard each pen: massed troops are shut down in 13 or 14 games of 16, and split troops win 11 or 12. The T. rex park punishes thin defenses (5 massed troops lose 5 games in 16), and with the drift, any plan can lose a guest or two when the raptors get out early.
 - The roar is set per level (`MissionConfig.roars`), and only level 5 has it. There it is the cue for the 4x4 decoy: without it, the decoy earned three stars in 8 of 16 games, not 16. Level 4's scripted plans came out the same with or without it over 48 games each, since its T. rex only gets out when the north substation is late. If the T. rex park feels too hard, a roar in level 3 is the lever: with 2 s, every troop defense held it.
 - The first animal out is the alarm. In a park with a T. rex, its escape usually starts the evacuation, so concrete on its fence keeps guests in the park longer, and concrete on the raptor pens alone gives them the longest head start. A park without a T. rex has no early alarm. If raptor-only parks feel like a trap, the levers are the raptor breakout delay, the evacuation speed (`VISITORS.evacuateSpeed`), and the casualty limit.
 - In these runs the raptor park's defenses that work are the ones that guard each pen (split troops, with or without concrete, and towers with massed troops). A player can do better than the scripted defender (towers on the paths, troops bought earlier).
-- The casualty limit is 8. A defended T. rex park never lost more than 3 visitors, so the limit bites where raptors are many. `UNCAPPED=1 npm run balance` prints every game's deaths, to judge another limit.
-- The cheapest defense that held every T. rex park game is 6 massed troops, 65% of what that park leaves; 5 massed troops lose 3 games in 16. Extra troops, towers, or concrete take most of the rest.
+- The casualty limit is 8. A defended T. rex park usually loses a few visitors at most, but up to 9 when the raptors get out before the T. rex, so the limit can bite there too. `UNCAPPED=1 npm run balance` prints every game's deaths, to judge another limit.
+- The defenses that won every T. rex park game spend most of the bank: every troop massed or split, or concrete on the raptor pens with troops at each pen. Six massed troops (65% of the bank) lose 1 game in 16, and 5 massed troops lose 5.
 - The T. rex is slower than a running visitor (90 vs 100 px/s), so it mostly kills troops, towers, and anyone who walks toward it. Its charges and lock-on make it the fight that costs troops.
 - The dense park leaves about $30,000, so a careful player can afford plenty. If that feels too safe, raise exhibit prices, or lower the starting money.
 - Towers are bait and backup, not a defense on their own. A tower beside a pen draws the first attack and buys troops a few seconds.

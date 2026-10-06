@@ -2,6 +2,15 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Breakouts drift
+
+Chris asked for level 3's breakout times to drift each game, so the three-star plan in the T. rex park (concrete on the raptor pens, troops at each pen) isn't a sure thing.
+
+165. **Each game, the raptors and the T. rex each go for their fences up to 8 s early or late (`BLACKOUT.breakoutDriftSeconds`).** Every raptor pen shares one draw, and the T. rex gets its own. The panels show the range ("13 to 29 s after blackout"). Over 48 games each:
+    - With 5 s, the three-star plan still earned three stars in 47 of 48. With 8 s, 40 of 48. In the rest the raptors got out close behind the T. rex, or ahead of it, while guests were still in the park, and one game was shut down.
+    - A separate draw for each pen staggered the raptor pens, so a massed group could take them one at a time: 5 massed troops won the raptor park in 33 of 48 games instead of 6. One draw for every raptor pen keeps the raptor park as hard as before.
+    - Most other T. rex park plans earn three stars less often too, mostly from guest deaths in the games where the raptors get out early (every troop massed: 24 of 48, from 42). Concrete on every pen with split troops is the exception: it wins 31 of 48 instead of 13.
+
 ## The roar where it helps
 
 Chris: "The T. rex doesn't need to always roar. If game play is better without a roar on a certain level, encourage no roar in that case. From a player perspective, it is still a consistent character."

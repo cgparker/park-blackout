@@ -28,6 +28,11 @@ export interface Exhibit {
    * (null: never on their own). Undefined means the animal's own breakout delay, as in the blackout.
    */
   breakoutAt?: number | null;
+  /**
+   * Level 3: seconds this pen's animals go for the fence early (negative) or late this game, drawn when the power goes
+   * out. Every pen of a kind shares it.
+   */
+  drift: number;
   visits: number;
   revenue: number;
   /** The segment a raptor pack is breaking, so the whole pack hits the same one. */

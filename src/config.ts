@@ -413,6 +413,11 @@ export const BLACKOUT = {
   quickBuildPhaseSeconds: 120,
   /** What HQ trains in the blackout. */
   units: ['tranq', 'heavy'] as readonly UnitKind[],
+  /**
+   * Each game, the raptors (every pen together) and the T. rex each go for their fences up to this many seconds earlier
+   * or later than their breakout delay. So the T. rex isn't always out first, and no plan is safe every time.
+   */
+  breakoutDriftSeconds: 8,
   /** Placeholder: Mantah Corp is from Camp Cretaceous. Rename before sharing publicly. */
   villainName: 'Mantah Corp',
 };

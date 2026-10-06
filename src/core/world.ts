@@ -415,6 +415,7 @@ export class World {
       segments: buildSegments(plan.footprint),
       reinforced: false,
       powered: this.powerOn,
+      drift: 0,
       visits: 0,
       revenue: 0,
       packTarget: null,
@@ -471,9 +472,14 @@ export class World {
     this.powerOn = false;
     // Nobody tells the guests. They keep touring and paying until the first animal gets out.
     this.visitorsAtBlackout = this.visitors.filter((v) => !v.done).length;
+    // The raptors, every pen together, and the T. rex each go for their fences a little early or late this game
+    // (BLACKOUT.breakoutDriftSeconds).
+    const drift = new Map<ExhibitKind, number>();
     for (const ex of this.exhibits) {
       ex.powered = false;
       ex.version++;
+      if (!drift.has(ex.kind)) drift.set(ex.kind, (this.rng() * 2 - 1) * BLACKOUT.breakoutDriftSeconds);
+      ex.drift = drift.get(ex.kind)!;
     }
     this.logStart = this.time;
     this.log.push({ t: 0, type: 'blackout', inPark: this.visitorsAtBlackout });
