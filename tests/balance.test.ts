@@ -1,7 +1,7 @@
 // Headless balance checks. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { BLACKOUT, EXHIBITS, MAP, MISSIONS, SCORING, UNITS, type ExhibitKind, type StarGoal, type UnitKind } from '../src/config';
+import { BLACKOUT, EXHIBITS, MAP, MISSIONS, NEST, SCORING, UNITS, type ExhibitKind, type StarGoal, type UnitKind } from '../src/config';
 import type { Dino } from '../src/core/dinos';
 import { footprintCenter, inFootprint } from '../src/core/exhibit';
 import type { Point, Rect } from '../src/core/grid';
@@ -394,9 +394,11 @@ function roundup(seed: number, n: number, style: 'split' | 'massed') {
 
 /**
  * Level 2 with a troop mix bought at the start. Trickle: each troop goes after the nearest raptor as soon as it is ready.
- * Massed: every troop waits at a rally point outside the nest's leash, then they all go in together.
+ * Massed: every troop waits at a rally point out of the nest's sight, then they all go in together. Wait: the group
+ * gathers the same way, then stands at the edge of the nest, about 5 tiles out, and darts whatever comes in range; a
+ * raptor darted from where no cone reaches comes alone. It steps a tile closer after 20 s with nothing in range.
  */
-function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
+function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed' | 'wait') {
   const w = new World({ seed, level: 2 });
   w.start();
   const rally = toTile(w, 21, 16);
@@ -404,6 +406,10 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
   let next = 0;
   let go = false;
   const sent = new Set<number>();
+  // The wait plan: where the group stands, how far from the nest, and how long nothing has come in range.
+  let post: { x: number; y: number } | null = null;
+  let out = 0;
+  let quiet = 0;
   while (w.phase !== 'ended') {
     while (bought < mix.length && enqueueUnit(w, mix[bought])) bought++;
     w.update(1 / 60);
@@ -427,6 +433,21 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
     }
     go ||= bought >= mix.length && !w.queue.length && troops.every((u) => Math.hypot(u.x - rally.x, u.y - rally.y) < 2.5 * T);
     if (!go) continue;
+    if (style === 'wait') {
+      const nest = w.nest!;
+      const reach = Math.min(...troops.map((u) => UNITS[u.kind].range));
+      const inRange = free.some((d) => troops.some((u) => Math.hypot(d.x - u.x, d.y - u.y) <= reach));
+      if (inRange || free.some((d) => d.target)) quiet = 0;
+      else quiet += 0.5;
+      if (!post || quiet >= 20) {
+        out = post ? Math.max(1, out - 1) : NEST.roamTiles + 3;
+        const a = Math.atan2(rally.y - nest.y, rally.x - nest.x);
+        post = { x: nest.x + Math.cos(a) * out * T, y: nest.y + Math.sin(a) * out * T };
+        orderMove(w, troops.map((u) => u.id), post.x, post.y);
+        quiet = 0;
+      }
+      continue;
+    }
     const cx = troops.reduce((a, u) => a + u.x, 0) / troops.length;
     const cy = troops.reduce((a, u) => a + u.y, 0) / troops.length;
     const t = nearestOf(free, cx, cy);
@@ -474,7 +495,7 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
       ['2 Heavy + 2 Tranq', ['heavy', 'heavy', ...tranqs(2)]],
     ];
     const rows: string[] = [];
-    for (const style of ['massed', 'trickle'] as const) {
+    for (const style of ['massed', 'wait', 'trickle'] as const) {
       for (const [name, mix] of mixes) {
         const cost = mix.reduce((a, k) => a + UNITS[k].cost, 0);
         const runs = Array.from({ length: seeds }, (_, i) => nestFight(i + 1, mix, style));

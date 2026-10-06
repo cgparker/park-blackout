@@ -99,7 +99,7 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
           out.push({
             id: 'nest',
             title: 'Raptors guard their nest',
-            body: 'They attack any troop that comes close, all at once. Gather your troops into one group before you go in. If a fight goes badly, pull back: they won’t chase you far from the nest.',
+            body: 'The cone in front of each raptor shows what it sees, and rock and pens block it. A raptor takes a moment to make out a troop in its cone, then comes for it and calls the rest. One darted from where no cone reaches comes alone.',
             focus: nest,
           });
         } else {
@@ -131,6 +131,36 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
           focus: { x: e.x, y: e.y },
         });
         break;
+      case 'noticed':
+        if (!nest) break;
+        out.push({
+          id: 'noticed',
+          title: `A raptor noticed your ${UNITS[e.kind].name}`,
+          body: 'It stopped to make out what it saw. Get out of its cone, or behind cover, before the ring fills, or it comes and calls the rest.',
+          focus: { x: e.x, y: e.y },
+        });
+        break;
+      case 'spotted': {
+        if (!nest) break;
+        // A raptor darted from where no cone reaches comes alone; say whether the rest are coming too.
+        const after = w.dinos.filter((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === e.unitId).length;
+        out.push(
+          after > 1
+            ? {
+                id: 'spotted',
+                title: 'The nest is coming',
+                body: `A raptor made out your ${UNITS[e.kind].name} and called the rest. Fight them as one group, or get out of sight: a raptor that loses you for a few seconds goes back to the nest.`,
+                focus: { x: e.x, y: e.y },
+              }
+            : {
+                id: 'spotted',
+                title: 'A raptor is coming alone',
+                body: 'The rest didn’t see it go. Dart it down before they see the fight.',
+                focus: { x: e.x, y: e.y },
+              },
+        );
+        break;
+      }
       case 'unitLost':
         if (!nest || e.by !== 'raptor') break;
         out.push({
@@ -241,7 +271,7 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'fight',
           title: 'They are killing each other',
-          body: `The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. A raptor you dart turns on you for a few seconds. The T. rex is too busy for you while ${numberWord(FIGHT.shieldRaptors)} or more raptors are on it; after that, it comes for whoever darts it.`,
+          body: `The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. A raptor you dart comes for you until it loses sight of you. The T. rex is too busy for you while ${numberWord(FIGHT.shieldRaptors)} or more raptors are on it; after that, it comes for whoever darts it.`,
           focus: rex ? { x: rex.x, y: rex.y } : null,
         });
         out.push({
@@ -285,7 +315,7 @@ function raptorPenTip(ex: Exhibit): Tip {
   return {
     id: 'raptorPen',
     title: 'Raptors go for visitors',
-    body: 'When the power goes out, raptors break out beside the path and attack whoever is close. Before the blackout, reinforce their fence and post troops beside each raptor pen.',
+    body: 'When the power goes out, raptors break out beside the path and head for the guests. One that makes someone out calls the rest. Before the blackout, reinforce their fence and post troops beside each raptor pen.',
     focus: footprintCenter(ex.footprint, T),
   };
 }
@@ -294,7 +324,7 @@ function trexTip(ex: Exhibit): Tip {
   return {
     id: 'trex',
     title: 'The T. rex picks off loners',
-    body: 'It locks onto one troop, marked with an orange ring, and charges it. Keep your troops in one group so they all dart it at once.',
+    body: 'It roars at one troop, marked with an orange ring, then charges it. Keep your troops in one group so they all dart it at once.',
     focus: footprintCenter(ex.footprint, T),
   };
 }
@@ -331,7 +361,7 @@ function trexLonerTip(x: number, y: number): Tip {
   return {
     id: 'trexLoner',
     title: 'The T. rex caught a troop alone',
-    body: 'It picks one target and charges after a short wind-up. Keep troops together near the T. rex, and move a troop with an orange ring out of its path.',
+    body: 'It roars at one target, then charges it after a short wind-up. Keep troops together near the T. rex, and move a troop with an orange ring out of its path.',
     focus: { x, y },
   };
 }

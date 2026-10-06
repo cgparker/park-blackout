@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DINO_AI, DINOS, EXHIBITS, MAP, MISSIONS, NEST, UNITS } from '../src/config';
+import { DINO_AI, DINOS, EXHIBITS, MAP, MISSIONS, NEST, STEALTH, UNITS } from '../src/config';
 import { sedate } from '../src/core/combat';
 import { fenceRect, inFootprint } from '../src/core/exhibit';
 import { missionGoalsMet } from '../src/core/report';
-import { enqueueUnit, isTargetable, orderMove, spawnUnit } from '../src/core/units';
+import { inView } from '../src/core/stealth';
+import { enqueueUnit, isTargetable, spawnUnit } from '../src/core/units';
 import { World, type GameEvent } from '../src/core/world';
 
 const STEP = 1 / 60;
@@ -242,20 +243,55 @@ describe('level 2: raptors guarding a nest', () => {
     expect(raptors.every((d) => d.target === null)).toBe(true);
   });
 
-  it('go after a troop close to the nest, then give up once it leaves the leash, and run home', () => {
+  /** Open ground about three tiles from a raptor that it sees (`seen`), or that no raptor sees (not `seen`). */
+  function spotNear(w: World, d: { x: number; y: number; facing: number }, seen: boolean) {
+    const raptors = loose(w).filter((o) => o.kind === 'raptor');
+    for (const r of [3, 2.5, 3.5, 2, 4]) {
+      for (let i = 0; i < 16; i++) {
+        const a = seen ? d.facing + (i % 2 ? 1 : -1) * Math.floor(i / 2) * 0.1 : d.facing + Math.PI + (i % 2 ? 1 : -1) * Math.floor(i / 2) * 0.2;
+        const p = { x: d.x + Math.cos(a) * r * T, y: d.y + Math.sin(a) * r * T };
+        if (!w.unitWalk(Math.floor(p.x / T), Math.floor(p.y / T))) continue;
+        if (seen ? inView(w, d, p.x, p.y) : raptors.every((o) => !inView(w, o, p.x, p.y))) return p;
+      }
+    }
+    throw new Error('no open ground for the test');
+  }
+
+  it('see in cones like every raptor: a troop in one cone brings the whole nest, and they go home once they lose it', () => {
     const { w, nest, raptors } = setup();
-    const u = spawnUnit(w, 'heavy', { x: nest.x - 6 * T, y: nest.y });
+    // Out of every cone: nothing happens.
+    const u = spawnUnit(w, 'heavy', { x: nest.x - (STEALTH.sightTiles + NEST.roamTiles + 1.5) * T, y: nest.y });
     u.hp = 1e9;
-    run(w, 2);
-    expect(raptors.filter((d) => d.target?.type === 'unit').length).toBeGreaterThan(0);
-    // Out past the leash: the chase stops and they head back.
-    u.x = nest.x - (NEST.leashTiles + 2) * T;
-    orderMove(w, [u.id], u.x - 4 * T, u.y);
-    run(w, 1);
+    run(w, 3);
+    expect(raptors.every((d) => d.target === null)).toBe(true);
+    // In front of one raptor: it stops to make the troop out, then calls the rest.
+    const r = raptors[0];
+    Object.assign(u, spotNear(w, r, true));
+    run(w, STEALTH.noticeSeconds + 0.2);
+    expect(raptors.filter((d) => d.state === 'loose').every((d) => d.target?.type === 'unit' && d.target.id === u.id)).toBe(true);
+    // Gone, far out of sight: they give up after a few seconds and go back to the nest.
+    u.x = 6.5 * T;
+    u.y = 14.5 * T;
+    run(w, STEALTH.giveUpSeconds + 1);
     expect(raptors.every((d) => d.state !== 'loose' || d.target === null)).toBe(true);
     run(w, 15);
     for (const d of raptors.filter((d) => d.state === 'loose')) {
       expect(Math.hypot(d.x - nest.x, d.y - nest.y)).toBeLessThanOrEqual((NEST.roamTiles + 1) * T);
     }
+  });
+
+  it('a raptor darted by a troop none of them sees comes alone', () => {
+    const { w, raptors } = setup();
+    run(w, 1);
+    const r = raptors[0];
+    const u = spawnUnit(w, 'tranq', spotNear(w, r, false));
+    u.hp = 1e9;
+    sedate(w, r, 10, u.id);
+    run(w, 0.2);
+    expect(r.target).toEqual({ type: 'unit', id: u.id });
+    // The squad may dart a second one on its own; each that comes was darted itself, and none was called.
+    const hunters = raptors.filter((d) => d.target !== null);
+    expect(hunters.every((d) => d.lastHitBy === u.id)).toBe(true);
+    expect(hunters.length).toBeLessThan(raptors.length);
   });
 });

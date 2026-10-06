@@ -468,11 +468,12 @@ describe('level 5: the fight', () => {
     expect(powered.every((e) => e.segments.every((s) => s.hp > 0 || e.kind === 'trex' || e.kind === 'raptor'))).toBe(true);
   });
 
-  it('a darted raptor turns on whoever darted it, then goes back to the fight', () => {
+  it('a darted raptor leaves the fight for whoever darted it, alone, and goes back once it loses them', () => {
     const w = new World({ seed: 4, level: 5 });
     w.start();
     run(w, 1);
-    const raptor = w.dinos.find((d) => d.kind === 'raptor' && d.state === 'loose')!;
+    const raptors = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
+    const raptor = raptors[0];
     // Out of its own dart range, so it doesn't put the raptor to sleep first.
     const tranq = w.units.find((u) => u.kind === 'tranq')!;
     tranq.x = raptor.x - 6 * T;
@@ -480,10 +481,12 @@ describe('level 5: the fight', () => {
     sedate(w, raptor, 10, tranq.id);
     run(w, 0.6);
     expect(raptor.target).toEqual({ type: 'unit', id: tranq.id });
-    // Once the troop is out of reach (or the grudge wears off), it goes back to the T. rex.
+    // Busy with the T. rex, the others pay it no mind.
+    expect(raptors.slice(1).every((r) => r.target?.type === 'dino')).toBe(true);
+    // Once the troop is far out of sight, it gives up on it and goes back to the T. rex.
     tranq.x = 6.5 * T;
     tranq.y = 14.5 * T;
-    run(w, 1);
+    run(w, STEALTH.giveUpSeconds + 1.5);
     expect(raptor.target?.type).toBe('dino');
   });
 

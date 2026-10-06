@@ -1,5 +1,5 @@
-// Level 4: what each raptor on patrol sees, as a pale fan on the ground cut short by cover, as in the 2D game, with
-// a ring at its feet so the raptor at the tip of its cone can be found in the dark. While it makes out a troop, the
+// What each calm raptor sees, in every level, as a pale fan on the ground cut short by cover, as in the 2D game, with
+// a ring at its feet so the raptor at the tip of its cone can be found in the dark. While it makes someone out, the
 // fan turns orange and a ring fills around it. A raptor on the hunt shows a red bar to its prey and a red ring under
 // it instead.
 import * as THREE from 'three';
@@ -8,7 +8,7 @@ import { col } from './util';
 
 /**
  * One raptor's view, in world pixels: its position, then the end of each ray across its cone. Or its prey, if it's
- * hunting. `notice`: 0 to 1, how far it is to making out a troop it has in sight.
+ * hunting. `notice`: 0 to 1, how far it is to making out someone it has in sight.
  */
 export interface ConeView {
   id: number;

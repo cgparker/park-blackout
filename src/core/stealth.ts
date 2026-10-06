@@ -1,12 +1,12 @@
-import { STEALTH } from '../config';
+import { STEALTH, UNITS, VISITORS } from '../config';
 import { Tile, type Point, type TileType } from './grid';
 import { lineClear } from './nav';
-import { isTroop, onMap, type Unit } from './units';
+import { onMap, type Unit } from './units';
 import type { World } from './world';
 
 /**
- * Level 4: what a raptor on patrol can see. Its view is a cone ahead of it (STEALTH), and rock, pens, HQ, towers,
- * and substations block it. Water and paths don't.
+ * What a raptor can see, in every level. Its view is a cone ahead of it (STEALTH), and rock, pens, HQ, towers, and
+ * substations block it. Water and paths don't. It also feels anyone who walks right into it.
  */
 
 /** Something with a position and a direction it faces, in world pixels and radians. */
@@ -43,32 +43,59 @@ export function inView(w: World, d: Looker, x: number, y: number): boolean {
   return lineOfSight(w, d.x, d.y, x, y);
 }
 
-/** Whether a troop has walked into a raptor: touching distance, whichever way it looks. */
-export function touching(w: World, d: Point, u: Unit): boolean {
-  return Math.hypot(u.x - d.x, u.y - d.y) <= STEALTH.hearTiles * w.T;
+/** Whether someone has walked into a raptor: touching distance, whichever way it looks. */
+export function touching(w: World, d: Point, p: Point): boolean {
+  return Math.hypot(p.x - d.x, p.y - d.y) <= STEALTH.hearTiles * w.T;
 }
 
-/** Whether a calm raptor notices a troop: one in its cone, or one touching it. */
+/** Whether a calm raptor notices a troop, tower, or 4x4: one in its cone, or one touching it. */
 export function notices(w: World, d: Looker, u: Unit): boolean {
-  if (!onMap(u) || !isTroop(u)) return false;
+  if (!onMap(u)) return false;
   return touching(w, d, u) || inView(w, d, u.x, u.y);
 }
 
-/**
- * The troop a calm raptor notices now, the nearest if it notices several, and whether it walked into the raptor
- * (noticed at once) or is only in its cone (it takes STEALTH.noticeSeconds to make out). Null if none.
- */
-export function noticed(w: World, d: Looker): { unit: Unit; touch: boolean } | null {
-  let best: Unit | null = null;
-  let bestD = Infinity;
-  for (const u of w.units) {
-    const dd = Math.hypot(u.x - d.x, u.y - d.y);
-    if (dd < bestD && notices(w, d, u)) {
-      best = u;
-      bestD = dd;
-    }
+/** Someone a raptor can go after: a troop, tower, or 4x4 on the map, or a guest still in the park. */
+export type PreyRef = { type: 'unit'; id: number } | { type: 'visitor'; id: number };
+
+/** Where a raptor's prey is now, and how big it is. Null if the target is gone, or isn't a troop or guest. */
+export function preyOf(w: World, t: { type: string; id?: number } | null): (Point & { r: number }) | null {
+  if (t?.type === 'unit' && t.id !== undefined) {
+    const u = w.unitById(t.id);
+    return u && onMap(u) ? { x: u.x, y: u.y, r: UNITS[u.kind].radius } : null;
   }
-  return best ? { unit: best, touch: touching(w, d, best) } : null;
+  if (t?.type === 'visitor' && t.id !== undefined) {
+    const v = w.visitorById(t.id);
+    return v && !v.done ? { x: v.x, y: v.y, r: VISITORS.radius } : null;
+  }
+  return null;
+}
+
+export interface Sighting extends Point {
+  prey: PreyRef;
+  /** The unit, when it's one, for the events and the Engineer's star. */
+  unit: Unit | null;
+  /** It walked into the raptor, so it's noticed at once. Otherwise it's in the cone, and takes a moment to make out. */
+  touch: boolean;
+}
+
+/**
+ * Who a calm raptor notices now, the nearest if it notices several: a troop, tower, 4x4, or guest that walked into it
+ * (noticed at once) or is in its cone (it takes STEALTH.noticeSeconds to make out). Null if nobody.
+ */
+export function noticed(w: World, d: Looker): Sighting | null {
+  let best: Sighting | null = null;
+  let bestD = Infinity;
+  const look = (p: Point, prey: PreyRef, unit: Unit | null) => {
+    const dd = Math.hypot(p.x - d.x, p.y - d.y);
+    if (dd >= bestD || dd > STEALTH.sightTiles * w.T) return;
+    const touch = touching(w, d, p);
+    if (!touch && !inView(w, d, p.x, p.y)) return;
+    best = { x: p.x, y: p.y, prey, unit, touch };
+    bestD = dd;
+  };
+  for (const u of w.units) if (onMap(u)) look(u, { type: 'unit', id: u.id }, u);
+  for (const v of w.visitors) if (!v.done) look(v, { type: 'visitor', id: v.id }, null);
+  return best;
 }
 
 /** Whether a raptor on the hunt still sees its prey: near enough, in any direction, and not behind cover. */

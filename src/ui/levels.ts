@@ -3,8 +3,8 @@ import { animalNoun } from '../core/report';
 
 /**
  * What the briefing says about each level. No Phaser and no DOM here, so the wording can be tested.
- * Level 1 teaches training and moving troops, level 2 fighting, level 3 building, level 4 sneaking past
- * patrols to make repairs, and level 5 making do with a fixed team and the 4x4.
+ * Level 1 teaches training and moving troops, level 2 fighting raptors that see in cones, level 3 building, level 4
+ * sneaking past patrols to make repairs, and level 5 making do with a fixed team and the 4x4.
  */
 
 export interface LevelInfo {
@@ -92,8 +92,14 @@ export function briefingFor(level: LevelId, seconds: number, villain: string): B
     const time = clock(MISSIONS[2].timeLimitSeconds);
     return {
       title: `Clear the nest in ${time}`,
-      intro: `${capital(word(pens))} raptor ${pens === 1 ? 'pen' : 'pens'} broke open overnight, and their ${count} raptors made a nest${where}. They attack any troop that comes close, all at once. Clear the nest before the park opens.`,
-      controls: ['Tap HQ to train Tranq Squads and Heavy Teams.', 'Tap a troop, then tap the map to move, or tap a raptor to attack it.', move, look],
+      intro: `${capital(word(pens))} raptor ${pens === 1 ? 'pen' : 'pens'} broke open overnight, and their ${count} raptors made a nest${where}. Each one watches the ground in front of it, and one that makes out a troop calls the rest. Clear the nest before the park opens.`,
+      controls: [
+        'Tap HQ to train Tranq Squads and Heavy Teams.',
+        'Tap a troop, then tap the map to move, or tap a raptor to attack it.',
+        'A raptor’s cone is what it sees. Rock and pens block it.',
+        move,
+        look,
+      ],
     };
   }
   if (level === 4) {

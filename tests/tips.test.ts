@@ -122,12 +122,31 @@ describe('tips in levels 1 and 2', () => {
     const start = tipsFor(w, w.events);
     expect(ids(start)).toEqual(['nest']);
     expect(start[0].focus).toEqual(w.nest);
+    expect(start[0].body).toMatch(/cone in front of each raptor.*calls the rest\. One darted from where no cone reaches comes alone\.$/);
     expect(tipsFor(w, [{ type: 'trained', unitId: 1, kind: 'tranq' }])).toEqual([]);
     const lost = (by: 'raptor' | 'trex') => [{ type: 'unitLost' as const, unitId: 9, kind: 'tranq' as const, x: 30 * T, y: 16 * T, by }];
     const bites = tipsFor(w, lost('raptor'));
     expect(ids(bites)).toEqual(['raptorBites']);
     expect(bites[0].body).toContain('Heavy Teams have 250 HP, so they last 25 bites.');
     for (const t of [...start, ...bites]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+  });
+
+  it('level 2 says when a raptor notices a troop, and whether the rest are coming', () => {
+    const w = new World({ seed: 1, level: 2 });
+    w.start();
+    const squad = spawnUnit(w, 'tranq', { x: 30 * T, y: 16 * T });
+    const noticed = tipsFor(w, [{ type: 'noticed', dinoId: 1, unitId: squad.id, kind: 'tranq', x: 0, y: 0 }]);
+    expect(noticed[0].title).toBe('A raptor noticed your Tranq Squad');
+    expect(noticed[0].body).toMatch(/before the ring fills, or it comes and calls the rest\.$/);
+    const [a, b] = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
+    const ev = [{ type: 'spotted' as const, dinoId: a.id, unitId: squad.id, kind: 'tranq' as const, x: 0, y: 0 }];
+    a.target = { type: 'unit', id: squad.id };
+    expect(tipsFor(w, ev)[0].title).toBe('A raptor is coming alone');
+    b.target = { type: 'unit', id: squad.id };
+    const all = tipsFor(w, ev);
+    expect(all[0].title).toBe('The nest is coming');
+    expect(all[0].body).toMatch(/called the rest\. Fight them as one group, or get out of sight/);
+    for (const t of [...noticed, ...all]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 });
 

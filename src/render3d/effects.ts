@@ -1,5 +1,5 @@
 // Short-lived and lighting effects: dart tracers, hit puffs, order markers, sparks from live wires,
-// and the night lights (troop flashlights, HQ floodlights, tower searchlights) with their visible beams.
+// and the night lights (HQ floodlights and tower searchlights) with their visible beams. Troops carry no lights.
 import * as THREE from 'three';
 import { beamMaterial, TEX } from './materials';
 import { hdr, mulberry32, V3 } from './util';
@@ -50,7 +50,6 @@ export class Effects {
   private readonly markers: Marker[] = [];
   private sparks: { sprite: THREE.Sprite; next: number }[] = [];
   private readonly rnd = mulberry32(31);
-  private flashlights: Beam[] = [];
   private floods: Beam[] = [];
   private searchlights: Beam[] = [];
   private night = false;
@@ -119,10 +118,10 @@ export class Effects {
   // ---------------------------------------------- night lights
 
   /**
-   * Fixed pools of lights so turning troops on and off never changes the light count
+   * Fixed pools of lights so turning lights on and off never changes the light count
    * (which would make three.js recompile every material mid-game).
    */
-  setupNightLights(nFlash: number, floods: { from: THREE.Vector3; to: THREE.Vector3 }[], nSearch: number, shadowLights = { flash: 2, flood: 1, search: 2 }): void {
+  setupNightLights(floods: { from: THREE.Vector3; to: THREE.Vector3 }[], nSearch: number, shadowLights = { flood: 1, search: 2 }): void {
     const make = (color: string, intensity: number, angle: number, len: number, beamK: number, shadow: boolean, map: number): Beam => {
       const light = new THREE.SpotLight(new THREE.Color(color), 0, len * 2.2, angle, 0.55, 1.6);
       light.userData.on = intensity;
@@ -141,7 +140,6 @@ export class Effects {
       this.root.add(cone);
       return { light, cone, len };
     };
-    this.flashlights = Array.from({ length: nFlash }, (_, i) => make('#e4ecff', 10, 0.33, 4.4, 0.5, i < shadowLights.flash, 1024));
     // One light per mast, aimed between its two lamp heads.
     const masts: { from: THREE.Vector3; to: THREE.Vector3 }[] = [];
     for (let i = 0; i < floods.length; i += 2) {
@@ -160,7 +158,7 @@ export class Effects {
 
   setNight(night: boolean): void {
     this.night = night;
-    for (const b of [...this.flashlights, ...this.floods, ...this.searchlights]) {
+    for (const b of [...this.floods, ...this.searchlights]) {
       b.light.intensity = night ? (b.light.userData.on as number) : 0;
       b.cone.visible = night;
       b.light.visible = night;
@@ -173,25 +171,6 @@ export class Effects {
     b.light.target.updateMatrixWorld();
     b.cone.position.copy(from);
     b.cone.lookAt(to);
-  }
-
-  /** Points the flashlight pool at the troops nearest the camera; the rest go dark. */
-  updateFlashlights(troops: { pos: THREE.Vector3; dir: THREE.Vector3 }[], focus: THREE.Vector3): void {
-    if (!this.night) return;
-    const sorted = troops.slice().sort((a, b) => a.pos.distanceToSquared(focus) - b.pos.distanceToSquared(focus));
-    this.flashlights.forEach((b, i) => {
-      const t = sorted[i];
-      if (!t) {
-        b.light.intensity = 0;
-        b.cone.visible = false;
-        return;
-      }
-      b.light.intensity = b.light.userData.on as number;
-      b.cone.visible = true;
-      const from = t.pos.clone().add(t.dir.clone().multiplyScalar(0.18));
-      const to = t.pos.clone().setY(0).add(t.dir.clone().multiplyScalar(b.len));
-      this.aim(b, from, to);
-    });
   }
 
   updateSearchlights(towers: { from: THREE.Vector3; to: THREE.Vector3 }[]): void {

@@ -189,6 +189,8 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
         break;
       }
       case 'spotted':
+        // Raptors see troops in every level, but the story only tells it where staying unseen is the point.
+        if (!mission?.nest && !mission?.stealth) break;
         out.push({ time: clock(e.t), text: `A raptor saw ${e.kind === 'engineer' ? 'the Engineer' : `the ${UNITS[e.kind].name}`}.`, tone: 'bad' });
         break;
       case 'killed': {

@@ -1,7 +1,7 @@
 // Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
 // and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
-// out at the blackout and come back with the power. Level 4: night, raptors' view cones with no troop
-// flashlights, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from
+// out at the blackout and come back with the power. Raptors show view cones in every level. Level 4: night, with no
+// troop flashlights, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from
 // the side tapped, and a raptor's cone turning orange as it makes out a troop. Level 5: troops loaded into the
 // 4x4 and driven. Saves screenshots
 // along the way. Uses a software GPU, so frame rates here say nothing about a phone.
@@ -66,6 +66,16 @@ const state = () =>
 let s = await state();
 step(`phase ${s.phase}, level ${s.level}, ${s.troops.length} troops, ${s.loose.length} loose, ${s.fps}`);
 if (s.phase !== 'mission') fail('level 2 should be running');
+// Raptors see in cones in every level: each one at the nest shows its own.
+const nestCones = await page.evaluate(() => {
+  let n = 0;
+  window.__pb3d.view.scene.traverse((o) => {
+    if (o.isLineLoop && o.visible && o.geometry.drawRange.count > 2) n++;
+  });
+  return n;
+});
+step(`level 2: ${nestCones} cones`);
+if (nestCones !== s.loose.length) fail('each raptor at the nest should show its view cone');
 
 // Train a Tranq Squad at HQ, at 4x speed so the test is quick.
 await page.click('.dbg-btn[data-speed="4"]').catch(() => undefined);
@@ -265,13 +275,14 @@ step(`level 4: ${s.phase}, night ${s.night}, ${s.raptors} raptors, ${s.cones} co
 if (s.phase !== 'mission' || !s.night) fail('level 4 should start at night');
 if (s.cones !== s.raptors || s.raptors !== 2) fail('each raptor on patrol should show its view cone');
 if (s.hq) fail('level 4 trains nothing, so the HQ button should be hidden');
-// No troop flashlights here, and a ring at each raptor's feet so it can be found at the tip of its cone.
+// Troops carry no flashlights in any level, and each raptor has a ring at its feet so it can be found at the tip of
+// its cone.
 const marks = await page.evaluate(() => {
   const v = window.__pb3d.view;
-  return { lights: v.effects.flashlights.filter((b) => b.cone.visible).length, rings: [...v.cones.sets.values()].filter((c) => c.mark.visible).length };
+  return { lights: v.effects.flashlights?.length ?? 0, rings: [...v.cones.sets.values()].filter((c) => c.mark.visible).length };
 });
-step(`level 4: ${marks.lights} flashlights on, ${marks.rings} raptor rings`);
-if (marks.lights) fail('level 4 troops should carry no flashlights');
+step(`level 4: ${marks.lights} flashlights, ${marks.rings} raptor rings`);
+if (marks.lights) fail('troops should carry no flashlights');
 if (marks.rings !== 2) fail('each raptor on patrol should have a ring at its feet');
 // Look at the south raptor and its cone.
 const south = await page.evaluate(() => {
@@ -301,7 +312,8 @@ const picked = await page.evaluate(() => {
 });
 step(`Engineer button selects: ${picked}`);
 if (picked !== 'engineer') fail('the Engineer button should select the Engineer');
-if (!(await page.isVisible('.sel-stop'))) fail('Stop should show once something is selected');
+// The HUD catches up on the next frame, which takes about a second on a software GPU.
+if (!(await page.waitForSelector('.sel-stop', { state: 'visible', timeout: 8000 }).catch(() => null))) fail('Stop should show once something is selected');
 // Then a tap above the substation sends it to work from the top side.
 await look(wc.x, wc.y);
 await page.waitForTimeout(400);

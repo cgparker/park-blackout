@@ -551,7 +551,7 @@ export function addReveal(m: THREE.Material): void {
   m.needsUpdate = true;
 }
 
-/** Additive light cone for flashlights and floodlights, fading along its length. */
+/** Additive light cone for floodlights and searchlights, fading along its length. */
 export function beamMaterial(color: string, k: number, len: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,

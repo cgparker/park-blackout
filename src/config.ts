@@ -386,7 +386,6 @@ export const DINO_AI = {
   trexChargeSpeedMultiplier: 2,
   trexChargeMinTiles: 1.5,
   trexChargeMaxTiles: 5,
-  raptorHuntRadiusTiles: 8,
   triThreatRadiusTiles: 4,
   triStampedeSeconds: 5,
   /**
@@ -639,31 +638,31 @@ export const GRID = {
 };
 
 /**
- * Level 4's raptors on patrol. Each walks its route and sees a cone ahead of it, but not through rock, a pen,
- * HQ, or a substation. Whatever it makes out, it hunts, and it calls the others. A dart from a troop it can't
- * see sends it after the shooter alone.
+ * What every loose raptor knows, in every level. It sees a cone ahead of it, but not through rock, a pen, HQ, a tower,
+ * or a substation, and it feels anyone who walks into it. Whatever it makes out, it hunts, and it calls the others. A
+ * dart from a troop it can't see sends it after the shooter alone.
  */
 export const STEALTH = {
   /** How far a raptor sees, in tiles, and how wide its view is, in degrees. */
   sightTiles: 5,
   coneDeg: 90,
-  /** A troop this close (tiles) has walked into it: noticed at once, whichever way it's looking. Touching distance. */
+  /** Anyone this close (tiles) has walked into it: noticed at once, whichever way it's looking. Touching distance. */
   hearTiles: 0.6,
   /**
-   * A troop in its cone takes this long to make out. It stops where it is, its cone turns orange, and it hunts once
-   * the time is up. A troop that gets out of sight first is lost, and the raptor takes as long to settle back.
+   * Someone in its cone takes this long to make out. It stops where it is, its cone turns orange, and it hunts once
+   * the time is up. Someone who gets out of sight first is lost, and the raptor takes as long to settle back.
    */
   noticeSeconds: 0.8,
-  /** Walking speed on its route (px/s). */
+  /** Level 4: walking speed on its route (px/s). */
   patrolSpeed: 45,
-  /** At each stop on its route it looks around for this long, turning this far each way. */
+  /** Level 4: at each stop on its route it looks around for this long, turning this far each way. */
   lookSeconds: 2.5,
   lookDeg: 70,
-  /** A raptor that spots a troop, or sees who darted it, calls the others within this many tiles: the whole park. */
+  /** A raptor that spots someone, or sees who darted it, calls the calm ones within this many tiles: the whole park. */
   alertTiles: 40,
   /** On the hunt it keeps track of its prey this far away (tiles), in any direction... */
   chaseSightTiles: 10,
-  /** ...and goes back to its route after this many seconds without seeing it. A dart shows it where the shooter is. */
+  /** ...and calms down after this many seconds without seeing it. A dart shows it where the shooter is. */
   giveUpSeconds: 4,
   /** Rays in a drawn view cone. */
   coneRays: 24,
@@ -671,10 +670,8 @@ export const STEALTH = {
 
 /** Level 5's fight between the T. rex and raptors. */
 export const FIGHT = {
-  /** Raptors this close to a loose T. rex (tiles) go for it instead of troops. */
+  /** Calm raptors this close to a loose T. rex (tiles) go for it. In the fight they pay troops no mind until one darts them. */
   joinTiles: 8,
-  /** A raptor darted this recently goes for the troop that darted it instead, if it's within the raptors' hunt radius. */
-  grudgeSeconds: 5,
   /** A raptor's bite on the T. rex, once per raptor bite interval. */
   raptorBite: 5,
   /** The T. rex bites the most wounded raptor in reach for this much, this often. */
@@ -706,10 +703,8 @@ export const JEEP = {
 };
 
 export const NEST = {
-  /** Raptors at a nest wander within this many tiles of it. */
+  /** Calm raptors at a nest wander within this many tiles of it. On the hunt they follow the same rules as anywhere. */
   roamTiles: 2,
-  /** They go after troops within DINO_AI.raptorHuntRadiusTiles of themselves, but not past this many tiles from the nest. */
-  leashTiles: 10,
   /** How big the nest is drawn, in tiles. */
   drawRadiusTiles: 1.1,
 };

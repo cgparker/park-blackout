@@ -4,7 +4,7 @@ import type { Dino } from '../core/dinos';
 import { fenceRect, type Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
 import { repairProgress, substationCenter } from '../core/power';
-import { viewCone } from '../core/stealth';
+import { preyOf, viewCone } from '../core/stealth';
 import { isTargetable, passengers, type Unit } from '../core/units';
 import type { GameEvent, World } from '../core/world';
 
@@ -227,7 +227,7 @@ export class WorldView {
     }
     for (const ex of w.exhibits) this.syncExhibit(ex);
     if (w.substations.length) this.drawSubstations();
-    if (w.mission?.stealth) this.drawCones();
+    this.drawCones();
     this.drawVisitors();
     this.syncDinos(dt);
     this.syncUnits(dt, ui.selected);
@@ -539,20 +539,20 @@ export class WorldView {
   }
 
   /**
-   * Level 4: a raptor on patrol shows what it sees as a pale cone, cut short by cover. While it makes out a troop the
-   * cone turns orange and a ring fills around it; once it's sure, it hunts, and shows a red line to its prey and a ring
-   * around it instead.
+   * Every loose raptor that's calm shows what it sees as a pale cone, cut short by cover. While it makes someone out
+   * the cone turns orange and a ring fills around it; once it's sure, it hunts, and shows a red line to its prey and a
+   * ring around it instead. A raptor in level 5's fight shows neither: it isn't looking.
    */
   private drawCones(): void {
     const g = this.coneGfx;
     const w = this.world;
     g.clear();
     for (const d of w.dinos) {
-      if (d.kind !== 'raptor' || d.state !== 'loose') continue;
-      const prey = d.target?.type === 'unit' ? w.unitById(d.target.id) : undefined;
-      if (prey && !prey.dead) {
+      if (d.kind !== 'raptor' || d.state !== 'loose' || d.target?.type === 'dino') continue;
+      const prey = preyOf(w, d.target);
+      if (prey) {
         g.lineStyle(2, COLORS.coneAlert, 0.55).lineBetween(d.x, d.y, prey.x, prey.y);
-        g.lineStyle(2, COLORS.coneAlert, 0.9).strokeCircle(prey.x, prey.y, UNITS[prey.kind].radius + 7);
+        g.lineStyle(2, COLORS.coneAlert, 0.9).strokeCircle(prey.x, prey.y, prey.r + 7);
         continue;
       }
       const pts = viewCone(w, d);

@@ -481,8 +481,19 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
     for (let i = 0; i < 60 * 8 && !w.units.every((u) => u.dead); i++) w.update(1 / 60);
   });
   check('a lone troop at the nest is bitten down', (await world(() => window.__pb.world.troopsLost)) === 1);
-  check('losing a troop to raptors brings up a tip', await soon(async () => (await page.isVisible('.tip')) && (await page.textContent('.tip-title')) === 'Raptors pile on'));
-  await page.tap('.tip-ok');
+  // The tips come one at a time: being noticed or hunted first, then the loss.
+  const nestTips = [];
+  for (let i = 0; i < 4 && (await soon(() => page.isVisible('.tip'), 1500)); i++) {
+    nestTips.push(await page.textContent('.tip-title'));
+    await page.tap('.tip-ok');
+    if (nestTips.at(-1) === 'Raptors pile on') break;
+    await page.waitForTimeout(200);
+  }
+  check(
+    'tips say the raptors saw the troop, then that it was lost',
+    nestTips.at(-1) === 'Raptors pile on' && nestTips.some((t) => /^(A raptor noticed your Tranq Squad|The nest is coming|A raptor is coming alone)$/.test(t)),
+    JSON.stringify(nestTips),
+  );
   await page.tap('.pause-btn');
   await page.tap('.menu-end');
   check('ending level 2 early says the nest was not clear', await soon(async () => (await page.isVisible('.end')) && (await page.textContent('.end .detail')) === 'You ended the game before the nest was clear.'));

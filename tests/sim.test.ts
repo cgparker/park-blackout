@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, SCORING, SQUAD, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, FIGHT, MAP, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
 import { damageUnit } from '../src/core/combat';
 import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
 import { breakoutSeconds, secondsToSedate, sedationPerSecond } from '../src/core/estimates';
@@ -538,11 +538,12 @@ describe('combat', () => {
     const u = spawnUnit(w, 'tranq', { x: 34.5 * T, y: 21.5 * T });
     run(w, 0.6);
     expect(rex.lockId).toBe(u.id);
-    // The troop gets clear, and a visitor is close by (but not close enough to notice).
+    // The troop gets clear, and a visitor is close by (but not close enough to notice). Once it has roared, the
+    // T. rex thinks again and lets go.
     u.x = 8.5 * T;
     u.y = 21.5 * T;
     const v = bystander(w, rex.x, rex.y - 7 * T);
-    run(w, DINO_AI.thinkSeconds + STEP);
+    run(w, FIGHT.lockRoarSeconds + DINO_AI.thinkSeconds + STEP);
     expect(rex.lockId).toBe(0);
     expect(rex.target).toEqual({ type: 'visitor', id: v.id });
   });
@@ -554,6 +555,14 @@ describe('combat', () => {
     setLoose(rex, 24.5 * T, 21.5 * T);
     const u = spawnUnit(w, 'heavy', { x: 28.5 * T, y: 21.5 * T });
     u.hp = u.maxHp = 100000;
+    // It locks on and roars first, standing still and facing the troop, in every level.
+    const roared = run(w, 0.5, () => rex.roar > 0);
+    expect(roared.some((e) => e.type === 'roar' && e.unitId === u.id)).toBe(true);
+    const at = { x: rex.x, y: rex.y };
+    run(w, FIGHT.lockRoarSeconds - 0.1);
+    expect(rex.roar).toBeGreaterThan(0);
+    expect({ x: rex.x, y: rex.y }).toEqual(at);
+    expect(rex.facing).toBeCloseTo(0, 5);
     const events = run(w, 0.5, () => rex.windup > 0);
     expect(rex.lockId).toBe(u.id);
     expect(events.some((e) => e.type === 'charge')).toBe(true);
@@ -615,6 +624,50 @@ describe('combat', () => {
     expect(w.casualties.raptor).toBe(1);
     expect(contactSeen).toBeGreaterThan(DINO_AI.visitorContactSeconds - 0.05);
     expect(events.some((e) => e.type === 'casualty')).toBe(true);
+  });
+
+  it('a loose raptor heads for the crowd, and stops to make a guest out before it hunts', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    // A guest on the path by the pen, 8 tiles north of a raptor on open grass that faces away from it.
+    const spot = pen.viewingSpot;
+    const v = bystander(w, (spot.x - 0.5) * T, (spot.y + 0.5) * T);
+    setLoose(raptor, (spot.x - 0.5) * T, (spot.y + 8.5) * T);
+    raptor.facing = Math.PI / 2;
+    const y0 = raptor.y;
+    run(w, 0.5);
+    // It doesn't see the guest yet, but it knows where the crowd is.
+    expect(raptor.target).toBeNull();
+    expect(raptor.y).toBeLessThan(y0);
+    // The guest sees it coming and would run; hold it where it stands, in the raptor's cone, for the rest.
+    const hold = { x: v.x, y: v.y };
+    const pinned = (then: () => boolean) => () => (Object.assign(v, hold), then());
+    run(w, 3, pinned(() => raptor.notice > 0));
+    expect(raptor.notice).toBeGreaterThan(0);
+    expect(raptor.target).toBeNull();
+    run(w, STEALTH.noticeSeconds, pinned(() => raptor.target !== null));
+    expect(raptor.target).toEqual({ type: 'visitor', id: v.id });
+  });
+
+  it('a loose raptor only finds troops it sees or touches', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    // Standing still on open grass along the south edge, looking west.
+    setLoose(raptor, 6.5 * T, 22.5 * T);
+    raptor.facing = Math.PI;
+    raptor.wait = 10;
+    // A squad behind it, just out of its own dart range: never found, with no guests to lead the raptor anywhere.
+    const squad = spawnUnit(w, 'tranq', { x: raptor.x + UNITS.tranq.range + 0.5 * T, y: raptor.y });
+    run(w, 2);
+    expect(raptor.target).toBeNull();
+    expect(raptor.notice).toBe(0);
+    expect(raptor.x).toBe(6.5 * T);
+    // Walk the squad into it: noticed at once, whichever way it looks.
+    Object.assign(squad, { x: raptor.x + 0.4 * T, y: raptor.y });
+    run(w, STEP * 2);
+    expect(raptor.target).toEqual({ type: 'unit', id: squad.id });
   });
 
   it('reaching the casualty limit shuts the park down', () => {
