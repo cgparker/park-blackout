@@ -512,6 +512,12 @@ export interface MissionConfig {
   stealth?: boolean;
   /** Level 5: the T. rex and raptors fight each other (FIGHT). */
   fights?: boolean;
+  /**
+   * Level 5: the T. rex roars when it locks onto a troop or tower. It stands facing it for FIGHT.lockRoarSeconds before
+   * it moves or charges, so there is time to get that troop away. In a fight it roars; on the hunt (levels 3 and 4) it
+   * comes without a sound.
+   */
+  roars?: boolean;
   /** Levels 1 and 2: a darted animal wakes up back in its pen. Otherwise it's taken away, as in the blackout. */
   carryHome: boolean;
   /** Second and third stars. */
@@ -617,6 +623,7 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
     ],
     nest: null,
     fights: true,
+    roars: true,
     carryHome: false,
     stars: [{ type: 'noTroopsLost' }, { type: 'noneKilled' }],
   },
@@ -707,7 +714,7 @@ export const FIGHT = {
   pushSpeed: 20,
   /** While this many raptors or more are on the T. rex, it is too busy with them to lock onto a troop that darts it. */
   shieldRaptors: 2,
-  /** When the T. rex locks onto a troop, it roars: it stands facing the troop this long before it moves or charges. */
+  /** Where it roars (MissionConfig.roars), the T. rex stands facing the troop it locked onto this long before it moves or charges. */
   lockRoarSeconds: 2,
   /** Animals killed before the level is lost. */
   killLimit: 3,

@@ -323,7 +323,7 @@ function trexTip(ex: Exhibit): Tip {
   return {
     id: 'trex',
     title: 'The T. rex picks off loners',
-    body: 'It roars at one troop, marked with an orange ring, then charges it. Keep your troops in one group so they all dart it at once.',
+    body: 'It locks onto one troop, marked with an orange ring, and charges it without a sound. Keep your troops in one group so they all dart it at once.',
     focus: footprintCenter(ex.footprint, T),
   };
 }
@@ -360,7 +360,7 @@ function trexLonerTip(x: number, y: number): Tip {
   return {
     id: 'trexLoner',
     title: 'The T. rex caught a troop alone',
-    body: 'It roars at one target, then charges it after a short wind-up. Keep troops together near the T. rex, and move a troop with an orange ring out of its path.',
+    body: 'It picks one target and charges after a short wind-up. Keep troops together near the T. rex, and move a troop with an orange ring out of its path.',
     focus: { x, y },
   };
 }

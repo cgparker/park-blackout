@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, FIGHT, MAP, PACK, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, PACK, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
 import { damageUnit, sedate } from '../src/core/combat';
 import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
 import { breakoutSeconds, secondsToSedate, sedationPerSecond } from '../src/core/estimates';
@@ -538,12 +538,11 @@ describe('combat', () => {
     const u = spawnUnit(w, 'tranq', { x: 34.5 * T, y: 21.5 * T });
     run(w, 0.6);
     expect(rex.lockId).toBe(u.id);
-    // The troop gets clear, and a visitor is close by (but not close enough to notice). Once it has roared, the
-    // T. rex thinks again and lets go.
+    // The troop gets clear, and a visitor is close by (but not close enough to notice).
     u.x = 8.5 * T;
     u.y = 21.5 * T;
     const v = bystander(w, rex.x, rex.y - 7 * T);
-    run(w, FIGHT.lockRoarSeconds + DINO_AI.thinkSeconds + STEP);
+    run(w, DINO_AI.thinkSeconds + STEP);
     expect(rex.lockId).toBe(0);
     expect(rex.target).toEqual({ type: 'visitor', id: v.id });
   });
@@ -555,16 +554,11 @@ describe('combat', () => {
     setLoose(rex, 24.5 * T, 21.5 * T);
     const u = spawnUnit(w, 'heavy', { x: 28.5 * T, y: 21.5 * T });
     u.hp = u.maxHp = 100000;
-    // It locks on and roars first, standing still and facing the troop, in every level.
-    const roared = run(w, 0.5, () => rex.roar > 0);
-    expect(roared.some((e) => e.type === 'roar' && e.unitId === u.id)).toBe(true);
-    const at = { x: rex.x, y: rex.y };
-    run(w, FIGHT.lockRoarSeconds - 0.1);
-    expect(rex.roar).toBeGreaterThan(0);
-    expect({ x: rex.x, y: rex.y }).toEqual(at);
-    expect(rex.facing).toBeCloseTo(0, 5);
+    // On the hunt in the blackout it doesn't roar: it locks on and winds up at once.
     const events = run(w, 0.5, () => rex.windup > 0);
     expect(rex.lockId).toBe(u.id);
+    expect(rex.roar).toBe(0);
+    expect(events.some((e) => e.type === 'roar')).toBe(false);
     expect(events.some((e) => e.type === 'charge')).toBe(true);
     const x0 = rex.x;
     run(w, DINO_AI.trexChargeWindupSeconds - 0.05);

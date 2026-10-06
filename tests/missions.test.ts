@@ -525,6 +525,23 @@ describe('level 5: the fight', () => {
     expect(Math.hypot(rex.x - x0, rex.y - y0)).toBeGreaterThan(T / 2);
   });
 
+  it('on the hunt in level 4, the T. rex locks onto whoever darts it without a roar, and winds up at once', () => {
+    expect(MISSIONS[5].roars).toBe(true);
+    expect(MISSIONS[4].roars).toBeFalsy();
+    const w = new World({ seed: 3, level: 4 });
+    w.start();
+    const rex = w.dinos.find((d) => d.kind === 'trex')!;
+    const squad = w.units.find((u) => u.kind === 'tranq')!;
+    Object.assign(rex, { state: 'loose', x: 24.5 * T, y: 16.5 * T, path: [], pathIndex: 0, target: null, think: 0 });
+    Object.assign(squad, { x: 28.5 * T, y: 16.5 * T, order: 'idle', dest: null, path: [], pathIndex: 0 });
+    sedate(w, rex, 10, squad.id);
+    const events = run(w, 1, () => rex.windup > 0);
+    expect(rex.lockId).toBe(squad.id);
+    expect(rex.roar).toBe(0);
+    expect(events.some((e) => e.type === 'roar')).toBe(false);
+    expect(events.some((e) => e.type === 'charge')).toBe(true);
+  });
+
   it('three animals killed loses the level; darting every animal wins', () => {
     const w = new World({ seed: 5, level: 5 });
     w.start();

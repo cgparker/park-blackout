@@ -769,11 +769,12 @@ function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
 }
 
 /**
- * It locks onto a troop or tower. It roars first: it stops and faces it for FIGHT.lockRoarSeconds before it moves or
- * charges, so there is time to get that troop away.
+ * It locks onto a troop or tower. In the levels where it roars (MissionConfig.roars), it roars first: it stops and
+ * faces it for FIGHT.lockRoarSeconds before it moves or charges, so there is time to get that troop away. Elsewhere it
+ * comes at once, and the charge's wind-up is the only warning.
  */
 function lockOn(w: World, d: Dino, u: Unit): DinoTarget {
-  if (d.lockId !== u.id) {
+  if (d.lockId !== u.id && w.mission?.roars) {
     d.roar = FIGHT.lockRoarSeconds;
     d.facing = Math.atan2(u.y - d.y, u.x - d.x);
     d.path = [];
