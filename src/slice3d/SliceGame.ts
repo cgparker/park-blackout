@@ -13,7 +13,7 @@ import { View3D, type Quality, type ViewWorld } from '../render3d/View3D';
 import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
 import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
-import { exhibitPlaceView, exhibitView, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
+import { exhibitPlaceView, exhibitView, huntedToast, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
@@ -575,7 +575,7 @@ export class SliceGame {
           if (spotted.has(e.unitId)) break;
           spotted.add(e.unitId);
           if (e.kind === 'engineer') this.hud.showBanner('A raptor is after the Engineer.', 'danger', 3);
-          else this.hud.toast(`A raptor is after the ${UNITS[e.kind].name}.`);
+          else this.hud.toast(huntedToast(w, e.unitId, e.kind));
           break;
         }
         case 'substationFixed': {

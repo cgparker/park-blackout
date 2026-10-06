@@ -1,6 +1,7 @@
 // What the HUD's panels show, read from the world. Shared by the 2D scene and the 3D controller, so both
 // games say the same things.
-import { DINOS, EXHIBITS, GRID, UNITS, type AnimalKind, type ExhibitKind } from '../config';
+import { DINOS, EXHIBITS, GRID, UNITS, type AnimalKind, type ExhibitKind, type UnitKind } from '../config';
+import { huntersOf, packCircling } from '../core/dinos';
 import { breakoutSeconds, secondsToSedate } from '../core/estimates';
 import { reinforceCost } from '../core/exhibit';
 import type { PlacementPlan, TowerPlan } from '../core/placement';
@@ -152,4 +153,11 @@ export function startBanner(w: World): string {
   if (w.level === 5) return `The T. rex and the raptors are fighting. ${opens}`;
   const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
   return `${loose.length} ${animalNoun(kind, loose.length)} ${w.nest ? 'are guarding a nest' : 'are loose'}. ${opens}`;
+}
+
+/** The toast when raptors come for a troop: circling it as a pack, coming straight at it, or one alone. */
+export function huntedToast(w: World, unitId: number, kind: UnitKind): string {
+  const name = UNITS[kind].name;
+  if (packCircling(w, unitId)) return `Raptors are circling the ${name}.`;
+  return huntersOf(w, unitId).length > 1 ? `Raptors are after the ${name}.` : `A raptor is after the ${name}.`;
 }

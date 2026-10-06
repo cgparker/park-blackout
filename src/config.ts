@@ -668,6 +668,28 @@ export const STEALTH = {
   coneRays: 24,
 };
 
+/**
+ * Raptors hunting a troop together, in every level: they circle it before they strike. Only troops and towers that
+ * can dart are worth circling; anything else, and a lone raptor, gets a straight charge.
+ */
+export const PACK = {
+  /** Troops this close to the prey (tiles) count as its group: the ring stays out of reach of every one of them... */
+  groupTiles: 3,
+  /** ...by this many tiles past the farthest dart. */
+  marginTiles: 1,
+  /** Within this many tiles of its place, a raptor is in position. */
+  placeTiles: 1.2,
+  /** Going round the ring, a raptor aims this many degrees ahead of where it is. */
+  aheadDeg: 30,
+  /**
+   * Where a rock or the corner of a pen sits on the ring, a raptor waits up to this many tiles farther out, or half
+   * the margin in, so only water, a whole pen, or the park's edge cuts the ring.
+   */
+  slackTiles: 2,
+  /** They rush once every raptor is in position, or after this long, whichever comes first. */
+  circleSeconds: 6,
+};
+
 /** Level 5's fight between the T. rex and raptors. */
 export const FIGHT = {
   /** Calm raptors this close to a loose T. rex (tiles) go for it. In the fight they pay troops no mind until one darts them. */

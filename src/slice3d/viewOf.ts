@@ -33,6 +33,8 @@ export function viewOf(w: World): ViewWorld {
     get substations() {
       return w.substations.map((s) => ({ id: s.id, x: s.x, y: s.y, pens: s.pens, fixed: s.fixed, workers: s.workers, progress: repairProgress(s) }));
     },
+    // Level 4: troops keep their flashlights off, since they are sneaking.
+    stealth: !!w.mission?.stealth,
     // Every calm loose raptor shows what it sees; one on the hunt shows its prey instead. One in level 5's fight shows
     // neither: it isn't looking.
     get cones() {
@@ -46,6 +48,7 @@ export function viewOf(w: World): ViewWorld {
             y: d.y,
             pts: prey ? [] : viewCone(w, d),
             prey: prey ? { x: prey.x, y: prey.y } : null,
+            rush: !(d.target?.type === 'unit' && !d.rush),
             notice: d.notice / STEALTH.noticeSeconds,
           };
         });

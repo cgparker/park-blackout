@@ -1,10 +1,10 @@
 // Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
 // and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
-// out at the blackout and come back with the power. Raptors show view cones in every level. Level 4: night, with no
-// troop flashlights, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from
-// the side tapped, and a raptor's cone turning orange as it makes out a troop. Level 5: troops loaded into the
-// 4x4 and driven. Saves screenshots
-// along the way. Uses a software GPU, so frame rates here say nothing about a phone.
+// out at the blackout and come back with the power. Raptors show view cones in every level, and troops carry
+// flashlights at night. Level 4: night, with troop flashlights off, a substation's panel, the Engineer and Stop
+// buttons, the Engineer sent to fix a substation from the side tapped, a raptor's cone turning orange as it makes
+// out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven. Saves
+// screenshots along the way. Uses a software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -158,6 +158,10 @@ await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/5-night.png`, timeout: 240000 });
 s = await state();
 step(`night: ${s.fps}`);
+// Outside level 4, troops carry flashlights at night.
+const beams = await page.evaluate(() => window.__pb3d.view.effects.flashlights.filter((b) => b.cone.visible).length);
+step(`level 2 at night: ${beams} flashlights`);
+if (beams < 1) fail('troops should carry flashlights at night outside level 4');
 
 // ---------------------------------------------------------------- level 3
 // Only the hash changes, so reload to start fresh on level 3. A software GPU makes loading slow.
@@ -236,8 +240,13 @@ await page.evaluate(() => {
   w.restorePower();
   for (let i = 0; i < 30; i++) w.update(1 / 60);
 });
+// A night frame can take seconds with the software GPU, so give the next frame time to come.
 await page.waitForTimeout(2500);
 s = await w3();
+for (let i = 0; i < 20 && s.night; i++) {
+  await page.waitForTimeout(500);
+  s = await w3();
+}
 step(`power back: ${s.phase}, night ${s.night}`);
 if (s.night) fail('the lights should come back with the power');
 await page.screenshot({ path: `${out}/8-power-back.png`, timeout: 240000 });
@@ -275,14 +284,14 @@ step(`level 4: ${s.phase}, night ${s.night}, ${s.raptors} raptors, ${s.cones} co
 if (s.phase !== 'mission' || !s.night) fail('level 4 should start at night');
 if (s.cones !== s.raptors || s.raptors !== 2) fail('each raptor on patrol should show its view cone');
 if (s.hq) fail('level 4 trains nothing, so the HQ button should be hidden');
-// Troops carry no flashlights in any level, and each raptor has a ring at its feet so it can be found at the tip of
-// its cone.
+// Level 4's troops keep their flashlights off while they sneak, and each raptor has a ring at its feet so it can be
+// found at the tip of its cone.
 const marks = await page.evaluate(() => {
   const v = window.__pb3d.view;
-  return { lights: v.effects.flashlights?.length ?? 0, rings: [...v.cones.sets.values()].filter((c) => c.mark.visible).length };
+  return { lights: v.effects.flashlights.filter((b) => b.cone.visible).length, rings: [...v.cones.sets.values()].filter((c) => c.mark.visible).length };
 });
-step(`level 4: ${marks.lights} flashlights, ${marks.rings} raptor rings`);
-if (marks.lights) fail('troops should carry no flashlights');
+step(`level 4: ${marks.lights} flashlights on, ${marks.rings} raptor rings`);
+if (marks.lights) fail('level 4 troops should keep their flashlights off');
 if (marks.rings !== 2) fail('each raptor on patrol should have a ring at its feet');
 // Look at the south raptor and its cone.
 const south = await page.evaluate(() => {
@@ -359,7 +368,7 @@ const watcher = await page.evaluate(() => {
   const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
   const sq = w.units.find((u) => u.kind === 'tranq');
   Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, notice: 0, target: null, path: [], pathIndex: 0 });
-  Object.assign(sq, { x: 26.5 * 40, y: 16.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
+  Object.assign(sq, { x: 28 * 40, y: 16.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
   for (let i = 0; i < 25; i++) w.update(1 / 60);
   g.speed = 0;
   return d.id;
@@ -377,15 +386,16 @@ await page.screenshot({ path: `${out}/12b-level4-noticing.png`, timeout: 240000 
 await page.evaluate(() => {
   const g = window.__pb3d;
   g.speed = 1;
-  for (let i = 0; i < 60; i++) g.world.update(1 / 60);
+  for (let i = 0; i < 60 && !g.world.events.some((e) => e.type === 'spotted'); i++) g.world.update(1 / 60);
 });
 let toast = '';
-for (let i = 0; i < 20 && toast !== 'A raptor is after the Tranq Squad.'; i++) {
+const packToast = /^Raptors are circling the Tranq Squad\.$/;
+for (let i = 0; i < 20 && !packToast.test(toast); i++) {
   await page.waitForTimeout(250);
   toast = (await page.locator('.toast').textContent().catch(() => '')) ?? '';
 }
 step(`toast: ${toast}`);
-if (toast !== 'A raptor is after the Tranq Squad.') fail('once sure, the raptor should come for the squad, and say so');
+if (!packToast.test(toast)) fail('once sure, the raptor should call the other, and they should circle the squad, and say so');
 
 // ---------------------------------------------------------------- level 5
 await page.goto(`${url}#debug.level-5.${quality}`, { timeout: 300000 });

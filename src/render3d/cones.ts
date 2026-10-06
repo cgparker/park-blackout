@@ -1,7 +1,7 @@
 // What each calm raptor sees, in every level, as a pale fan on the ground cut short by cover, as in the 2D game, with
 // a ring at its feet so the raptor at the tip of its cone can be found in the dark. While it makes someone out, the
 // fan turns orange and a ring fills around it. A raptor on the hunt shows a red bar to its prey and a red ring under
-// it instead.
+// it instead: thin while its pack circles the prey, thick once they rush.
 import * as THREE from 'three';
 import { STEALTH } from '../config';
 import { col } from './util';
@@ -16,6 +16,8 @@ export interface ConeView {
   y: number;
   pts: readonly { x: number; y: number }[];
   prey: { x: number; y: number } | null;
+  /** On the hunt: false while its pack circles the prey, true once they rush (or it charges alone). */
+  rush?: boolean;
   notice: number;
 }
 
@@ -117,7 +119,8 @@ export class Cones {
         const len = Math.hypot(x1 - x0, z1 - z0);
         s.bar.position.set((x0 + x1) / 2, Y, (z0 + z1) / 2);
         s.bar.rotation.set(0, -Math.atan2(z1 - z0, x1 - x0), 0);
-        s.bar.scale.set(Math.max(len, 1e-3), 1, 0.06);
+        // A thin bar while the pack circles, a thick one once it rushes.
+        s.bar.scale.set(Math.max(len, 1e-3), 1, c.rush === false ? 0.035 : 0.1);
         s.ring.position.set(x1, Y, z1);
         continue;
       }

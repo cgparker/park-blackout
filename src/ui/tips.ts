@@ -1,4 +1,5 @@
 import { DINO_AI, DINOS, FIGHT, MAP, TIPS, UNITS } from '../config';
+import { huntersOf, packCircling } from '../core/dinos';
 import { footprintCenter, type Exhibit } from '../core/exhibit';
 import type { Point } from '../core/grid';
 import { guarded, nearestExhibit, troopsNear } from '../core/guard';
@@ -99,7 +100,7 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
           out.push({
             id: 'nest',
             title: 'Raptors guard their nest',
-            body: 'The cone in front of each raptor shows what it sees, and rock and pens block it. A raptor takes a moment to make out a troop in its cone, then comes for it and calls the rest. One darted from where no cone reaches comes alone.',
+            body: 'The cone in front of each raptor shows what it sees, and rock and pens block it. A raptor takes a moment to make out a troop in its cone, then calls the rest, and they circle it before they strike. One darted from where no cone reaches comes alone.',
             focus: nest,
           });
         } else {
@@ -142,23 +143,16 @@ function huntTips(w: World, events: readonly GameEvent[]): Tip[] {
         break;
       case 'spotted': {
         if (!nest) break;
-        // A raptor darted from where no cone reaches comes alone; say whether the rest are coming too.
-        const after = w.dinos.filter((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === e.unitId).length;
-        out.push(
-          after > 1
-            ? {
-                id: 'spotted',
-                title: 'The nest is coming',
-                body: `A raptor made out your ${UNITS[e.kind].name} and called the rest. Fight them as one group, or get out of sight: a raptor that loses you for a few seconds goes back to the nest.`,
-                focus: { x: e.x, y: e.y },
-              }
-            : {
-                id: 'spotted',
-                title: 'A raptor is coming alone',
-                body: 'The rest didn’t see it go. Dart it down before they see the fight.',
-                focus: { x: e.x, y: e.y },
-              },
-        );
+        // A raptor darted from where no cone reaches comes alone; say whether the rest are coming too, and how.
+        const name = UNITS[e.kind].name;
+        const after = huntersOf(w, e.unitId).length;
+        const stay = 'Fight them as one group, or get out of sight: a raptor that loses you for a few seconds goes back to the nest.';
+        const [title, body] = packCircling(w, e.unitId)
+          ? ['The nest is closing in', `A raptor made out your ${name} and called the rest. They spread out around it, just out of dart range, then rush it together. ${stay}`]
+          : after > 1
+            ? ['Raptors are coming', `They’re coming straight for your ${name}. ${stay}`]
+            : ['A raptor is coming alone', 'The rest didn’t see it go. Dart it down before they see the fight.'];
+        out.push({ id: 'spotted', title, body, focus: { x: e.x, y: e.y } });
         break;
       }
       case 'unitLost':
@@ -234,16 +228,21 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
       }
       case 'spotted': {
         const engineer = e.kind === 'engineer';
-        // A raptor darted by a troop it never saw comes alone, so say whether the other one is coming too.
-        const both = w.dinos.filter((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === e.unitId).length > 1;
+        // A raptor darted by a troop it never saw comes alone, so say whether the other one is coming too, and how.
+        const both = huntersOf(w, e.unitId).length > 1;
+        const circling = packCircling(w, e.unitId);
+        const who = engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`;
         const body = engineer
           ? both
             ? 'It’s coming, and it called the other. The Engineer can’t outrun them. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw them off.'
             : 'It’s coming. The Engineer can’t outrun it. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw it off.'
-          : both
-            ? 'It’s coming, and it called the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.'
-            : 'It’s coming on its own. A Tranq Squad can put down one raptor, so keep darting.';
-        out.push({ id: 'spotted', title: `A raptor is after ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`, body, focus: { x: e.x, y: e.y } });
+          : circling
+            ? 'It called the other. They circle out of dart range, then rush it together. Two raptors are too many for a Tranq Squad, but while they hunt it, the Engineer can work.'
+            : both
+              ? 'It’s coming, and so is the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.'
+              : 'It’s coming on its own. A Tranq Squad can put down one raptor, so keep darting.';
+        const title = circling ? `Raptors are circling ${who}` : both ? `Raptors are after ${who}` : `A raptor is after ${who}`;
+        out.push({ id: 'spotted', title, body, focus: { x: e.x, y: e.y } });
         break;
       }
       case 'unitLost':
@@ -315,7 +314,7 @@ function raptorPenTip(ex: Exhibit): Tip {
   return {
     id: 'raptorPen',
     title: 'Raptors go for visitors',
-    body: 'When the power goes out, raptors break out beside the path and head for the guests. One that makes someone out calls the rest. Before the blackout, reinforce their fence and post troops beside each raptor pen.',
+    body: 'When the power goes out, raptors break out beside the path and head for the guests. One that makes out a troop calls the rest, and they circle it out of dart range before they rush. Before the blackout, reinforce their fence and post troops beside each raptor pen.',
     focus: footprintCenter(ex.footprint, T),
   };
 }

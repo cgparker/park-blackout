@@ -259,9 +259,10 @@ describe('level 2: raptors guarding a nest', () => {
 
   it('see in cones like every raptor: a troop in one cone brings the whole nest, and they go home once they lose it', () => {
     const { w, nest, raptors } = setup();
-    // Out of every cone: nothing happens.
+    // Out of every cone: nothing happens. (It holds its fire, so only being seen sets them off.)
     const u = spawnUnit(w, 'heavy', { x: nest.x - (STEALTH.sightTiles + NEST.roamTiles + 1.5) * T, y: nest.y });
     u.hp = 1e9;
+    u.cooldown = 1e9;
     run(w, 3);
     expect(raptors.every((d) => d.target === null)).toBe(true);
     // In front of one raptor: it stops to make the troop out, then calls the rest.
@@ -280,18 +281,20 @@ describe('level 2: raptors guarding a nest', () => {
     }
   });
 
-  it('a raptor darted by a troop none of them sees comes alone', () => {
+  it('a raptor darted by a troop none of them sees comes alone, but any raptor that sees it hit comes too', () => {
     const { w, raptors } = setup();
     run(w, 1);
     const r = raptors[0];
     const u = spawnUnit(w, 'tranq', spotNear(w, r, false));
     u.hp = 1e9;
+    u.cooldown = 1e9;
+    const saw = raptors.filter((o) => o !== r && inView(w, o, r.x, r.y)).map((o) => o.id);
     sedate(w, r, 10, u.id);
-    run(w, 0.2);
+    run(w, STEP * 2);
     expect(r.target).toEqual({ type: 'unit', id: u.id });
-    // The squad may dart a second one on its own; each that comes was darted itself, and none was called.
+    // No call: just it and whoever watched it get hit, charging at once.
     const hunters = raptors.filter((d) => d.target !== null);
-    expect(hunters.every((d) => d.lastHitBy === u.id)).toBe(true);
-    expect(hunters.length).toBeLessThan(raptors.length);
+    expect(new Set(hunters.map((d) => d.id))).toEqual(new Set([r.id, ...saw]));
+    expect(hunters.every((d) => d.rush)).toBe(true);
   });
 });

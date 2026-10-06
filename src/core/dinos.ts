@@ -1,10 +1,10 @@
-import { DINO_AI, DINOS, EXHIBITS, FIGHT, NEST, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
+import { DINO_AI, DINOS, EXHIBITS, FIGHT, NEST, PACK, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
 import { damageUnit } from './combat';
 import { fenceRect, footprintCenter, inFootprint, type Exhibit, type FenceSegment } from './exhibit';
 import { Tile, type Point } from './grid';
 import { findPath, followPath, lineClear, nearestOpenTile, stepToward, toWaypoints, type PathFollower } from './nav';
 import { inView, noticed, preyOf, tracking, type PreyRef } from './stealth';
-import { onMap, type Unit } from './units';
+import { canDart, onMap, type Unit } from './units';
 import { panicNear, type Visitor } from './visitors';
 import type { CasualtyCause, World } from './world';
 
@@ -91,6 +91,12 @@ export interface Dino extends PathFollower {
    * STEALTH.noticeSeconds. With nobody in sight it counts back down to 0 before it moves on.
    */
   notice: number;
+  /** Raptors hunting a troop as a pack: seconds spent circling it, and whether they have started their rush. */
+  circle: number;
+  rush: boolean;
+  /** Its place on the ring round its prey (radians, NaN for none), and how big the pack was when places were given out. */
+  ring: number;
+  ringN: number;
 }
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -152,6 +158,10 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       seen: null,
       heardHit: -Infinity,
       notice: 0,
+      circle: 0,
+      rush: false,
+      ring: NaN,
+      ringN: 0,
     });
   }
 }
@@ -170,6 +180,9 @@ export function calm(d: Dino): void {
   d.notice = 0;
   d.lost = 0;
   d.seen = null;
+  d.circle = 0;
+  d.rush = false;
+  d.ring = NaN;
 }
 
 /** Where an animal can wander inside its pen (inside the fence line, minus its body). */
@@ -814,25 +827,53 @@ function chooseBreakIn(w: World, d: Dino): DinoTarget | null {
 
 /**
  * Every loose raptor, in every level, only knows what it sees and touches. Calm, it walks its route, stays by its nest,
- * heads for the crowd, or wanders. Someone in its cone makes it stop and stare: still in sight after
- * STEALTH.noticeSeconds, it hunts them and calls the others. Anyone who walks into it is noticed at once. A dart sets
- * it on the shooter: with the call if it was calm and saw the shot, alone if not. Prey it loses sight of for a few
- * seconds it gives up on. In level 5's fight, a calm raptor near the T. rex fights it instead, and only a dart pulls
- * it away.
+ * or heads for the crowd. Someone in its cone makes it stop and stare: a troop still in sight after
+ * STEALTH.noticeSeconds is hunted, and the pack is called; a guest, panicking in the dark, gives itself away at once.
+ * Anyone who walks into it is noticed at once. A dart sets it on the shooter: with the call if it was calm and saw the
+ * shot, alone if not, and any raptor that sees it hit comes too. A pack circles a troop before it strikes
+ * (circleRound), and in the strike each keeps to its prey and goes straight on to the next troop when it falls. Prey
+ * it loses sight of for a few seconds it gives up on. In level 5's fight, a calm raptor near the
+ * T. rex fights it instead, and only a dart pulls it away.
  */
 function stalk(w: World, d: Dino, dt: number): void {
   const cfg = DINOS.raptor;
   if (d.lastHitTime > d.heardHit) {
     d.heardHit = d.lastHitTime;
     const u = w.unitById(d.lastHitBy);
-    // Calm, it calls the others only if it saw who shot. Already busy, it just turns on the shooter.
+    // Calm, it calls the others only if it saw who shot. After a troop, it keeps to its prey when the shot comes from
+    // the troops with it. Otherwise it turns on the shooter alone, at once. Either way, a pack that was circling its
+    // prey rushes it now that one of them is hit.
     if (u && onMap(u)) {
       const shooter: PreyRef = { type: 'unit', id: u.id };
+      const prey = d.target?.type === 'unit' ? w.unitById(d.target.id) : undefined;
       if (!d.target && inView(w, d, u.x, u.y)) spot(w, d, shooter);
-      else hunt(w, d, shooter);
+      else if (prey && onMap(prey) && canDart(prey.kind) && dist(u, prey) <= PACK.groupTiles * w.T) rushAll(huntersOf(w, prey.id));
+      else {
+        if (prey) rushAll(huntersOf(w, prey.id));
+        hunt(w, d, shooter);
+        d.rush = true;
+      }
+      // Any raptor that sees it hit, and isn't already after a troop or in a fight, comes for the shooter too.
+      for (const o of w.dinos) {
+        if (o === d || o.kind !== 'raptor' || o.state !== 'loose' || o.target?.type === 'dino' || o.target?.type === 'unit') continue;
+        if (inView(w, o, d.x, d.y)) {
+          hunt(w, o, shooter);
+          o.rush = true;
+        }
+      }
     }
   }
-  if (d.target && !targetAlive(w, d.target)) loseTrack(d);
+  if (d.target && !targetAlive(w, d.target)) {
+    // In the middle of a strike, it goes straight on to the nearest one left where its prey fell. Otherwise it calms down.
+    const striking = d.rush && d.target.type === 'unit';
+    const fell = d.seen ?? { x: d.x, y: d.y };
+    loseTrack(d);
+    const next = striking ? nearestUnit(w, fell, PACK.groupTiles * w.T) : null;
+    if (next) {
+      hunt(w, d, { type: 'unit', id: next.id });
+      d.rush = true;
+    }
+  }
   if (d.target?.type === 'dino' || (!d.target && joinFight(w, d))) {
     fight(w, d, dt);
     return;
@@ -840,7 +881,8 @@ function stalk(w: World, d: Dino, dt: number): void {
   let prey = preyOf(w, d.target);
   if (!prey) {
     const seen = noticed(w, d);
-    if (seen?.touch) {
+    // A guest in the dark is screaming and running: it gives itself away at once, as anyone who walks into a raptor does.
+    if (seen?.touch || seen?.prey.type === 'visitor') {
       spot(w, d, seen.prey);
       prey = preyOf(w, d.target);
     } else if (seen) {
@@ -862,16 +904,18 @@ function stalk(w: World, d: Dino, dt: number): void {
     // Out of sight, it runs to where it last saw its prey, and gives up if it doesn't see it again.
     const to = d.lost > 0 && d.seen ? d.seen : prey;
     if (d.lost >= STEALTH.giveUpSeconds) loseTrack(d);
-    else chase(w, d, to.x, to.y, to === prey ? cfg.radius + prey.r : 0, cfg.speed, dt);
+    else if (to !== prey || !circleRound(w, d, dt)) chase(w, d, to.x, to.y, to === prey ? cfg.radius + prey.r : 0, cfg.speed, dt);
   } else if (d.notice <= 0) {
     roam(w, d, dt);
   }
   biteTroops(w, d);
 }
 
-/** A raptor makes someone out, or sees a troop shoot. It hunts them, and every calm raptor within earshot comes too. */
+/** A raptor makes someone out, or sees a troop shoot. It hunts them, and for a troop, every calm raptor within earshot comes too. */
 function spot(w: World, d: Dino, t: PreyRef): void {
   hunt(w, d, t);
+  // A guest is easy prey, so it calls nobody; a troop is a threat, and the pack comes.
+  if (t.type === 'visitor') return;
   for (const o of w.dinos) {
     if (o === d || o.kind !== 'raptor' || o.state !== 'loose' || o.target) continue;
     if (dist(o, d) <= STEALTH.alertTiles * w.T) hunt(w, o, t);
@@ -885,6 +929,9 @@ function hunt(w: World, d: Dino, t: PreyRef): void {
   d.seen = p ? { x: p.x, y: p.y } : null;
   if (d.target?.type === t.type && d.target.id === t.id) return;
   d.target = { ...t };
+  d.circle = 0;
+  d.rush = false;
+  d.ring = NaN;
   d.look = 0;
   d.wander = null;
   d.path = [];
@@ -899,21 +946,217 @@ function loseTrack(d: Dino): void {
   d.lost = 0;
   d.notice = 0;
   d.seen = null;
+  d.circle = 0;
+  d.rush = false;
+  d.ring = NaN;
   d.wander = null;
   d.path = [];
   d.pathIndex = 0;
   d.repath = 0;
 }
 
+/** The loose raptors hunting a unit, in a steady order. */
+export function huntersOf(w: World, unitId: number): Dino[] {
+  return w.dinos.filter((o) => o.kind === 'raptor' && o.state === 'loose' && o.target?.type === 'unit' && o.target.id === unitId);
+}
+
+/** Whether the raptors after this unit are circling it: two or more, after prey that can dart, and none has rushed yet. */
+export function packCircling(w: World, unitId: number): boolean {
+  const u = w.unitById(unitId);
+  const pack = huntersOf(w, unitId);
+  return !!u && canDart(u.kind) && pack.length > 1 && !pack.some((d) => d.rush);
+}
+
+function rushAll(pack: readonly Dino[]): void {
+  for (const o of pack) o.rush = true;
+}
+
+const angleDiff = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
 /**
- * A calm raptor with nobody in sight walks its route (level 4), stays by its nest (level 2), heads for the crowd while
- * there are guests in the park (level 3), and otherwise wanders where it is.
+ * The ring a pack waits on round its prey: centered on the prey's group (it and every troop or tower that can dart
+ * within PACK.groupTiles of it), and out of reach of all of them, PACK.marginTiles past the farthest dart. So a
+ * group that walks out at a raptor moves the ring away with it.
+ */
+export function packRing(w: World, prey: Unit): { c: Point; R: number } {
+  const group = w.units.filter((o) => onMap(o) && canDart(o.kind) && dist(o, prey) <= PACK.groupTiles * w.T);
+  if (!group.includes(prey)) group.push(prey);
+  const c = { x: group.reduce((a, o) => a + o.x, 0) / group.length, y: group.reduce((a, o) => a + o.y, 0) / group.length };
+  const R = Math.max(...group.map((o) => dist(o, c) + UNITS[o.kind].range)) + PACK.marginTiles * w.T;
+  return { c, R };
+}
+
+/**
+ * Where each raptor of a pack waits: on the ring, the one nearest the middle in front and the rest spread evenly
+ * round, in the order they already stand so nobody crosses. When water, a whole pen, or the park's edge cuts the
+ * ring, they spread along the open part instead, the way a pack hems in troops with their backs to a pond. Each keeps
+ * its direction from the middle until the pack grows or shrinks, so the ring follows moving troops without
+ * shuffling. Matches `pack`, and each place is moved onto open ground.
+ */
+export function ringPlaces(w: World, ring: { c: Point; R: number }, pack: readonly Dino[]): Point[] {
+  const { c, R } = ring;
+  if (pack.some((o) => Number.isNaN(o.ring) || o.ringN !== pack.length)) {
+    const lead = pack.reduce((a, o) => (dist(o, c) < dist(a, c) ? o : a));
+    const base = Math.atan2(lead.y - c.y, lead.x - c.x);
+    const arc = openArc(w, c, R, base);
+    const angleOf = (o: Dino) => Math.atan2(o.y - c.y, o.x - c.x);
+    if (!arc) {
+      const turn = (o: Dino) => {
+        const a = angleDiff(angleOf(o), base);
+        return a < 0 ? a + Math.PI * 2 : a;
+      };
+      const order = pack.slice().sort((a, b) => (a === lead ? -1 : b === lead ? 1 : turn(a) - turn(b) || a.id - b.id));
+      order.forEach((o, i) => (o.ring = base + (i * Math.PI * 2) / pack.length));
+    } else {
+      // Along the open part, from one end to the other. One standing where the ring is cut counts from the nearer end.
+      const [from, to] = arc;
+      const along = (o: Dino) => {
+        let a = from + ((((angleOf(o) - from) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
+        if (a > to && a - to > from + Math.PI * 2 - a) a -= Math.PI * 2;
+        return a;
+      };
+      const order = pack.slice().sort((a, b) => along(a) - along(b) || a.id - b.id);
+      order.forEach((o, i) => (o.ring = from + ((to - from) * (i + 0.5)) / pack.length));
+    }
+    for (const o of pack) o.ringN = pack.length;
+  }
+  return pack.map((o) => ringSpot(w, c, o.ring, R));
+}
+
+/** Whether a raptor can stand at this point. */
+function standable(w: World, x: number, y: number): boolean {
+  const tx = Math.floor(x / w.T);
+  const ty = Math.floor(y / w.T);
+  return w.grid.inBounds(tx, ty) && w.dinoWalk(tx, ty);
+}
+
+/**
+ * A point a raptor can stand on at this angle from the middle of the ring: on the ring, up to PACK.slackTiles outside
+ * it, or half the margin inside (still out of dart range). So a rock or a pen corner doesn't cut the ring; water, a
+ * whole pen, or the park's edge does.
+ */
+function ringPoint(w: World, c: Point, a: number, R: number): Point | null {
+  const radii = [R];
+  for (let k = 1; k <= PACK.slackTiles; k++) radii.push(R + k * w.T);
+  radii.push(R - (PACK.marginTiles / 2) * w.T);
+  for (const r of radii) {
+    const x = c.x + Math.cos(a) * r;
+    const y = c.y + Math.sin(a) * r;
+    if (standable(w, x, y)) return { x, y };
+  }
+  return null;
+}
+
+/** Whether a raptor can stand at this angle from the middle of the ring (see ringPoint). */
+function ringOpen(w: World, c: Point, a: number, R: number): boolean {
+  return ringPoint(w, c, a, R) !== null;
+}
+
+/**
+ * The open stretch of the ring through angle `a` (or the open stretch nearest it), as [from, to] with from < to,
+ * when water, a whole pen, HQ, or the park's edge cuts the ring (see ringPoint). Null when the whole ring is open, or
+ * none of it. Checked every 10 degrees.
+ */
+function openArc(w: World, c: Point, R: number, a: number): [number, number] | null {
+  const n = 36;
+  const step = (Math.PI * 2) / n;
+  const open = Array.from({ length: n }, (_, k) => ringOpen(w, c, a + k * step, R));
+  if (open.every(Boolean) || !open.some(Boolean)) return null;
+  const at = (k: number) => open[((k % n) + n) % n];
+  let k0 = 0;
+  for (let k = 0; k <= n / 2 && !at(k0); k++) k0 = at(k) ? k : at(-k) ? -k : k0;
+  let lo = k0;
+  let hi = k0;
+  while (at(lo - 1)) lo--;
+  while (at(hi + 1)) hi++;
+  return [a + lo * step, a + hi * step];
+}
+
+/** Whether the ring is open all the way from angle `a` round by `off` (radians, either way), checked every 15 degrees. */
+function arcClear(w: World, c: Point, R: number, a: number, off: number): boolean {
+  const n = Math.ceil(Math.abs(off) / (Math.PI / 12));
+  for (let k = 1; k <= n; k++) if (!ringOpen(w, c, a + (off * k) / n, R)) return false;
+  return true;
+}
+
+/**
+ * A spot on the ring at this angle a raptor can stand on (see ringPoint). Past the edge of the map, or in water or a
+ * pen, it tries the angles either side, 15 degrees at a time, before it settles for the nearest open tile.
+ */
+function ringSpot(w: World, c: Point, a: number, R: number): Point {
+  for (let k = 0; k <= 8; k++) {
+    for (const s of k ? [1, -1] : [1]) {
+      const p = ringPoint(w, c, a + s * k * (Math.PI / 12), R);
+      if (p) return p;
+    }
+  }
+  return openNear(w, c.x + Math.cos(a) * R, c.y + Math.sin(a) * R);
+}
+
+/** The center of the nearest tile a raptor can stand on. */
+function openNear(w: World, x: number, y: number): Point {
+  const T = w.T;
+  const t = nearestOpenTile(w.grid.cols, w.grid.rows, w.dinoWalk, Math.floor(x / T), Math.floor(y / T));
+  if (!t) return { x, y };
+  return t.x === Math.floor(x / T) && t.y === Math.floor(y / T) ? { x, y } : { x: (t.x + 0.5) * T, y: (t.y + 0.5) * T };
+}
+
+/**
+ * Raptors hunting a troop that can dart circle it before they strike. Each takes its own place on a ring around it,
+ * out of dart range: the one nearest the prey waits in front while the rest go round. Once every raptor is in place,
+ * or after PACK.circleSeconds, or as soon as one of them is darted, they all rush it together. A lone raptor, or prey
+ * that can't dart (the Engineer, the 4x4), gets a straight charge. Returns true while it circles.
+ */
+function circleRound(w: World, d: Dino, dt: number): boolean {
+  if (d.rush || d.target?.type !== 'unit') return false;
+  const u = w.unitById(d.target.id);
+  const pack = huntersOf(w, d.target.id);
+  if (!u || !canDart(u.kind) || pack.length < 2 || pack.some((o) => o.rush)) {
+    d.rush = true;
+    return false;
+  }
+  d.circle += dt;
+  const ring = packRing(w, u);
+  const places = ringPlaces(w, ring, pack);
+  const near = PACK.placeTiles * w.T;
+  if (pack.every((o, i) => dist(o, places[i]) <= near) || pack.some((o) => o.circle >= PACK.circleSeconds)) {
+    rushAll(pack);
+    return false;
+  }
+  // Round the ring toward its place, the short way unless something cuts the ring there. It aims a little way ahead
+  // along the ring's tangent, so it goes round at the ring's distance (backing out to it first if it is inside)
+  // instead of cutting across or spiralling in.
+  const { c, R } = ring;
+  const goal = places[pack.indexOf(d)];
+  const a = Math.atan2(d.y - c.y, d.x - c.x);
+  let off = angleDiff(Math.atan2(goal.y - c.y, goal.x - c.x), a);
+  if (!arcClear(w, c, R, a, off)) {
+    const other = off > 0 ? off - Math.PI * 2 : off + Math.PI * 2;
+    if (arcClear(w, c, R, a, other)) off = other;
+  }
+  const ahead = (PACK.aheadDeg * Math.PI) / 180;
+  const step = Math.max(-ahead, Math.min(ahead, off));
+  const tangent = { x: c.x + Math.cos(a + step) * (R / Math.cos(step)), y: c.y + Math.sin(a + step) * (R / Math.cos(step)) };
+  const to = Math.abs(off) <= ahead ? goal : standable(w, tangent.x, tangent.y) ? tangent : (ringPoint(w, c, a + step, R) ?? goal);
+  if (dist(d, goal) <= near) {
+    // In place: it waits, watching its prey.
+    d.path = [];
+    d.pathIndex = 0;
+    d.facing = Math.atan2(u.y - d.y, u.x - d.x);
+  } else chase(w, d, to.x, to.y, 0, DINOS.raptor.speed, dt);
+  return true;
+}
+
+/**
+ * A calm raptor with nobody in sight walks its route (level 4) or stays by its nest (level 2). Otherwise it heads for
+ * the crowd: the nearest guest while there are guests in the park, and once they're gone, the nearest troop. It knows
+ * where people are, but it only goes after someone it makes out.
  */
 function roam(w: World, d: Dino, dt: number): void {
   if (d.patrol?.length) walkRoute(w, d, d.patrol, dt);
   else if (d.nest) roamNest(w, d, d.nest, dt);
   else {
-    const crowd = nearestVisitor(w, d, Infinity);
+    const crowd = nearestVisitor(w, d, Infinity) ?? nearestUnit(w, d, Infinity);
     if (crowd) chase(w, d, crowd.x, crowd.y, 0, DINOS.raptor.speed, dt);
     else wanderLoose(w, d, dt);
   }
@@ -1051,7 +1294,8 @@ function biteTroops(w: World, d: Dino): void {
     const reach = cfg.radius + UNITS[u.kind].radius + DINO_AI.biteReachPx;
     const dd = dist(u, d);
     if (dd > reach) continue;
-    if (u.id === d.lockId) {
+    // The T. rex bites the troop it's locked onto, and a raptor its prey, whenever they're in reach.
+    if (u.id === d.lockId || (d.target?.type === 'unit' && d.target.id === u.id)) {
       victim = u;
       break;
     }

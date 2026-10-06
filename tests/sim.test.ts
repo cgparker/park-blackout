@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, FIGHT, MAP, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
-import { damageUnit } from '../src/core/combat';
+import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, FIGHT, MAP, PACK, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { damageUnit, sedate } from '../src/core/combat';
 import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
 import { breakoutSeconds, secondsToSedate, sedationPerSecond } from '../src/core/estimates';
 import { Tile } from '../src/core/grid';
@@ -626,7 +626,7 @@ describe('combat', () => {
     expect(events.some((e) => e.type === 'casualty')).toBe(true);
   });
 
-  it('a loose raptor heads for the crowd, and stops to make a guest out before it hunts', () => {
+  it('a loose raptor heads for the crowd, and hunts the first guest it sees at once', () => {
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const raptor = w.dinos.find((d) => d.home === pen.id)!;
@@ -640,34 +640,154 @@ describe('combat', () => {
     // It doesn't see the guest yet, but it knows where the crowd is.
     expect(raptor.target).toBeNull();
     expect(raptor.y).toBeLessThan(y0);
-    // The guest sees it coming and would run; hold it where it stands, in the raptor's cone, for the rest.
+    // The guest sees it coming and would run; hold it where it stands. A guest panicking in the dark takes no
+    // making out: the raptor hunts it the moment it comes into view.
     const hold = { x: v.x, y: v.y };
-    const pinned = (then: () => boolean) => () => (Object.assign(v, hold), then());
-    run(w, 3, pinned(() => raptor.notice > 0));
-    expect(raptor.notice).toBeGreaterThan(0);
-    expect(raptor.target).toBeNull();
-    run(w, STEALTH.noticeSeconds, pinned(() => raptor.target !== null));
+    let beat = 0;
+    run(w, 3, () => {
+      Object.assign(v, hold);
+      beat = Math.max(beat, raptor.notice);
+      return raptor.target !== null;
+    });
     expect(raptor.target).toEqual({ type: 'visitor', id: v.id });
+    expect(beat).toBe(0);
   });
 
-  it('a loose raptor only finds troops it sees or touches', () => {
+  it('with the guests gone, a loose raptor heads for the troops, and makes one out before it hunts', () => {
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const raptor = w.dinos.find((d) => d.home === pen.id)!;
-    // Standing still on open grass along the south edge, looking west.
+    // On open grass along the south edge, looking west, with a squad 7 tiles behind it that holds its fire.
     setLoose(raptor, 6.5 * T, 22.5 * T);
     raptor.facing = Math.PI;
-    raptor.wait = 10;
-    // A squad behind it, just out of its own dart range: never found, with no guests to lead the raptor anywhere.
-    const squad = spawnUnit(w, 'tranq', { x: raptor.x + UNITS.tranq.range + 0.5 * T, y: raptor.y });
-    run(w, 2);
+    const squad = spawnUnit(w, 'tranq', { x: raptor.x + 7 * T, y: raptor.y });
+    squad.cooldown = 1e9;
+    const away = () => Math.hypot(raptor.x - squad.x, raptor.y - squad.y);
+    const d0 = away();
+    run(w, 0.3);
+    // It doesn't see the squad yet, but it knows where the troops are.
     expect(raptor.target).toBeNull();
-    expect(raptor.notice).toBe(0);
-    expect(raptor.x).toBe(6.5 * T);
-    // Walk the squad into it: noticed at once, whichever way it looks.
-    Object.assign(squad, { x: raptor.x + 0.4 * T, y: raptor.y });
+    expect(away()).toBeLessThan(d0);
+    run(w, 3, () => raptor.notice > 0);
+    expect(raptor.notice).toBeGreaterThan(0);
+    expect(raptor.target).toBeNull();
+    run(w, STEALTH.noticeSeconds, () => raptor.target !== null);
+    expect(raptor.target).toEqual({ type: 'unit', id: squad.id });
+  });
+
+  it('a loose raptor feels a troop that walks into it, whichever way it looks', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    setLoose(raptor, 6.5 * T, 22.5 * T);
+    raptor.facing = Math.PI;
+    const squad = spawnUnit(w, 'tranq', { x: raptor.x + 0.4 * T, y: raptor.y });
+    squad.cooldown = 1e9;
     run(w, STEP * 2);
     expect(raptor.target).toEqual({ type: 'unit', id: squad.id });
+  });
+
+  /** A raptor pen's three raptors out on open grass: one looking at a Tranq Squad from 4.5 tiles, two farther back. */
+  function packAndSquad() {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const [a, b, c] = w.dinos.filter((d) => d.home === pen.id);
+    const squad = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 16.5 * T });
+    squad.hp = squad.maxHp = 1e6;
+    setLoose(a, 16 * T, 16.5 * T);
+    a.facing = 0;
+    setLoose(b, 12.5 * T, 14.5 * T);
+    setLoose(c, 12.5 * T, 18.5 * T);
+    for (const d of [b, c]) {
+      d.facing = Math.PI;
+      d.wait = 10;
+    }
+    return { w, pack: [a, b, c], squad };
+  }
+
+  it('raptors that hunt a troop together circle it out of dart range, then rush it together', () => {
+    const { w, pack, squad } = packAndSquad();
+    const away = (d: Dino) => Math.hypot(d.x - squad.x, d.y - squad.y);
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    // The one that made the squad out called the others; nobody rushes yet.
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    expect(pack.some((d) => d.rush)).toBe(false);
+    // While they circle, none comes within the squad's dart range, and they end up on every side of it.
+    let closest = Infinity;
+    run(w, PACK.circleSeconds + 0.5, () => {
+      if (!pack.some((d) => d.rush)) closest = Math.min(closest, ...pack.map(away));
+      return pack.every((d) => d.rush);
+    });
+    expect(closest).toBeGreaterThan(UNITS.tranq.range);
+    expect(pack.every((d) => d.rush)).toBe(true);
+    const sides = pack.map((d) => Math.atan2(d.y - squad.y, d.x - squad.x));
+    const gap = Math.min(...sides.flatMap((s, i) => sides.slice(i + 1).map((t) => Math.abs(Math.atan2(Math.sin(s - t), Math.cos(s - t))))));
+    expect(gap).toBeGreaterThan(Math.PI / 3);
+    // Then all three strike.
+    run(w, 3, () => pack.every((d) => away(d) < 1.2 * T));
+    expect(pack.every((d) => away(d) < 1.2 * T)).toBe(true);
+  });
+
+  it('raptors hem in a squad with its back to the park edge: they spread along the open side, then strike', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const [a, b, c] = w.dinos.filter((d) => d.home === pen.id);
+    // Two and a half tiles from the south edge, so the ring round it is cut.
+    const squad = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 21.5 * T });
+    squad.hp = squad.maxHp = 1e6;
+    setLoose(a, 16 * T, 21.5 * T);
+    a.facing = 0;
+    setLoose(b, 12.5 * T, 18.5 * T);
+    setLoose(c, 12.5 * T, 22.5 * T);
+    for (const d of [b, c]) {
+      d.facing = Math.PI;
+      d.wait = 10;
+    }
+    const pack = [a, b, c];
+    run(w, STEALTH.noticeSeconds + 0.1, () => a.target !== null);
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    let closest = Infinity;
+    run(w, PACK.circleSeconds + 0.5, () => {
+      if (!pack.some((d) => d.rush)) closest = Math.min(closest, ...pack.map((d) => Math.hypot(d.x - squad.x, d.y - squad.y)));
+      return pack.every((d) => d.rush);
+    });
+    // They got into place before the time ran out, without coming into dart range.
+    expect(pack.every((d) => d.rush)).toBe(true);
+    expect(pack.every((d) => d.circle < PACK.circleSeconds)).toBe(true);
+    expect(closest).toBeGreaterThan(UNITS.tranq.range);
+    // Spread over the open side: the two outermost are more than a third of a turn apart round the squad.
+    const sides = pack.map((d) => Math.atan2(d.y - squad.y, d.x - squad.x)).sort((p, q) => p - q);
+    const widest = Math.max(...sides.flatMap((s, i) => sides.slice(i + 1).map((t) => Math.abs(Math.atan2(Math.sin(s - t), Math.cos(s - t))))));
+    expect(widest).toBeGreaterThan((Math.PI * 2) / 3);
+  });
+
+  it('striking together, raptors keep to their prey, and go straight on to the next troop when it falls', () => {
+    const { w, pack, squad } = packAndSquad();
+    const buddy = spawnUnit(w, 'tranq', { x: squad.x + 1.5 * T, y: squad.y });
+    buddy.hp = buddy.maxHp = 1e6;
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    run(w, PACK.circleSeconds + 0.5, () => pack.every((d) => d.rush));
+    expect(pack.every((d) => d.rush)).toBe(true);
+    // A dart from the troop beside its prey doesn't pull a raptor off it.
+    sedate(w, pack[1], 10, buddy.id);
+    run(w, STEP * 2);
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    // The prey falls: no calming down and no new circle; they go for the troop beside it at once.
+    damageUnit(w, squad, 1e7, 'raptor');
+    run(w, STEP * 2);
+    const loose = pack.filter((d) => d.state === 'loose');
+    expect(loose.length).toBeGreaterThan(0);
+    expect(loose.every((d) => d.target?.type === 'unit' && d.target.id === buddy.id && d.rush)).toBe(true);
+  });
+
+  it('darting one raptor of a circling pack makes them all rush at once', () => {
+    const { w, pack, squad } = packAndSquad();
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    run(w, 0.5);
+    expect(pack.some((d) => d.rush)).toBe(false);
+    sedate(w, pack[1], 10, squad.id);
+    run(w, STEP * 2);
+    expect(pack.every((d) => d.rush)).toBe(true);
   });
 
   it('reaching the casualty limit shuts the park down', () => {

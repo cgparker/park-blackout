@@ -196,6 +196,9 @@ describe('level 4: the park after the blackout', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'spotted', dinoId: a.id, unitId: e.id, kind: 'engineer' }));
     expect(a.target).toEqual({ type: 'unit', id: e.id });
     expect(b.target).toEqual({ type: 'unit', id: e.id });
+    // The Engineer can't dart, so there's nothing to circle: the one that sees it charges straight away.
+    run(w, STEP);
+    expect(a.rush).toBe(true);
     expect(w.engineerSpotted).toBe(true);
     expect(w.log.filter((x) => x.type === 'spotted')).toEqual([{ t: expect.any(Number), type: 'spotted', kind: 'engineer' }]);
     run(w, 10, () => e.dead);
@@ -260,6 +263,10 @@ describe('level 4: the park after the blackout', () => {
     run(w, STEP);
     expect(a.target).toEqual({ type: 'unit', id: sq.id });
     expect(b.target).toEqual({ type: 'unit', id: sq.id });
+    // The squad can dart, so the two would circle it, but it's in range and darts again: they rush at once.
+    expect(a.rush || b.rush).toBe(false);
+    run(w, 1.5);
+    expect(a.rush && b.rush).toBe(true);
   });
 
   it('a Tranq Squad darts one raptor down on its own, but two kill it', () => {
@@ -360,11 +367,12 @@ describe('level 4: the park after the blackout', () => {
     parkTeam(w);
     const west = w.substations[0];
     const pen = w.exhibitById(west.pens[0])!;
-    pen.segments[1].hp = 0;
     const e = engineerAt(w, 0);
     run(w, GRID.repairSeconds - 0.5);
     expect(west.fixed).toBe(false);
     expect(west.workers).toBe(1);
+    // A gap opens just before the work is done (earlier, its raptors would come out for the Engineer).
+    pen.segments[1].hp = 0;
     const events = run(w, 1);
     expect(west.fixed).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({ type: 'substationFixed', id: west.id, last: false }));

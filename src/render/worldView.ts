@@ -541,7 +541,8 @@ export class WorldView {
   /**
    * Every loose raptor that's calm shows what it sees as a pale cone, cut short by cover. While it makes someone out
    * the cone turns orange and a ring fills around it; once it's sure, it hunts, and shows a red line to its prey and a
-   * ring around it instead. A raptor in level 5's fight shows neither: it isn't looking.
+   * ring around it instead: thin while its pack circles, thick once it rushes. A raptor in level 5's fight shows
+   * neither: it isn't looking.
    */
   private drawCones(): void {
     const g = this.coneGfx;
@@ -551,7 +552,9 @@ export class WorldView {
       if (d.kind !== 'raptor' || d.state !== 'loose' || d.target?.type === 'dino') continue;
       const prey = preyOf(w, d.target);
       if (prey) {
-        g.lineStyle(2, COLORS.coneAlert, 0.55).lineBetween(d.x, d.y, prey.x, prey.y);
+        // A pack circling a troop shows a thin line; once they rush, or a raptor charges alone, a thick one.
+        const circling = d.target?.type === 'unit' && !d.rush;
+        g.lineStyle(circling ? 1.5 : 3, COLORS.coneAlert, circling ? 0.35 : 0.8).lineBetween(d.x, d.y, prey.x, prey.y);
         g.lineStyle(2, COLORS.coneAlert, 0.9).strokeCircle(prey.x, prey.y, prey.r + 7);
         continue;
       }

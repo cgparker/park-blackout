@@ -122,7 +122,7 @@ describe('tips in levels 1 and 2', () => {
     const start = tipsFor(w, w.events);
     expect(ids(start)).toEqual(['nest']);
     expect(start[0].focus).toEqual(w.nest);
-    expect(start[0].body).toMatch(/cone in front of each raptor.*calls the rest\. One darted from where no cone reaches comes alone\.$/);
+    expect(start[0].body).toMatch(/cone in front of each raptor.*calls the rest, and they circle it before they strike\. One darted from where no cone reaches comes alone\.$/);
     expect(tipsFor(w, [{ type: 'trained', unitId: 1, kind: 'tranq' }])).toEqual([]);
     const lost = (by: 'raptor' | 'trex') => [{ type: 'unitLost' as const, unitId: 9, kind: 'tranq' as const, x: 30 * T, y: 16 * T, by }];
     const bites = tipsFor(w, lost('raptor'));
@@ -131,7 +131,7 @@ describe('tips in levels 1 and 2', () => {
     for (const t of [...start, ...bites]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 
-  it('level 2 says when a raptor notices a troop, and whether the rest are coming', () => {
+  it('level 2 says when a raptor notices a troop, and whether the rest are coming, circling or straight', () => {
     const w = new World({ seed: 1, level: 2 });
     w.start();
     const squad = spawnUnit(w, 'tranq', { x: 30 * T, y: 16 * T });
@@ -144,9 +144,13 @@ describe('tips in levels 1 and 2', () => {
     expect(tipsFor(w, ev)[0].title).toBe('A raptor is coming alone');
     b.target = { type: 'unit', id: squad.id };
     const all = tipsFor(w, ev);
-    expect(all[0].title).toBe('The nest is coming');
-    expect(all[0].body).toMatch(/called the rest\. Fight them as one group, or get out of sight/);
-    for (const t of [...noticed, ...all]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+    expect(all[0].title).toBe('The nest is closing in');
+    expect(all[0].body).toMatch(/called the rest\. They spread out around it, just out of dart range, then rush it together\. Fight them as one group, or get out of sight/);
+    a.rush = b.rush = true;
+    const straight = tipsFor(w, ev);
+    expect(straight[0].title).toBe('Raptors are coming');
+    expect(straight[0].body).toMatch(/^They’re coming straight for your Tranq Squad\. Fight them as one group/);
+    for (const t of [...noticed, ...all, ...straight]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 });
 
@@ -172,17 +176,25 @@ describe('tips in levels 4 and 5', () => {
     for (const t of [...start, ...fixed, ...noticed, ...seen]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 
-  it('a raptor after a troop says whether it called the other: one darted by a troop it never saw comes alone', () => {
+  it('a raptor after a troop says whether it called the other, and whether they circle: one darted by a troop it never saw comes alone', () => {
     const w = new World({ seed: 1, level: 4 });
     w.start();
     const squad = w.units.find((u) => u.kind === 'tranq')!;
     const [a, b] = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
     const ev = [{ type: 'spotted' as const, dinoId: a.id, unitId: squad.id, kind: 'tranq' as const, x: 0, y: 0 }];
     a.target = { type: 'unit', id: squad.id };
-    expect(tipsFor(w, ev)[0].body).toMatch(/^It’s coming on its own\. A Tranq Squad can put down one raptor/);
+    const alone = tipsFor(w, ev);
+    expect(alone[0].title).toBe('A raptor is after your Tranq Squad');
+    expect(alone[0].body).toMatch(/^It’s coming on its own\. A Tranq Squad can put down one raptor/);
     b.target = { type: 'unit', id: squad.id };
-    expect(tipsFor(w, ev)[0].body).toMatch(/^It’s coming, and it called the other\. Two raptors are too many/);
-    for (const t of tipsFor(w, ev)) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
+    const pack = tipsFor(w, ev);
+    expect(pack[0].title).toBe('Raptors are circling your Tranq Squad');
+    expect(pack[0].body).toMatch(/^It called the other\. They circle out of dart range, then rush it together\. Two raptors are too many/);
+    a.rush = b.rush = true;
+    const straight = tipsFor(w, ev);
+    expect(straight[0].title).toBe('Raptors are after your Tranq Squad');
+    expect(straight[0].body).toMatch(/^It’s coming, and so is the other\. Two raptors are too many/);
+    for (const t of [...alone, ...pack, ...straight]) expect(`${t.title} ${t.body}`).not.toMatch(DASH);
   });
 
   it('after the west substation, the tip points at the next pen on a timer', () => {

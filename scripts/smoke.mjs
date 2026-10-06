@@ -491,7 +491,7 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   }
   check(
     'tips say the raptors saw the troop, then that it was lost',
-    nestTips.at(-1) === 'Raptors pile on' && nestTips.some((t) => /^(A raptor noticed your Tranq Squad|The nest is coming|A raptor is coming alone)$/.test(t)),
+    nestTips.at(-1) === 'Raptors pile on' && nestTips.some((t) => /^(A raptor noticed your Tranq Squad|The nest is closing in|Raptors are coming|A raptor is coming alone)$/.test(t)),
     JSON.stringify(nestTips),
   );
   await page.tap('.pause-btn');
@@ -629,13 +629,14 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   }));
   await page.tap('.menu-resume');
 
-  // Put the Tranq Squad in front of a raptor on open grass: it stops to make the squad out, then comes.
+  // Put the Tranq Squad in front of a raptor on open grass, just out of dart range: it stops to make the squad out,
+  // then calls the other, and they circle the squad.
   await world(() => {
     const w = window.__pb.world;
     const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
     const sq = w.units.find((u) => u.kind === 'tranq');
     Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, notice: 0, target: null, path: [], pathIndex: 0 });
-    Object.assign(sq, { x: 26.5 * 40, y: 16.5 * 40 });
+    Object.assign(sq, { x: 28 * 40, y: 16.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
     for (let i = 0; i < 20; i++) w.update(1 / 60);
   });
   check('a raptor that sees the squad stops to make it out', (await world(() => window.__pb.world.dinos.find((d) => d.state === 'loose' && d.patrol).notice > 0)) === true);
@@ -643,9 +644,9 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.tip-ok');
   await world(() => {
     const w = window.__pb.world;
-    for (let i = 0; i < 60; i++) w.update(1 / 60);
+    for (let i = 0; i < 60 && !w.events.some((e) => e.type === 'spotted'); i++) w.update(1 / 60);
   });
-  check('then it comes for the squad, and says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'A raptor is after the Tranq Squad.'), await page.textContent('.toast'));
+  check('then it calls the other, and they circle the squad, and it says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'Raptors are circling the Tranq Squad.'), await page.textContent('.toast'));
   check('and the Engineer is still unseen', (await page.textContent('.stat.revenue .val')) === 'Unseen');
   if (await soon(() => page.isVisible('.tip'), 1500)) await page.tap('.tip-ok');
 

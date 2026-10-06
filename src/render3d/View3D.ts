@@ -56,6 +56,8 @@ export interface ViewWorld {
   substations?: readonly SubstationView[];
   cones?: readonly ConeView[];
   working?: ReadonlyMap<number, Point>;
+  /** Level 4: troops keep their flashlights off, since they are sneaking. */
+  stealth?: boolean;
 }
 
 export type Quality = 'high' | 'low' | 'still';
@@ -214,8 +216,8 @@ export class View3D {
     this.buildStatics(w);
     // Each shadow-casting light draws the scene again, so phones get fewer of them.
     const q = this.opts.quality;
-    const shadowLights = q === 'still' ? { flood: 1, search: 2 } : q === 'high' ? { flood: 1, search: 0 } : { flood: 0, search: 0 };
-    this.effects.setupNightLights(this.hq?.floods ?? [], 2, shadowLights);
+    const shadowLights = q === 'still' ? { flash: 2, flood: 1, search: 2 } : q === 'high' ? { flash: 1, flood: 1, search: 0 } : { flash: 0, flood: 0, search: 0 };
+    this.effects.setupNightLights(q === 'low' ? 3 : 6, this.hq?.floods ?? [], 2, shadowLights);
     this.setupPost();
     this.setNight(this.night);
     if (this.opts.quality !== 'still') {
@@ -818,6 +820,13 @@ export class View3D {
     this.cues.update(w.T, w.dinos, w.units);
     this.cones.update(w.T, w.cones ?? []);
     if (this.night) {
+      const troops: { pos: THREE.Vector3; dir: THREE.Vector3 }[] = [];
+      for (const u of w.units) {
+        if (u.kind === 'tower' || u.dead || u.aboard || w.stealth) continue;
+        const dir = V3(Math.cos(u.facing), 0, Math.sin(u.facing));
+        troops.push({ pos: V3(u.x / w.T, u.kind === 'heavy' ? 0.4 : 0.32, u.y / w.T), dir });
+      }
+      this.effects.updateFlashlights(troops, V3(this.rig.x, 0, this.rig.z));
       const towers: { from: THREE.Vector3; to: THREE.Vector3 }[] = [];
       for (const u of w.units) {
         if (u.kind !== 'tower') continue;
