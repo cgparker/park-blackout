@@ -154,6 +154,8 @@ export const VIEW3D = {
 export const INPUT = {
   /** How far (CSS px) a finger can move and still count as a tap. */
   tapMoveThreshold: 10,
+  /** 3D build: a level picked on the briefing builds its park this long after the last tap (ms), so taps feel instant. */
+  levelPickSettleMs: 150,
   /** Hold this long, then drag, to draw a selection box. */
   longPressMs: 300,
   /** Extra reach (CSS px) when tapping small things like troops and dinosaurs. */
@@ -895,8 +897,13 @@ export const AUDIO = {
   musicFadeSeconds: 1.5,
   /** ...and to stop, at the end of a level, so the jingle plays on its own. */
   musicStopSeconds: 0.5,
-  /** Music drops to this fraction while a tip or the pause menu holds the game. */
+  /** Music drops to this fraction while a tip holds the game. Not in the pause menu, where the Music slider needs the real level. */
   heldMusic: 0.55,
+  /**
+   * The pause menu's Music and Effects sliders scale their parts of the mix by the slider's position to this power. At
+   * 2, halfway plays a quarter as loud in level (-12 dB), which sounds about half as loud, so the slider feels even.
+   */
+  volumeCurve: 2,
   ambienceFadeSeconds: 2.5,
   /** A sound on screen plays in full. Off screen it fades over this many tiles, down to its floor (SoundMix.floor). */
   offscreenTiles: 12,

@@ -8,15 +8,20 @@ import { SLICE_LEVELS, SliceGame } from './SliceGame';
 
 const QUALITY_KEY = 'pb3d.quality';
 
-/** Quality comes from the address (#low or #high), then the last choice on this device, then High. */
+/**
+ * Quality comes from the address (#low or #high), then the last choice on this device, then Low on a phone or tablet
+ * (a touch screen) and High elsewhere.
+ */
 function startQuality(): Quality {
   const tokens = location.hash.replace(/^#/, '').split('.');
   if (tokens.includes('low')) return 'low';
   if (tokens.includes('high')) return 'high';
+  const fallback: Quality = window.matchMedia?.('(pointer: coarse)').matches ? 'low' : 'high';
   try {
-    return localStorage.getItem(QUALITY_KEY) === 'low' ? 'low' : 'high';
+    const saved = localStorage.getItem(QUALITY_KEY);
+    return saved === 'low' || saved === 'high' ? saved : fallback;
   } catch {
-    return 'high';
+    return fallback;
   }
 }
 

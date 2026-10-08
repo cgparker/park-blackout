@@ -103,6 +103,19 @@ export function placeAt(l: Listener, at: Spot, floor: number): { level: number; 
   return { level: fade * zoom, pan };
 }
 
+// ------------------------------------------------------------------ volume
+
+/** The pause menu's sliders, 0 to 1. Effects is every sound but the music: the background and the HUD too. */
+export interface Volumes {
+  music: number;
+  effects: number;
+}
+
+/** A slider's position (0 to 1) as a level, on a curve so that the slider feels even (AUDIO.volumeCurve). */
+export function volumeGain(v: number): number {
+  return clamp(v, 0, 1) ** AUDIO.volumeCurve;
+}
+
 // ------------------------------------------------------------------ decoding
 
 /** MP3's lead-in: the encoder's delay and the decoder's, in samples at 44.1 kHz. */

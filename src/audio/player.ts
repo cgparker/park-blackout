@@ -1,8 +1,9 @@
 // Sound for the 3D game, with Web Audio. It plays what cues.ts works out: sounds placed on the map, music, the
 // background, and the 4x4's engine. Browsers keep sound off until the page is tapped, so nothing plays before the
-// first tap, and the player can turn it all off (the Sound box on the briefing and in the pause menu).
+// first tap. The player can turn it all off (the Sound box on the briefing and in the pause menu) and set the music
+// and the rest apart (the Music and Effects sliders in the pause menu).
 import { AUDIO, SOUNDS, type SoundId } from '../config';
-import { Gaps, leadIn, pickFile, placeAt, soundLength, type Cue, type EngineCue, type Listener } from './cues';
+import { Gaps, leadIn, pickFile, placeAt, soundLength, volumeGain, type Cue, type EngineCue, type Listener, type Volumes } from './cues';
 import { engineLoop } from './engine';
 import { FILES, type FileId } from './files';
 import { SOUND_FILES, type AmbienceId, type MusicId } from './manifest';
@@ -38,7 +39,7 @@ export interface SoundFrame {
   music: MusicId | null;
   ambience: AmbienceId | null;
   engine: EngineCue | null;
-  /** A tip or the pause menu holds the game: the music drops back. */
+  /** A tip holds the game: the music drops back. (Not the pause menu, where the Music slider needs the real level.) */
   held: boolean;
 }
 
@@ -76,10 +77,15 @@ export class AudioPlayer {
   constructor(
     private readonly base: string,
     private soundOn: boolean,
+    private vol: Volumes,
   ) {}
 
   get on(): boolean {
     return this.soundOn;
+  }
+
+  get volumes(): Volumes {
+    return { ...this.vol };
   }
 
   /** For checks: what's running. */
@@ -92,6 +98,8 @@ export class AudioPlayer {
       ambience: this.ambience?.id ?? null,
       engine: this.engineNode?.level ?? 0,
       voices: this.voices.length,
+      volumes: this.volumes,
+      buses: this.buses && { music: this.buses.music.gain.value, effects: this.buses.sfx.gain.value },
     };
   }
 
@@ -146,13 +154,43 @@ export class AudioPlayer {
     limiter.release.value = 0.25;
     this.master.connect(limiter);
     limiter.connect(ctx.destination);
-    const bus = (level: number) => {
+    const bus = () => {
       const g = ctx.createGain();
-      g.gain.value = level;
       g.connect(this.master!);
       return g;
     };
-    this.buses = { music: bus(AUDIO.music), ambience: bus(AUDIO.ambience), sfx: bus(AUDIO.sfx), ui: bus(AUDIO.ui) };
+    this.buses = { music: bus(), ambience: bus(), sfx: bus(), ui: bus() };
+    for (const [g, level] of this.busLevels()) g.gain.value = level;
+  }
+
+  /** Each part of the mix at its level: the sliders, and the music held back while a tip is open. */
+  private busLevels(): [GainNode, number][] {
+    const b = this.buses!;
+    const music = AUDIO.music * volumeGain(this.vol.music) * (this.heldNow ? AUDIO.heldMusic : 1);
+    const effects = volumeGain(this.vol.effects);
+    return [
+      [b.music, music],
+      [b.ambience, AUDIO.ambience * effects],
+      [b.sfx, AUDIO.sfx * effects],
+      [b.ui, AUDIO.ui * effects],
+    ];
+  }
+
+  private applyBuses(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.buses) return;
+    for (const [g, level] of this.busLevels()) g.gain.setTargetAtTime(level, ctx.currentTime, 0.05);
+  }
+
+  /** A slider moved. */
+  setVolume(part: keyof Volumes, level: number): void {
+    this.vol = { ...this.vol, [part]: Math.max(0, Math.min(1, level)) };
+    this.applyBuses();
+  }
+
+  /** A sound at the Effects level, to hear it while the game is paused. */
+  preview(): void {
+    this.play({ id: 'secured' });
   }
 
   setOn(on: boolean): void {
@@ -272,7 +310,7 @@ export class AudioPlayer {
     for (const c of f.cues) this.play(c, f.listener);
     if (f.held !== this.heldNow) {
       this.heldNow = f.held;
-      this.buses.music.gain.setTargetAtTime(AUDIO.music * (f.held ? AUDIO.heldMusic : 1), ctx.currentTime, 0.15);
+      this.applyBuses();
     }
     this.music = this.track(this.music, f.music, this.buses.music, f.music ? AUDIO.musicFadeSeconds : AUDIO.musicStopSeconds);
     this.ambience = this.track(this.ambience, f.ambience, this.buses.ambience, AUDIO.ambienceFadeSeconds);

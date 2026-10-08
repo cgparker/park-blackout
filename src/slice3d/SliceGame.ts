@@ -16,7 +16,7 @@ import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
 import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
 import { exhibitPlaceView, exhibitView, huntedToast, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
-import { loadSoundOn, loadTipsOn, saveSoundOn, saveTipsOn } from '../ui/prefs';
+import { loadSoundOn, loadTipsOn, loadVolumes, saveSoundOn, saveTipsOn, saveVolumes } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
 /** Levels the 3D build offers. */
@@ -86,6 +86,18 @@ export class SliceGame {
   private last = 0;
   private fps = 0;
   private fpsFrames = 0;
+  /** Milliseconds of the game's own work per frame (rules, drawing calls, HUD), smoothed. Shown beside the frame rate. */
+  private cpuMs = 0;
+  /**
+   * Behind the briefing, the end screen, and the pause menu the park doesn't change, so it isn't drawn again. This
+   * asks for one more frame: a new park, a resize, or a change of light.
+   */
+  private redraw = true;
+  /**
+   * When picking a level, its park is built a moment later, once taps settle: the briefing shows the pick at once,
+   * and a run of quick taps builds only the last park.
+   */
+  private redrawAt = 0;
   private fpsShownAt = 0;
   private endTimer = 0;
   private placingKind: BuildKind | null = null;
@@ -159,7 +171,7 @@ export class SliceGame {
   /** Loads the models, builds the park, and starts the loop. */
   async boot(onProgress: (done: number, total: number) => void): Promise<void> {
     this.newWorld();
-    this.view = new View3D(this.canvas, { base: '.', quality: this.quality, night: false, guests: true });
+    this.view = new View3D(this.canvas, { base: '.', quality: this.quality, night: false, guests: true, checkShaders: this.params.debug });
     await this.view.init(this.vw, onProgress);
     this.setupAudio();
     this.layout();
@@ -192,6 +204,8 @@ export class SliceGame {
 
   private resetGame(): void {
     const w = this.world;
+    this.redraw = true;
+    this.redrawAt = 0;
     this.cues.reset();
     this.audio.stopSounds();
     this.audio.keepMusic(levelMusic(this.session.level));
@@ -246,6 +260,7 @@ export class SliceGame {
 
   private setNight(on: boolean): void {
     this.night = on;
+    this.redraw = true;
     this.view.setNight(on);
     this.nightBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
@@ -265,7 +280,7 @@ export class SliceGame {
       const canvas = document.createElement('canvas');
       canvas.className = 'view3d';
       this.container.insertBefore(canvas, this.canvas);
-      const view = new View3D(canvas, { base: '.', quality: q, night: this.night, guests: true });
+      const view = new View3D(canvas, { base: '.', quality: q, night: this.night, guests: true, checkShaders: this.params.debug });
       await view.init(this.vw);
       const old = this.view;
       this.canvas.remove();
@@ -290,6 +305,7 @@ export class SliceGame {
 
   private readonly tick = (now: number): void => {
     requestAnimationFrame(this.tick);
+    const started = performance.now();
     const dt = Math.min(now - this.last, 100) / 1000;
     this.last = now;
     // Frames counted over half a second of real time.
@@ -308,7 +324,10 @@ export class SliceGame {
         }
       }
       const st = this.view.stats;
-      this.fpsEl.textContent = this.session.debug ? `${Math.round(this.fps)} fps · ${st.calls} calls · ${Math.round(st.triangles / 1000)}k tris` : `${Math.round(this.fps)} fps`;
+      // The second number is the game's own work per frame. Well under the frame time (50 ms at 20 fps) means the
+      // GPU is what holds the frame rate back.
+      const head = `${Math.round(this.fps)} fps · ${Math.round(this.cpuMs)} ms`;
+      this.fpsEl.textContent = this.session.debug ? `${head} · ${st.calls} calls · ${Math.round(st.triangles / 1000)}k tris` : head;
       if (this.session.debug) this.hud.setFps(this.fps);
     }
     this.updateKeyboardPan(dt);
@@ -341,11 +360,17 @@ export class SliceGame {
       const u = w.unitById(id);
       if (!u || !canCommand(u)) this.selected.delete(id);
     }
-    this.view.render(this.vw, { selected: this.selected }, dt);
-    this.refreshHud();
-    this.updateArrows();
-    this.updateOverlays(now);
-    this.updateFloats(dt);
+    // Behind a screen that covers the park, the last frame stands: drawing it again only slows the screen down.
+    const covered = this.hud.briefingOpen || this.hud.menuOpen || this.hud.endOpen;
+    if (!covered || (this.redraw && performance.now() >= this.redrawAt)) {
+      this.redraw = false;
+      this.view.render(this.vw, { selected: this.selected }, dt);
+      this.refreshHud();
+      this.updateArrows();
+      this.updateOverlays(now);
+      this.updateFloats(dt);
+    }
+    this.cpuMs += (performance.now() - started - this.cpuMs) * 0.1;
   };
 
   // ---------------------------------------------------------------- HUD
@@ -368,6 +393,7 @@ export class SliceGame {
         this.keepOptions(o);
         this.session.level = level;
         this.restart();
+        this.redrawAt = performance.now() + INPUT.levelPickSettleMs;
       },
       retry: () => this.restart(),
       nextLevel: () => {
@@ -430,6 +456,13 @@ export class SliceGame {
         saveSoundOn(on);
         this.hud.setSoundOn(on);
       },
+      setVolume: (part, level, done) => {
+        this.audio.setVolume(part, level);
+        if (!done) return;
+        saveVolumes(this.audio.volumes);
+        // The game is paused, so let the Effects slider be heard.
+        if (part === 'effects') this.audio.preview();
+      },
     };
   }
 
@@ -440,8 +473,9 @@ export class SliceGame {
    * call). Files start downloading now, once the models are in, and are decoded at the first tap.
    */
   private setupAudio(): void {
-    this.audio = new AudioPlayer('./audio', loadSoundOn());
+    this.audio = new AudioPlayer('./audio', loadSoundOn(), loadVolumes());
     this.hud.setSoundOn(this.audio.on);
+    this.hud.setVolumes(this.audio.volumes);
     this.audio.prefetch();
     const wake = () => this.audio.unlock();
     for (const type of ['pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(type, wake, { capture: true, passive: true });
@@ -461,15 +495,15 @@ export class SliceGame {
 
   private sound(events: readonly GameEvent[]): void {
     const w = this.world;
-    const held = this.hud.tipOpen || this.hud.menuOpen;
     const playing = w.phase !== 'briefing' && w.phase !== 'ended';
     this.audio.frame({
       cues: this.cues.cues(w, events),
       listener: this.listener(),
       music: musicFor(w),
       ambience: ambienceFor(this.night),
-      engine: this.cues.engine(w, held || !playing),
-      held,
+      engine: this.cues.engine(w, this.hud.tipOpen || this.hud.menuOpen || !playing),
+      // The music drops back for a tip, but not in the pause menu, where the Music slider needs the real level.
+      held: this.hud.tipOpen,
     });
   }
 
@@ -782,6 +816,7 @@ export class SliceGame {
     this.view.setSize(width, height);
     this.offsets.clear();
     this.applyCamera();
+    this.redraw = true;
   }
 
   /** Where the screen corners land on the ground, relative to the focus, at a given distance. */
@@ -969,6 +1004,8 @@ export class SliceGame {
     );
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
+      // Keys on a slider or a box work it, and don't move the map.
+      if (e.target instanceof HTMLInputElement && key !== 'escape') return;
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) this.keys.add(key);
       if (key === 'escape') {
         if (this.hud.menuOpen) this.hud.hideMenu();

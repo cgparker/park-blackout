@@ -80,27 +80,64 @@ export async function loadTerrainTextures(base: string): Promise<TerrainTextures
 
 // ------------------------------------------------------------------ splat maps
 
+/**
+ * Box blur, `passes` times over (three passes come close to a Gaussian), with the image's edges clamped. Only the part
+ * of the image that can change is worked on: the box around everything that isn't zero, grown by how far the passes
+ * reach. Most ground layers are mostly empty, and this blur was most of the time a new park took to draw.
+ */
 export function boxBlur(src: Float32Array<ArrayBuffer>, w: number, h: number, r: number, passes = 2): Float32Array<ArrayBuffer> {
   if (r < 1) return src;
+  let x0 = w;
+  let x1 = -1;
+  let y0 = h;
+  let y1 = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let first = -1;
+    let last = -1;
+    for (let x = 0; x < w; x++) {
+      if (src[row + x] === 0) continue;
+      if (first < 0) first = x;
+      last = x;
+    }
+    if (first < 0) continue;
+    if (first < x0) x0 = first;
+    if (last > x1) x1 = last;
+    if (y < y0) y0 = y;
+    y1 = y;
+  }
+  if (x1 < 0) return new Float32Array(w * h);
+  const reach = r * passes;
+  x0 = Math.max(0, x0 - reach);
+  x1 = Math.min(w - 1, x1 + reach);
+  y0 = Math.max(0, y0 - reach);
+  y1 = Math.min(h - 1, y1 + reach);
+  const W1 = w - 1;
+  const H1 = h - 1;
+  const n = 2 * r + 1;
   let a = src;
   let b = new Float32Array(w * h);
   for (let p = 0; p < passes; p++) {
-    for (let y = 0; y < h; y++) {
-      let acc = 0;
+    for (let y = y0; y <= y1; y++) {
       const row = y * w;
-      for (let x = -r; x <= r; x++) acc += a[row + clamp(x, 0, w - 1)];
-      for (let x = 0; x < w; x++) {
-        b[row + x] = acc / (2 * r + 1);
-        acc += a[row + clamp(x + r + 1, 0, w - 1)] - a[row + clamp(x - r, 0, w - 1)];
+      let acc = 0;
+      for (let x = x0 - r; x <= x0 + r; x++) acc += a[row + (x < 0 ? 0 : x > W1 ? W1 : x)];
+      for (let x = x0; x <= x1; x++) {
+        b[row + x] = acc / n;
+        const add = x + r + 1;
+        const sub = x - r;
+        acc += a[row + (add > W1 ? W1 : add)] - a[row + (sub < 0 ? 0 : sub)];
       }
     }
     [a, b] = [b, a];
-    for (let x = 0; x < w; x++) {
+    for (let x = x0; x <= x1; x++) {
       let acc = 0;
-      for (let y = -r; y <= r; y++) acc += a[clamp(y, 0, h - 1) * w + x];
-      for (let y = 0; y < h; y++) {
-        b[y * w + x] = acc / (2 * r + 1);
-        acc += a[clamp(y + r + 1, 0, h - 1) * w + x] - a[clamp(y - r, 0, h - 1) * w + x];
+      for (let y = y0 - r; y <= y0 + r; y++) acc += a[(y < 0 ? 0 : y > H1 ? H1 : y) * w + x];
+      for (let y = y0; y <= y1; y++) {
+        b[y * w + x] = acc / n;
+        const add = y + r + 1;
+        const sub = y - r;
+        acc += a[(add > H1 ? H1 : add) * w + x] - a[(sub < 0 ? 0 : sub) * w + x];
       }
     }
     [a, b] = [b, a];
@@ -366,20 +403,26 @@ const GROUND_FRAG_MAP = /* glsl */ `
   groundRough = mix(groundRough, 0.3, wMud);
   groundRough = mix(groundRough, 0.4, smoothstep(0.38, 0.48, wWaterF) * (1.0 - wWater));
   groundRough = mix(groundRough, 0.2, wWater);
+#ifndef GROUND_FLAT
   vec3 gn = nrm(0.0, vXZ * 0.5);
   gn = mix(gn, nrm(1.0, vXZ * 0.4), max(wDirt, wMud));
   gn = mix(gn, nrm(2.0, vXZ * 0.4), wJungle);
   gn = mix(gn, nrm(3.0, vXZ / 3.0), wPath);
   gn = mix(gn, vec3(0.0, 0.0, 1.0), max(max(wConc, wWater), wRoad) * 0.8);
+#endif
 `;
 
-/** The ground: one flat plane with a shader that blends textures by terrain type. */
-export function makeGround(splat: Splat, tex: TerrainTextures): THREE.Mesh {
+/**
+ * The ground: one flat plane with a shader that blends textures by terrain type. It covers most of the screen, so
+ * `flat` (Low quality) leaves out its normal maps: four fewer texture reads for nearly every pixel.
+ */
+export function makeGround(splat: Splat, tex: TerrainTextures, flat = false): THREE.Mesh {
   const r = splat.region;
   const geo = new THREE.PlaneGeometry(r.z, r.w, 1, 1);
   geo.rotateX(-Math.PI / 2);
   geo.translate(r.x + r.z / 2, 0, r.y + r.w / 2);
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
+  if (flat) mat.defines = { GROUND_FLAT: '' };
   const uniforms = {
     splatA: { value: splat.a },
     splatB: { value: splat.b },
@@ -404,11 +447,13 @@ export function makeGround(splat: Splat, tex: TerrainTextures): THREE.Mesh {
       .replace('#include <aomap_fragment>', 'float groundAO = 1.0 - C.a * 0.4 - C.r * 0.2; reflectedLight.indirectDiffuse *= groundAO; reflectedLight.indirectSpecular *= groundAO;')
       .replace(
         '#include <normal_fragment_maps>',
-        `vec3 gnw = normalize(vec3(gn.x, gn.z, -gn.y));
+        flat
+          ? ''
+          : `vec3 gnw = normalize(vec3(gn.x, gn.z, -gn.y));
          normal = normalize((viewMatrix * vec4(gnw, 0.0)).xyz);`,
       );
   };
-  mat.customProgramCacheKey = () => 'ground';
+  mat.customProgramCacheKey = () => (flat ? 'ground-flat' : 'ground');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.userData.uniforms = uniforms;

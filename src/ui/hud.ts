@@ -77,6 +77,8 @@ export interface HudHandlers {
   focusArrow(key: string): void;
   /** The 3D game: sound on or off (the Sound boxes on the briefing and in the pause menu). */
   setSound?(on: boolean): void;
+  /** The 3D game: the pause menu's Music or Effects slider moved (0 to 1). `done` once it's let go. */
+  setVolume?(part: 'music' | 'effects', level: number, done: boolean): void;
 }
 
 export interface TopView {
@@ -356,6 +358,9 @@ export class Hud {
   private readonly tipsBox: HTMLInputElement;
   /** The 3D game's Sound boxes, on the briefing and in the pause menu. Absent in the 2D game, which has no sound. */
   private readonly soundBoxes: HTMLInputElement[] = [];
+  /** The pause menu's Music and Effects sliders, and the row they sit in with its Sound box. */
+  private readonly volumeSliders = new Map<'music' | 'effects', HTMLInputElement>();
+  private soundRow: HTMLElement | null = null;
 
   private readonly tipCard: HTMLElement;
   private readonly tipTitle: HTMLElement;
@@ -660,13 +665,39 @@ export class Hud {
       el('p', 'menu-text', 'Restart goes back to the briefing. End game shows what happened so far.'),
     );
     if (opts.sound) {
+      // Sound on or off, then how loud the music and everything else are. Off greys the sliders.
+      const row = el('div', 'sound-row');
       const label = el('label', 'check menu-sound');
       const input = el('input');
       input.type = 'checkbox';
       input.id = 'menu-sound';
       label.append(input, el('span', '', 'Sound'));
-      menuCard.append(label);
+      row.append(label);
       this.soundBoxes.push(input);
+      for (const [part, text] of [
+        ['music', 'Music'],
+        ['effects', 'Effects'],
+      ] as const) {
+        const slider = el('label', `volume volume-${part}`);
+        const range = el('input');
+        range.type = 'range';
+        range.id = `menu-${part}`;
+        range.min = '0';
+        range.max = '100';
+        range.step = '5';
+        const said = () => range.setAttribute('aria-valuetext', `${range.value}%`);
+        range.addEventListener('input', () => {
+          said();
+          this.handlers?.setVolume?.(part, Number(range.value) / 100, false);
+        });
+        range.addEventListener('change', () => this.handlers?.setVolume?.(part, Number(range.value) / 100, true));
+        slider.append(el('span', '', text), range);
+        row.append(slider);
+        this.volumeSliders.set(part, range);
+      }
+      menuCard.append(row);
+      menuCard.classList.add('with-sound');
+      this.soundRow = row;
     }
     menuCard.append(menuActions);
     for (const box of this.soundBoxes) box.addEventListener('change', () => this.handlers?.setSound?.(box.checked));
@@ -1137,6 +1168,16 @@ export class Hud {
   /** Shows whether sound is on, in both Sound boxes. */
   setSoundOn(on: boolean): void {
     for (const box of this.soundBoxes) box.checked = on;
+    for (const range of this.volumeSliders.values()) range.disabled = !on;
+    this.soundRow?.classList.toggle('off', !on);
+  }
+
+  /** Shows the Music and Effects levels (0 to 1) on the sliders. */
+  setVolumes(v: { music: number; effects: number }): void {
+    for (const [part, range] of this.volumeSliders) {
+      range.value = String(Math.round(v[part] * 100));
+      range.setAttribute('aria-valuetext', `${range.value}%`);
+    }
   }
 
   get menuOpen(): boolean {
@@ -1227,6 +1268,10 @@ export class Hud {
 
   get briefingOpen(): boolean {
     return !this.briefing.classList.contains('hidden');
+  }
+
+  get endOpen(): boolean {
+    return !this.endScreen.classList.contains('hidden');
   }
 
   // ------------------------------------------------ end screen

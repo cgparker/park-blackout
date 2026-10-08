@@ -99,10 +99,23 @@ a = await sound();
 const kept = await page.evaluate(() => localStorage.getItem('park-blackout.sound'));
 step(`sound off: ${a.on}, ${a.context}, kept ${kept}`);
 if (a.on || a.context === 'running' || kept !== 'off') fail('the Sound box should turn sound off and remember it');
+if (!(await page.isDisabled('#menu-music')) || !(await page.isDisabled('#menu-effects'))) fail('with sound off, the Music and Effects sliders should be greyed out');
 await page.click('#menu-sound');
 await page.waitForTimeout(800);
 a = await sound();
 if (!a.on || a.context !== 'running') fail('the Sound box should turn sound back on');
+// The Music and Effects sliders: Music at 0 silences the music, Effects at half turns the rest down, and both are kept.
+await page.fill('#menu-music', '0');
+await page.fill('#menu-effects', '50');
+await page.waitForTimeout(800);
+a = await sound();
+const keptVolumes = await page.evaluate(() => [localStorage.getItem('park-blackout.music'), localStorage.getItem('park-blackout.effects')]);
+step(`sliders: ${JSON.stringify(a.volumes)}, music bus ${a.buses.music.toFixed(3)}, effects bus ${a.buses.effects.toFixed(3)}, kept ${keptVolumes}`);
+if (a.volumes.music !== 0 || a.volumes.effects !== 0.5 || !(a.buses.music < 0.005) || !(a.buses.effects > 0.05 && a.buses.effects < 0.5)) fail('the Music and Effects sliders should set their parts of the mix');
+if (keptVolumes[0] !== '0' || keptVolumes[1] !== '0.5') fail('the slider levels should be remembered');
+if (!a.played.secured) fail('letting go of the Effects slider should play a sound at its level');
+await page.fill('#menu-music', '100');
+await page.fill('#menu-effects', '100');
 await page.click('.menu-resume');
 await page.waitForTimeout(400);
 // Raptors see in cones in every level: each one at the nest shows its own.
@@ -297,7 +310,9 @@ if (s.night) fail('the lights should come back with the power');
 await page.screenshot({ path: `${out}/8-power-back.png`, timeout: 240000 });
 
 // ---------------------------------------------------------------- level 4
-await page.goto(`${url}#debug.level-4.${quality}`, { timeout: 300000 });
+// A fixed seed: patrols start at random, and in some games a raptor starts beside the squad's spot below and joins
+// the hunt straight away instead of circling.
+await page.goto(`${url}#debug.level-4.${quality}.seed-1`, { timeout: 300000 });
 await page.reload({ timeout: 300000, waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 600000 });
 step('level 4 loaded');

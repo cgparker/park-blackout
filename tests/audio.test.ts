@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AUDIO, LEVEL_IDS, MAP, SOUNDS, type SoundId } from '../src/config';
-import { ambienceFor, CueMaker, Gaps, leadIn, levelMusic, musicFor, pickFile, placeAt, type Cue, type Listener } from '../src/audio/cues';
+import { ambienceFor, CueMaker, Gaps, leadIn, levelMusic, musicFor, pickFile, placeAt, volumeGain, type Cue, type Listener } from '../src/audio/cues';
 import { engineLoop } from '../src/audio/engine';
 import { FILES, type FileId } from '../src/audio/files';
 import { SOUND_FILES } from '../src/audio/manifest';
 import { planPlacement } from '../src/core/placement';
 import { World, type GameEvent } from '../src/core/world';
+import { loadVolumes, saveVolumes } from '../src/ui/prefs';
 
 const T = MAP.tileSize;
 const ids = (cues: Cue[]) => cues.map((c) => c.id);
@@ -229,6 +230,31 @@ describe('engine', () => {
       }
       expect(peak).toBeCloseTo(0.9);
       expect(Math.abs(x[0] - x[x.length - 1])).toBeLessThanOrEqual(step);
+    }
+  });
+});
+
+describe('volume', () => {
+  it('the sliders follow a curve, so halfway sounds about half as loud', () => {
+    expect(volumeGain(1)).toBe(1);
+    expect(volumeGain(0)).toBe(0);
+    expect(volumeGain(0.5)).toBeCloseTo(0.5 ** AUDIO.volumeCurve);
+    expect(volumeGain(2)).toBe(1);
+    expect(volumeGain(-1)).toBe(0);
+  });
+
+  it('the sliders are remembered, and anything odd in storage starts them full', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('window', { localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) } });
+    try {
+      expect(loadVolumes()).toEqual({ music: 1, effects: 1 });
+      saveVolumes({ music: 0.25, effects: 0 });
+      expect(loadVolumes()).toEqual({ music: 0.25, effects: 0 });
+      store.set('park-blackout.music', 'loud');
+      store.set('park-blackout.effects', '3');
+      expect(loadVolumes()).toEqual({ music: 1, effects: 1 });
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

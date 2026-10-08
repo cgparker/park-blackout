@@ -51,6 +51,8 @@ interface ConeSet {
 export class Cones {
   readonly group = new THREE.Group();
   private readonly sets = new Map<number, ConeSet>();
+  /** Sets no raptor uses now, hidden, to use again: letting their materials go could take a compiled shader with them. */
+  private readonly free: ConeSet[] = [];
   private night = false;
   private readonly mats = {
     bar: flat('#ff5a4a', 0.5),
@@ -101,7 +103,7 @@ export class Cones {
     for (const c of cones) {
       seen.add(c.id);
       let s = this.sets.get(c.id);
-      if (!s) this.sets.set(c.id, (s = this.make()));
+      if (!s) this.sets.set(c.id, (s = this.free.pop() ?? this.make()));
       const hunting = !!c.prey;
       s.fan.visible = s.edge.visible = s.mark.visible = !hunting;
       s.bar.visible = s.ring.visible = hunting;
@@ -147,11 +149,8 @@ export class Cones {
     }
     for (const [id, s] of this.sets) {
       if (seen.has(id)) continue;
-      for (const o of [s.fan, s.edge, s.bar, s.ring, s.mark, ...s.arcs]) this.group.remove(o);
-      s.fan.geometry.dispose();
-      s.fan.material.dispose();
-      s.edge.geometry.dispose();
-      s.edge.material.dispose();
+      for (const o of [s.fan, s.edge, s.bar, s.ring, s.mark, ...s.arcs]) o.visible = false;
+      this.free.push(s);
       this.sets.delete(id);
     }
   }

@@ -67,6 +67,11 @@ export interface ViewOptions {
   quality: Quality;
   night: boolean;
   guests: boolean;
+  /**
+   * Check every new shader for errors (#debug). Off, the browser can compile shaders in the background instead of
+   * waiting for each one, which keeps the loading screen and a new park quicker.
+   */
+  checkShaders?: boolean;
 }
 
 export interface ViewUi {
@@ -140,9 +145,10 @@ export class View3D {
   actors!: Actors;
   effects!: Effects;
   night: boolean;
-  private composer!: EffectComposer;
+  /** Post passes: the scene into a half-float target, then bloom, the colour grade, and tone mapping. None at Low quality. */
+  private composer: EffectComposer | null = null;
   private bloom: UnrealBloomPass | null = null;
-  private grade!: ShaderPass;
+  private grade: ShaderPass | null = null;
   private sun!: THREE.DirectionalLight;
   private hemi!: THREE.HemisphereLight;
   private envDay!: THREE.Texture;
@@ -181,6 +187,7 @@ export class View3D {
   constructor(readonly canvas: HTMLCanvasElement, readonly opts: ViewOptions) {
     this.night = opts.night;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: opts.quality === 'still' });
+    this.renderer.debug.checkShaderErrors = opts.checkShaders ?? false;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -190,13 +197,26 @@ export class View3D {
     this.scene.add(this.statics, this.ghost.group, this.cues.group, this.cones.group);
   }
 
+  /** Low draws one pixel per CSS pixel: a phone's screen has up to nine device pixels for each. */
   get pixelRatio(): number {
     const dpr = window.devicePixelRatio || 1;
-    return this.opts.quality === 'low' ? Math.min(dpr, 1.25) : this.opts.quality === 'high' ? Math.min(dpr, 2) : dpr;
+    return this.opts.quality === 'low' ? Math.min(dpr, 1) : this.opts.quality === 'high' ? Math.min(dpr, 2) : dpr;
+  }
+
+  /** One frame: through the post passes, or at Low quality straight to the screen, tone mapped by each material. */
+  private draw(dt: number): void {
+    if (this.composer) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
   }
 
   async init(w: ViewWorld, onProgress?: (done: number, total: number) => void): Promise<void> {
     this.assets = await loadAssets(this.M, { base: this.opts.base, guests: this.opts.guests, onProgress });
+    if (this.opts.quality === 'low') {
+      // The ground fills most of the screen: at Low its textures filter at 2x, not 8x, for far fewer reads a pixel.
+      const t = this.assets.terrain.albedo;
+      t.anisotropy = 2;
+      t.needsUpdate = true;
+    }
     this.envDay = skyEnv(this.renderer, false);
     this.envNight = skyEnv(this.renderer, true);
     // Sun by day, moon by night: one shadow-casting light, moved with the camera.
@@ -244,13 +264,23 @@ export class View3D {
     const actors = new Actors(this.assets, this.M);
     const group = new THREE.Group();
     group.add(actors.root);
-    const dinos: DinoView[] = (['trex', 'raptor', 'triceratops'] as const).map((kind, i) => ({ id: -1 - i, kind, ...at(i - 1, 0), facing: 0, state: 'loose', sedation: 1, fade: 0, cooldown: 0 }));
+    // Every animal in every state: penned and loose look different at night, and one going down fades out, which
+    // needs its own shaders. Half sedated and hurt, so their bars show too.
+    const dinos: DinoView[] = [];
+    (['trex', 'raptor', 'triceratops'] as const).forEach((kind, i) =>
+      (['loose', 'penned', 'contained', 'secured', 'dead'] as const).forEach((state, j) =>
+        dinos.push({ id: -1 - i * 10 - j, kind, ...at(i - 1, j * 0.4 - 1), facing: 0, state, sedation: 0.5, fade: 0.1, cooldown: 0, health: 1 }),
+      ),
+    );
+    // Every troop model: squads and Engineers come in several, picked by id.
     const units: UnitView[] = [
-      { id: -10, kind: 'tranq', ...at(-1, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
       { id: -11, kind: 'heavy', ...at(0, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
       { id: -12, kind: 'tower', ...at(1, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 },
     ];
-    const guests: GuestView[] = this.assets.guests.length ? [{ id: -20, ...at(0, -1), mode: 'walking' }] : [];
+    this.assets.light.forEach((_, i) => units.push({ id: 2000 + i, kind: 'tranq', ...at(-1 + i * 0.3, 1.3), facing: 0, hp: 1, maxHp: 2, cooldown: 0 }));
+    this.assets.engineer.forEach((_, i) => units.push({ id: 3000 + i, kind: 'engineer', ...at(2 + i * 0.3, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 }));
+    // Every guest model.
+    const guests: GuestView[] = this.assets.guests.map((_, i) => ({ id: 5000 + i, ...at(i * 0.3, -1.5), mode: 'walking' }));
     // Fences in every look: chain-link and concrete, with and without razor wire, powered or not, intact to wrecked.
     const looks = [['pasture', false], ['raptor', true], ['trex', true], ['trex', false]] as const;
     looks.forEach(([kind, reinforced], i) => {
@@ -271,10 +301,34 @@ export class View3D {
     const site = buildSite({ cols: 6, rows: 6, tileAt: (_x, y) => (y === 2 ? Tile.Path : Tile.Grass), gate: { x: 1, y: 2 }, exhibits: [{ footprint: { x: 1, y: 3, w: 3, h: 3 }, viewingSpot: { x: 2, y: 2 } }] }, this.M).group;
     site.position.set(cx - 3, 0, cz - 3);
     group.add(site, buildNest(cx, cz, this.M));
-    // Level 4's substation yard, and level 5's 4x4.
+    // Level 4's substation yard with its progress ring, and the 4x4.
     group.add(buildSubstation(cx + 2, cz - 1, this.M).group);
-    units.push({ id: -13, kind: 'engineer', ...at(2, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 }, { id: -14, kind: 'jeep', ...at(-2, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(1.22, 1.3, 16, 1, 0, Math.PI), this.subRingMat);
+    ring.position.set(cx + 3, 0.05, cz);
+    group.add(ring);
+    // A small tile in every shared material, for the looks that only come later: a fixed substation's beacon and
+    // live cables, and anything else in the set.
+    const tile = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+    Object.values(this.M).forEach((m, i) => {
+      if (!(m instanceof THREE.Material)) return;
+      const t = new THREE.Mesh(tile, m);
+      t.position.set(cx - 2 + (i % 10) * 0.12, 0.05, cz + 2 + Math.floor(i / 10) * 0.12);
+      t.castShadow = true;
+      group.add(t);
+    });
+    units.push({ id: -14, kind: 'jeep', ...at(-2, 1), facing: 0, hp: 1, maxHp: 2, cooldown: 0 });
     this.scene.add(group);
+    // Raptor view cones: one calm and making someone out, one on the hunt. Their sets are kept for reuse (see Cones).
+    const fan = [0, 1, 2, 3, 4].map((k) => ({ x: (cx + Math.cos(k * 0.3) * 2) * T, y: (cz + Math.sin(k * 0.3) * 2) * T }));
+    this.cones.update(T, [
+      { id: -1, x: cx * T, y: cz * T, pts: [{ x: cx * T, y: cz * T }, ...fan], prey: null, notice: 0.5 },
+      { id: -2, x: (cx - 1) * T, y: cz * T, pts: [], prey: { x: (cx - 2) * T, y: cz * T }, rush: true, notice: 0 },
+    ]);
+    // A hit puff, sparks, and an order marker: their materials are kept and reused (see Effects), so their shaders
+    // are compiled once, here, and not mid-game when the first dart lands.
+    this.effects.puff(cx, cz, 0.4, '#ffffff', 0.5, 1);
+    this.effects.marker(cx + 1, cz, false);
+    this.effects.setSparks([V3(cx - 1, 0.3, cz)]);
     const night = this.night;
     for (const n of [false, true]) {
       this.setNight(n);
@@ -282,9 +336,11 @@ export class View3D {
       await this.renderer.compileAsync(this.scene, this.camera);
       // One frame as well, for the shadow and post passes.
       this.followShadow();
-      this.composer.render(0.016);
+      this.draw(0.016);
     }
     this.setNight(night);
+    this.effects.clear();
+    this.cones.clear();
     actors.clear();
     this.scene.remove(group);
     group.remove(actors.root);
@@ -299,9 +355,10 @@ export class View3D {
   }
 
   private setupPost(): void {
+    // Low quality skips the post passes: two or more full-screen passes and a half-float target are a lot for a phone.
+    if (this.opts.quality === 'low') return;
     const pr = this.pixelRatio;
-    const samples = this.opts.quality === 'low' ? 0 : 4;
-    const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
+    const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.setPixelRatio(pr);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -312,10 +369,8 @@ export class View3D {
       ao.blendIntensity = 0.8;
       this.composer.addPass(ao);
     }
-    if (this.opts.quality !== 'low') {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.55, 1.1);
-      this.composer.addPass(this.bloom);
-    }
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.55, 1.1);
+    this.composer.addPass(this.bloom);
     this.grade = new ShaderPass(GRADE);
     this.composer.addPass(this.grade);
     this.composer.addPass(new OutputPass());
@@ -368,7 +423,7 @@ export class View3D {
 
   /** Lets go of the GPU: for swapping in a view at another quality. */
   dispose(): void {
-    this.composer.dispose();
+    this.composer?.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
   }
@@ -476,7 +531,7 @@ export class View3D {
       this.fixed.clear();
       if (this.splat) for (const t of [this.splat.a, this.splat.b, this.splat.c]) t.dispose();
       this.splat = buildSplat(src);
-      this.fixed.add(makeGround(this.splat, this.assets.terrain), makeWater(this.splat));
+      this.fixed.add(makeGround(this.splat, this.assets.terrain, this.opts.quality === 'low'), makeWater(this.splat));
       this.hq = buildHQ(w.hq, this.M);
       this.fixed.add(this.hq.group);
       if (w.nest) this.fixed.add(buildNest(w.nest.x / w.T, w.nest.y / w.T, this.M));
@@ -506,8 +561,8 @@ export class View3D {
     this.dynamic.clear();
     // Only the decor near the view is drawn (see cullDecor), so the whole park can have it.
     const q = this.opts.quality;
-    const tufts = q === 'still' ? 6500 : q === 'high' ? 3200 : 1300;
-    const plan = planDecor(src, splat, { grassTufts: tufts, treeDensity: q === 'still' ? 6.6 : q === 'high' ? 5 : 3.8 });
+    const tufts = q === 'still' ? 6500 : q === 'high' ? 3200 : 700;
+    const plan = planDecor(src, splat, { grassTufts: tufts, treeDensity: q === 'still' ? 6.6 : q === 'high' ? 5 : 2.6 });
     // Trees near a change can shift a little as spacing works out, so the shade is redone a few tiles around it.
     bakeDecorShade(splat, plan, changed ? { x0: changed.x0 - 3, z0: changed.z0 - 3, x1: changed.x1 + 3, z1: changed.z1 + 3 } : undefined);
     this.decor = [];
@@ -531,6 +586,8 @@ export class View3D {
     this.dynamic.add(site.group);
     this.lampZones = site.lamps;
     this.staticKey = this.keyOf(w);
+    freeze(this.fixed);
+    freeze(this.dynamic);
   }
 
   /** The pen whose power runs a path lamp: the nearest one within 4 tiles, in level 4. Elsewhere one zone, 0. */
@@ -573,10 +630,14 @@ export class View3D {
           const ex = w.exhibits.find((e) => e.id === id);
           return buildCable(ex ? cableRoute(s, ex.footprint) : [], this.M.cableOff);
         });
-        const ring = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: col('#3fe6ff'), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+        // Hidden until work starts: an empty shape would still be drawn, with a shader of its own.
+        const ring = new THREE.Mesh(new THREE.BufferGeometry(), this.subRingMat);
+        ring.visible = false;
         ring.position.set(s.x + 1, 0.05, s.y + 1);
         ring.renderOrder = 5;
         this.scene.add(build.group, ring, ...cables);
+        freeze(build.group);
+        for (const c of cables) freeze(c);
         this.subs.set(s.id, { build, cables, ring, fixed: !s.fixed, progress: -1, sparkIn: 0 });
       }
     }
@@ -594,6 +655,7 @@ export class View3D {
         v.progress = p;
         v.ring.geometry.dispose();
         v.ring.geometry = p > 0 ? new THREE.RingGeometry(1.22, 1.3, 64, 1, Math.PI / 2, -Math.PI * 2 * p).rotateX(-Math.PI / 2) : new THREE.BufferGeometry();
+        v.ring.visible = p > 0;
       }
       // Sparks fly while it's being worked on.
       if (s.workers > 0 && !s.fixed) {
@@ -618,9 +680,12 @@ export class View3D {
     this.subsKey = '';
   }
 
-  /** Whether a kind of decor casts shadows. Low quality keeps them for trees only: every caster is drawn again for the shadow map. */
+  /**
+   * Whether a kind of decor casts shadows. Every caster is drawn again for the shadow map, and at Low quality the
+   * trees were most of the triangles in it, so none do: the shade baked into the ground under them stays.
+   */
   private casts(kind: DecorKind): boolean {
-    return this.opts.quality === 'low' ? CANOPY.includes(kind) : !['grass', 'grassTall', 'wispy', 'clover', 'pebble', 'mushroom', 'flower', 'fern', 'reed'].includes(kind);
+    return this.opts.quality === 'low' ? false : !['grass', 'grassTall', 'wispy', 'clover', 'pebble', 'mushroom', 'flower', 'fern', 'reed'].includes(kind);
   }
 
   private trackDecor(m: THREE.InstancedMesh): void {
@@ -682,6 +747,9 @@ export class View3D {
     }
   }
 
+  /** The ring that fills round a substation while it's fixed: one material for all, compiled in the warm-up. */
+  private readonly subRingMat = new THREE.MeshBasicMaterial({ color: col('#3fe6ff'), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
+
   private scuffMat = new THREE.MeshStandardMaterial({ map: TEX.scuff, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, roughness: 1 });
 
   private updateFences(w: ViewWorld): void {
@@ -700,6 +768,7 @@ export class View3D {
       }
       const build = buildFence(ex, power, this.M, this.scuffMat);
       this.scene.add(build.group);
+      freeze(build.group);
       this.fences.set(ex.id, { sig, build });
       changed = true;
     }
@@ -848,14 +917,18 @@ export class View3D {
     }
     this.updateReveal(w, ui);
     this.effects.update(dt);
-    if (this.hq) this.hq.radar.rotation.y += dt * 1.6;
+    if (this.hq) {
+      // HQ sits in a frozen group (see freeze), so its turning radar updates its own matrices.
+      this.hq.radar.rotation.y += dt * 1.6;
+      this.hq.radar.updateMatrixWorld(true);
+    }
     this.cullDecor();
     this.followShadow();
     // Count every pass (shadows, the scene, post) for the frame, not just the last one.
     const info = this.renderer.info;
     info.autoReset = false;
     info.reset();
-    this.composer.render(dt);
+    this.draw(dt);
     this.stats.calls = info.render.calls;
     this.stats.triangles = info.render.triangles;
   }
@@ -946,6 +1019,18 @@ export class View3D {
   static isPath(t: TileType): boolean {
     return t === Tile.Path || t === Tile.Gate;
   }
+}
+
+/**
+ * Stops three.js from recomputing the transforms of something that never moves, every frame: the ground, trees,
+ * pens, buildings, and props are thousands of objects. Its matrices are worked out once, here.
+ */
+function freeze(o: THREE.Object3D): void {
+  o.updateMatrixWorld(true);
+  o.traverse((c) => {
+    c.matrixAutoUpdate = false;
+  });
+  o.matrixWorldAutoUpdate = false;
 }
 
 /**

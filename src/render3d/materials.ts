@@ -564,6 +564,9 @@ export function beamMaterial(color: string, k: number, len: number): THREE.Shade
     fragmentShader: /* glsl */ `uniform vec3 c; varying float vT; varying vec3 vN; varying vec3 vV;
       void main(){ float f = abs(dot(normalize(vN), normalize(vV))); float edge = pow(f, 2.0);
         float fall = pow(clamp(1.0 - vT, 0.0, 1.0), 1.8) * smoothstep(0.02, 0.3, vT);
-        gl_FragColor = vec4(c * edge * fall, 1.0); }`,
+        gl_FragColor = vec4(c * edge * fall, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
   });
 }

@@ -869,9 +869,8 @@ body {
   box-sizing: border-box;
   padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
   overflow-y: auto;
-  background: rgba(4, 8, 6, 0.8);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  /* No backdrop blur: on a phone, blurring the whole screen over the 3D view costs every frame. */
+  background: rgba(4, 8, 6, 0.84);
   pointer-events: auto;
   touch-action: pan-y;
 }
@@ -1302,8 +1301,36 @@ body {
   flex: none;
 }
 
-.menu-sound {
-  align-self: flex-start;
+/* Sound, Music, and Effects on one row, so the menu still fits a short phone held sideways. */
+.menu-card.with-sound {
+  max-width: 540px;
+}
+
+.sound-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+}
+
+.volume {
+  display: flex;
+  flex: 1 1 150px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.volume input {
+  flex: 1;
+  min-width: 70px;
+  accent-color: var(--good);
+}
+
+.sound-row.off .volume {
+  opacity: 0.45;
 }
 
 /* ------------------------------------------------------------ debug */

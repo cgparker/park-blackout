@@ -48,6 +48,13 @@ export class Effects {
   private readonly darts: Dart[] = [];
   private readonly puffs: Puff[] = [];
   private readonly markers: Marker[] = [];
+  /**
+   * Puffs and markers that ended, kept to be used again. Each has its own material (it fades on its own), and a
+   * material that's let go can take its compiled shader with it: the next puff would then stall the frame while the
+   * GPU compiles it again. Kept, the shader stays ready.
+   */
+  private readonly freePuffs: THREE.Sprite[] = [];
+  private readonly freeMarkers: THREE.Mesh[] = [];
   private sparks: { sprite: THREE.Sprite; next: number }[] = [];
   private readonly rnd = mulberry32(31);
   private flashlights: Beam[] = [];
@@ -71,7 +78,10 @@ export class Effects {
   }
 
   puff(x: number, z: number, y: number, color: string, size: number, dur = 0.6): void {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: hdr(color, 1), transparent: true, depthWrite: false, opacity: 0.9 }));
+    const sprite = this.freePuffs.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, transparent: true, depthWrite: false }));
+    const mat = sprite.material as THREE.SpriteMaterial;
+    mat.color.copy(hdr(color, 1));
+    mat.opacity = 0.9;
     sprite.position.set(x, y, z);
     sprite.scale.setScalar(size * 0.4);
     this.root.add(sprite);
@@ -79,7 +89,11 @@ export class Effects {
   }
 
   marker(x: number, z: number, attack: boolean): void {
-    const mesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: hdr(attack ? '#ff5a4a' : '#ffd84a', 2), transparent: true, depthWrite: false }));
+    const mesh = this.freeMarkers.pop() ?? new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    mat.color.copy(hdr(attack ? '#ff5a4a' : '#ffd84a', 2));
+    mat.opacity = 1;
+    mesh.scale.setScalar(1);
     mesh.position.set(x, 0.03, z);
     mesh.renderOrder = 3;
     this.root.add(mesh);
@@ -104,11 +118,11 @@ export class Effects {
     for (const d of this.darts) this.root.remove(d.mesh);
     for (const p of this.puffs) {
       this.root.remove(p.sprite);
-      (p.sprite.material as THREE.SpriteMaterial).dispose();
+      this.freePuffs.push(p.sprite);
     }
     for (const m of this.markers) {
       this.root.remove(m.mesh);
-      (m.mesh.material as THREE.Material).dispose();
+      this.freeMarkers.push(m.mesh);
     }
     this.darts.length = 0;
     this.puffs.length = 0;
@@ -226,7 +240,7 @@ export class Effects {
       (p.sprite.material as THREE.SpriteMaterial).opacity = 0.9 * (1 - k);
       if (k >= 1) {
         this.root.remove(p.sprite);
-        (p.sprite.material as THREE.SpriteMaterial).dispose();
+        this.freePuffs.push(p.sprite);
         this.puffs.splice(i, 1);
       }
     }
@@ -238,7 +252,7 @@ export class Effects {
       (m.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - k;
       if (k >= 1) {
         this.root.remove(m.mesh);
-        (m.mesh.material as THREE.Material).dispose();
+        this.freeMarkers.push(m.mesh);
         this.markers.splice(i, 1);
       }
     }

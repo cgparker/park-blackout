@@ -72,6 +72,24 @@ export interface GuestView {
 
 type Anim = { mixer: THREE.AnimationMixer; actions: Map<string, THREE.AnimationAction>; current: string; oneShot: number };
 
+/**
+ * A clone of a model, its skinned parts on one skeleton again. SkeletonUtils.clone gives every part its own copy, so a
+ * dinosaur in three parts worked out its bones and sent them to the GPU three times a frame.
+ */
+function cloneModel(scene: THREE.Object3D): THREE.Object3D {
+  const obj = SkeletonUtils.clone(scene);
+  const kept: THREE.Skeleton[] = [];
+  obj.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (!m.isSkinnedMesh) return;
+    const sk = m.skeleton;
+    const same = kept.find((k) => k.bones.length === sk.bones.length && k.bones.every((b, i) => b === sk.bones[i] && k.boneInverses[i].equals(sk.boneInverses[i])));
+    if (same) m.skeleton = same;
+    else kept.push(sk);
+  });
+  return obj;
+}
+
 function makeAnim(root: THREE.Object3D, clips: THREE.AnimationClip[]): Anim {
   const mixer = new THREE.AnimationMixer(root);
   const actions = new Map<string, THREE.AnimationAction>();
@@ -362,7 +380,7 @@ export class Actors {
 
   private makeDino(d: DinoView): DinoActor {
     const tpl = this.assets.dinos[d.kind];
-    const obj = SkeletonUtils.clone(tpl.gltf.scene);
+    const obj = cloneModel(tpl.gltf.scene);
     obj.scale.setScalar(SCALE.dino);
     const eyes: THREE.Mesh[] = [];
     if (tpl.eye) {
@@ -417,7 +435,7 @@ export class Actors {
     const engineer = u.kind === 'engineer' && this.assets.engineer.length > 0;
     const pick = (list: PersonTemplate[]) => list[((u.id % list.length) + list.length) % list.length];
     const tpl: PersonTemplate = heavy ? this.assets.heavy : engineer ? pick(this.assets.engineer) : pick(this.assets.light);
-    const obj = SkeletonUtils.clone(tpl.gltf.scene);
+    const obj = cloneModel(tpl.gltf.scene);
     const scale = heavy ? SCALE.heavy : engineer ? SCALE.engineer : SCALE.light;
     obj.scale.setScalar(scale);
     const anim = makeAnim(obj, tpl.gltf.animations);
@@ -508,7 +526,7 @@ export class Actors {
       a.anim.mixer.stopAllAction();
     } else {
       const tpl = list[ti];
-      const obj = SkeletonUtils.clone(tpl.gltf.scene);
+      const obj = cloneModel(tpl.gltf.scene);
       obj.scale.setScalar(SCALE.guest);
       // Share the merged mesh's shape and skinning; give this guest its own colours.
       let colors: THREE.BufferAttribute | null = null;

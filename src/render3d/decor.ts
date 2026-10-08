@@ -360,7 +360,12 @@ export function natureParts(scene: THREE.Object3D, tint: string | null): NatureP
     g.applyMatrix4(mesh.matrixWorld);
     const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((m0) => {
       const m = (m0 as THREE.MeshStandardMaterial).clone();
-      if (m.alphaTest === 0 && m.transparent) {
+      if (/Bark/.test(m.name)) {
+        // Bark has nothing to cut out (its textures are JPEGs), and a phone's GPU hides what's behind solid
+        // surfaces far more cheaply than behind cut-out ones.
+        m.transparent = false;
+        m.alphaTest = 0;
+      } else if (m.alphaTest === 0 && m.transparent) {
         m.transparent = false;
         m.alphaTest = 0.45;
       }
