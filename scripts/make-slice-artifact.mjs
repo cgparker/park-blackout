@@ -2,8 +2,9 @@
 // the list of files it needs.
 // - The artifact host supplies <!doctype>, <html>, <head>, and <body>, so the page keeps only the
 //   title, its stylesheet and scripts, and the markup.
-// - The host serves no binary files, so every model becomes a GLB in base64 text (`.glb.txt`):
-//   .glb files as they are, and each .gltf packed with its .bin. Textures stay separate images.
+// - The host serves no binary files but images and media, so every model becomes a GLB in base64 text
+//   (`.glb.txt`): .glb files as they are, and each .gltf packed with its .bin. Textures stay separate images,
+//   and sounds stay MP3s.
 // - Only what the game loads is listed: no stills.
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -66,6 +67,8 @@ for (const f of readdirSync(`${DIST}/nature`)) {
   else if (/\.(png|jpg)$/.test(f)) add(`nature/${f}`);
 }
 for (const f of readdirSync(`${DIST}/terrain`)) add(`terrain/${f}`);
+// Sound is media, which the host serves as it is.
+for (const f of readdirSync(`${DIST}/audio`)) if (f.endsWith('.mp3')) add(`audio/${f}`);
 
 let bytes = 0;
 for (const src of Object.values(files)) bytes += statSync(src).size;

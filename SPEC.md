@@ -6,7 +6,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 
 - Build in the milestone order in section 12. Stop after each milestone so I can test it on my phone before you continue.
 - Every number in this spec goes in one file, `src/config.ts`. No tuning values hard-coded anywhere else.
-- Placeholder shapes only (section 10). No image or audio assets.
+- The game players play is the 3D build (section 10). It uses CC0 models, generated textures, and CC0 or made-here sound, each listed in `public3d/LICENSES.md`. The 2D build is a staging ground for mechanics, with placeholder shapes only and no sound.
 - If something is ambiguous, pick the simplest option that matches the intent and log it in `DECISIONS.md`. Don't add features that aren't in this spec.
 
 ## 1. What this prototype tests
@@ -15,16 +15,16 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 2. Does the cascade feel dramatic and fair ("I should have spaced those pens out") rather than random?
 3. Do I want to replay it with a different build order?
 
-**Out of scope:** real art, sound, saving, menus beyond the briefing, the pause menu, and Retry, levels beyond the five in section 3, lethal weapons, fence repair, and Mantah troops.
+**Out of scope:** real art, saving, menus beyond the briefing, the pause menu, and Retry, levels beyond the five in section 3, lethal weapons, fence repair, and Mantah troops.
 
 ## 2. Platform and tech
 
-- Phaser (latest stable) with TypeScript and Vite.
+- TypeScript and Vite. The game players play draws the park in 3D with three.js (section 10). A 2D build in Phaser (latest stable) shares its rules and HUD, as a staging ground for working out mechanics.
 - Runs in mobile Safari, landscape only. Show a "rotate your phone" overlay in portrait.
 - Logical resolution 1280x720, scaled to fit the screen.
 - Lock down browser touch behavior on the game: no page pinch-zoom, no double-tap zoom, no scrolling or pull-to-refresh, no text selection or long-press callouts.
 - Mouse support too, for testing on a desktop browser.
-- Development: run with `vite --host` so I can open it on my phone over Wi-Fi. Deploy: static build to GitHub Pages.
+- Development: run with `vite --host` so I can open it on my phone over Wi-Fi. Deploy: the 3D build, as a static site on GitHub Pages.
 - Pathfinding: grid A* (a small custom one or EasyStar.js).
 - Performance target: 60 fps on a recent iPhone with 80 visitors, 20 troops, and 20 dinosaurs.
 
@@ -418,7 +418,7 @@ Level 4's timeline adds each substation fixed, with the pens it sealed, each pen
 
 ### 3D build (all five levels)
 
-A test build, `slice.html`, draws every level in real 3D with three.js, to try the look and the frame rate on phones. The rules, HUD, and controls are the same game; only the drawing changes.
+The game players play, `slice.html`, draws every level in real 3D with three.js. Its rules, HUD, and controls are shared with the 2D build, which stays as a staging ground for mechanics; the 3D build adds the look and the sound.
 
 - Camera: looks down at 56 degrees from the south. Drag pans, pinch or the wheel zooms, and it never shows past the ground around the park.
 - The park: textured ground, paths, a pond, trees and plants (thick at the edges, thin in the middle), viewing decks, lamps, and the gate. Tree tops fade where they would hide a troop, an animal, or a building preview.
@@ -435,7 +435,17 @@ A test build, `slice.html`, draws every level in real 3D with three.js, to try t
 - Level 4 plays at night. Substations are fenced transformer yards with a warning sign and a beacon, red while broken and cyan once fixed; sparks fly while the Engineer works, and a fixed one's pens get their fence glow and lamps back. The Engineer is a park worker in a yellow hard hat and an orange high-visibility vest, with a toolbox instead of a gun. Troops carry no flashlights here: they're sneaking. In every level, each calm raptor casts a pale cone of what it sees on the ground, cut short by cover and fading toward its far edge, which a thin outline marks, and a yellow ring at its feet marks it at the tip of its cone. While it makes someone out, its cone turns orange and an orange ring fills around it. Once a raptor is after someone, a red line runs from it to its prey, thin while a pack circles and thick once it rushes, and a red ring sits under the prey instead.
 - Levels 4 and 5: the Patrol 4x4 is an open-top 4x4 with a roll bar, a light bar, and a spare wheel, in navy and white with the team's shield on the doors. It's built from shapes, with no maker's grille or badges. Troops inside ride in the seats. While it drives, a pale amber ring on the ground shows how far raptors hear it, with a pulse running out to it. In level 5, the cage is a concrete pen. Hurt animals flinch, and a killed one falls and stays down a few seconds.
 - Night: a test switch turns the blackout lighting on and off by hand, without changing the rules.
-- Assets: Quaternius models (CC0) and textures generated for the project. `public3d/LICENSES.md` lists them.
+- Assets: Quaternius models (CC0), textures generated for the project, and sounds from CC0 packs or made for the project. `public3d/LICENSES.md` lists them.
+
+### Sound (3D build)
+
+- Sound starts at the first tap, as browsers require. A **Sound** box on the briefing and in the pause menu turns it all off and on, and the choice is remembered on that device. It goes quiet while the page is hidden. The iPhone's silent switch mutes it too.
+- Music, by level: level 1 a bright tune; level 2 a creeping one; level 3 the bright tune while you build, a chase from the moment the power is cut until nothing is loose; level 4 a sneaking loop; level 5 the creeping one while the T. rex works on the cage, and the chase once the cage breaks or a raptor is out. It drops back while a tip or the pause menu is open. At the end of a level it stops, and a short win or lose jingle plays.
+- Under it, birdsong by day and crickets at night, following the view, so the blackout brings the crickets.
+- Sounds come from where things happen. On screen they play in full; off screen they fade with distance and sit left or right. Warnings never fade out completely: a raptor noticing a troop, a fence giving way, the T. rex's roar, a substation fixed, an animal secured.
+- What makes a sound: building, reinforcing, a tower going up, guests paying, darts (a light and a heavy shot), fences being hit (chain-link rattles, concrete thuds) and giving way, the 1:00 warning, the power cut, the evacuation siren, the power coming back, a troop ready, a troop lost, raptors calling when they get out or spot a troop, hissing when they hear the 4x4, and biting, a Triceratops bellowing when it runs, guests crying out, an animal going down, and the Secured chime. On the HUD: a soft click for every button, a select and an order sound for taps on the map, and an error sound when something can't be done.
+- The T. rex is heard only in level 5: a roar when it locks onto a troop, a growl when it mauls a raptor, and a cry when it dies. On the hunt in levels 3 and 4 it makes no sound, as the rules say (section 8), though its bites are heard.
+- The Engineer's tools while it works (level 4), and the 4x4's engine while it drives (levels 4 and 5), faster as it speeds up. Parked, it's quiet.
 
 ## 11. Debug tools
 

@@ -1302,6 +1302,10 @@ body {
   flex: none;
 }
 
+.menu-sound {
+  align-self: flex-start;
+}
+
 /* ------------------------------------------------------------ debug */
 
 .debug {

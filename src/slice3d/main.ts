@@ -29,7 +29,7 @@ function saveQuality(q: Quality): void {
   }
 }
 
-const hud = new Hud(document.getElementById('hud')!, { levels: SLICE_LEVELS });
+const hud = new Hud(document.getElementById('hud')!, { levels: SLICE_LEVELS, sound: true });
 const params = readParams(window.location.search, window.location.hash);
 const loading = document.getElementById('loading')!;
 const fill = loading.querySelector('.load-bar i') as HTMLElement;

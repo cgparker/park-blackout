@@ -776,6 +776,157 @@ export const NEST = {
   drawRadiusTiles: 1.1,
 };
 
+/** A sound in the 3D game. src/audio/manifest.ts says which files each one plays. */
+export type SoundId =
+  | 'tap'
+  | 'select'
+  | 'order'
+  | 'error'
+  | 'ready'
+  | 'tip'
+  | 'build'
+  | 'reinforce'
+  | 'tower'
+  | 'coin'
+  | 'dartLight'
+  | 'dartHeavy'
+  | 'secured'
+  | 'down'
+  | 'fenceChain'
+  | 'fenceConcrete'
+  | 'breach'
+  | 'raptorCall'
+  | 'raptorHiss'
+  | 'raptorBite'
+  | 'raptorDie'
+  | 'trexRoar'
+  | 'trexGrowl'
+  | 'trexBite'
+  | 'trexDie'
+  | 'trikeBellow'
+  | 'guestCry'
+  | 'warning'
+  | 'siren'
+  | 'powerDown'
+  | 'powerUp'
+  | 'notice'
+  | 'troopLost'
+  | 'jeepDoor'
+  | 'jeepWreck'
+  | 'work'
+  | 'win'
+  | 'lose';
+
+/** How one sound sits in the mix. */
+export interface SoundMix {
+  /** 0 to 1. Every file is matched for loudness first (scripts/audio3d.py), so this is the balance between them. */
+  level: number;
+  /** Off screen a sound fades with distance, but never below this fraction, so warnings are heard from anywhere. */
+  floor?: number;
+  /** The least time between two plays, in seconds. Faster repeats are dropped. */
+  gap?: number;
+  /** Plays on the HUD's channel, not the game's. */
+  ui?: boolean;
+  /** Pitch wobble from play to play, as a fraction. Default AUDIO.pitchJitter. */
+  jitter?: number;
+}
+
+/** The 3D game's sounds. Events in the world pick them (src/audio/cues.ts); this sets how loud each is. */
+export const SOUNDS: Record<SoundId, SoundMix> = {
+  // The HUD.
+  tap: { level: 0.35, ui: true, jitter: 0, gap: 0.04 },
+  select: { level: 0.5, ui: true, jitter: 0, gap: 0.05 },
+  order: { level: 0.5, ui: true, jitter: 0, gap: 0.05 },
+  error: { level: 0.55, ui: true, jitter: 0, gap: 0.2 },
+  ready: { level: 0.6, ui: true, jitter: 0 },
+  tip: { level: 0.5, ui: true, jitter: 0 },
+  // Building and money. Guests pay often, so coins are quiet and spaced out.
+  build: { level: 0.7 },
+  reinforce: { level: 0.7 },
+  tower: { level: 0.7 },
+  coin: { level: 0.25, gap: 0.3 },
+  // Darts, and an animal going down.
+  dartLight: { level: 0.45, gap: 0.04 },
+  dartHeavy: { level: 0.55, gap: 0.04 },
+  secured: { level: 0.6, floor: 0.5, jitter: 0 },
+  down: { level: 0.6 },
+  // Fences.
+  fenceChain: { level: 0.45, gap: 0.1 },
+  fenceConcrete: { level: 0.5, gap: 0.1 },
+  breach: { level: 0.8, floor: 0.45, gap: 0.3 },
+  // Animals. The T. rex hunts in silence in levels 3 and 4 (MissionConfig.roars), so its voice is only heard in level 5.
+  raptorCall: { level: 0.7, floor: 0.35, gap: 0.6 },
+  raptorHiss: { level: 0.55, floor: 0.2, gap: 0.5 },
+  raptorBite: { level: 0.6, gap: 0.08 },
+  raptorDie: { level: 0.7, floor: 0.3 },
+  trexRoar: { level: 0.95, floor: 0.6, gap: 1 },
+  trexGrowl: { level: 0.75, floor: 0.3, gap: 2.5 },
+  trexBite: { level: 0.75, gap: 0.2 },
+  trexDie: { level: 0.95, floor: 0.5 },
+  trikeBellow: { level: 0.6, floor: 0.15, gap: 0.8 },
+  guestCry: { level: 0.5, gap: 0.4 },
+  // The park.
+  warning: { level: 0.6, jitter: 0 },
+  siren: { level: 0.55, jitter: 0 },
+  powerDown: { level: 0.85, jitter: 0 },
+  powerUp: { level: 0.75, floor: 0.6, jitter: 0 },
+  // Troops, the 4x4, and the Engineer.
+  notice: { level: 0.6, floor: 0.6, gap: 0.3, jitter: 0 },
+  troopLost: { level: 0.7, jitter: 0 },
+  jeepDoor: { level: 0.55, gap: 0.25 },
+  jeepWreck: { level: 0.8, floor: 0.4 },
+  work: { level: 0.35 },
+  // The end of a level.
+  win: { level: 0.75, jitter: 0 },
+  lose: { level: 0.75, jitter: 0 },
+};
+
+/** Sound in the 3D game: the mix, how sounds follow the camera, and the 4x4's engine. */
+export const AUDIO = {
+  /** Levels of each part of the mix, 0 to 1. */
+  master: 0.9,
+  /** Everything together is held under this level (dB), so a crowd of sounds doesn't crackle. */
+  limiterDb: -6,
+  music: 0.4,
+  ambience: 0.6,
+  sfx: 0.85,
+  ui: 0.6,
+  /** Seconds for music to fade in, or cross to another track... */
+  musicFadeSeconds: 1.5,
+  /** ...and to stop, at the end of a level, so the jingle plays on its own. */
+  musicStopSeconds: 0.5,
+  /** Music drops to this fraction while a tip or the pause menu holds the game. */
+  heldMusic: 0.55,
+  ambienceFadeSeconds: 2.5,
+  /** A sound on screen plays in full. Off screen it fades over this many tiles, down to its floor (SoundMix.floor). */
+  offscreenTiles: 12,
+  /** Zoomed all the way out, sounds play at this fraction of their zoomed-in level. */
+  zoomedOut: 0.7,
+  /** How far to one side a sound can sit, 0 to 1. */
+  panWidth: 0.6,
+  /** Quieter than this, a sound isn't played at all. */
+  minLevel: 0.02,
+  /** Pitch wobble from play to play, as a fraction, so repeats don't sound copied. */
+  pitchJitter: 0.04,
+  /** The most sounds at once, and of one kind. */
+  maxVoices: 16,
+  maxSame: 3,
+  /** An Engineer at work makes a tool sound this often (seconds, low to high). */
+  workSeconds: [0.8, 1.6] as readonly [number, number],
+  /** A bite is put down to the nearest raptor or T. rex within this many tiles of it, for its sound. */
+  biterTiles: 2,
+  /**
+   * The Patrol 4x4's engine, made in the game (src/audio/engine.ts). Driving it is heard (JEEP.noiseTiles); parked
+   * it's quiet. It plays faster with speed: from the first of these rates at a crawl to the second at full speed.
+   */
+  engine: {
+    level: 0.5,
+    rate: [0.85, 1.2] as readonly [number, number],
+    /** Seconds to start up or die away. */
+    fadeSeconds: 0.35,
+  },
+};
+
 export const SIM = {
   /** Fixed simulation step in seconds. */
   step: 1 / 60,

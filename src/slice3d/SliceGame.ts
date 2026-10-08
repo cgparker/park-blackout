@@ -2,6 +2,8 @@
 // from src/ui, as in the 2D game. This controller turns touches into orders and keeps the camera, the
 // HUD, and the 3D view in step with the world. It only reads the world and sends it orders.
 import { BLACKOUT, CAMERA, DINOS, EXHIBITS, EXHIBIT_KINDS, FIGHT, INPUT, SCORING, SIM, UNITS, VIEW3D, type AnimalKind, type ExhibitKind, type LevelId, type UnitKind } from '../config';
+import { ambienceFor, CueMaker, levelMusic, musicFor, type Listener } from '../audio/cues';
+import { AudioPlayer } from '../audio/player';
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
 import { substationCenter } from '../core/power';
@@ -14,7 +16,7 @@ import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
 import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
 import { exhibitPlaceView, exhibitView, huntedToast, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
-import { loadTipsOn, saveTipsOn } from '../ui/prefs';
+import { loadSoundOn, loadTipsOn, saveSoundOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
 /** Levels the 3D build offers. */
@@ -109,6 +111,10 @@ export class SliceGame {
   private switching = false;
   private readonly qualityBtn: HTMLButtonElement;
 
+  /** Sound: the player, and what turns the world's events into sounds. */
+  private audio!: AudioPlayer;
+  private readonly cues = new CueMaker();
+
   constructor(
     private readonly container: HTMLElement,
     private readonly hud: Hud,
@@ -155,6 +161,7 @@ export class SliceGame {
     this.newWorld();
     this.view = new View3D(this.canvas, { base: '.', quality: this.quality, night: false, guests: true });
     await this.view.init(this.vw, onProgress);
+    this.setupAudio();
     this.layout();
     this.setupInput();
     this.wireHud();
@@ -185,6 +192,9 @@ export class SliceGame {
 
   private resetGame(): void {
     const w = this.world;
+    this.cues.reset();
+    this.audio.stopSounds();
+    this.audio.keepMusic(levelMusic(this.session.level));
     this.placingKind = null;
     this.plan = null;
     this.towerPlan = null;
@@ -320,6 +330,7 @@ export class SliceGame {
     w.events = [];
     this.view.handle(events, this.vw);
     this.handleEvents(events);
+    this.sound(events);
     // The blackout level goes dark when the power is cut and lights up again when it comes back.
     if (!w.mission && w.powerOn !== this.powerShown) {
       this.powerShown = w.powerOn;
@@ -414,7 +425,52 @@ export class SliceGame {
       debugToggle: (name, on) => {
         if (name === 'fps') this.hud.setFps(on ? this.fps : null);
       },
+      setSound: (on) => {
+        this.audio.setOn(on);
+        saveSoundOn(on);
+        this.hud.setSoundOn(on);
+      },
     };
+  }
+
+  // ---------------------------------------------------------------- sound
+
+  /**
+   * Browsers keep sound off until the page is tapped, so every tap and key press lets it start (or wakes it after a
+   * call). Files start downloading now, once the models are in, and are decoded at the first tap.
+   */
+  private setupAudio(): void {
+    this.audio = new AudioPlayer('./audio', loadSoundOn());
+    this.hud.setSoundOn(this.audio.on);
+    this.audio.prefetch();
+    const wake = () => this.audio.unlock();
+    for (const type of ['pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(type, wake, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', () => this.audio.setHidden(document.hidden));
+    // A soft click for every HUD button.
+    document.getElementById('hud')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement | null)?.closest?.('button')) this.audio.ui('tap');
+    });
+  }
+
+  /** What the camera shows, for placing sounds: the ground in view, and how far out it's zoomed. */
+  private listener(): Listener {
+    const c = this.cam;
+    const o = this.viewOffsets(Math.round(c.dist * 2) / 2);
+    return { x0: c.x + o.minX, x1: c.x + o.maxX, z0: c.z + o.minZ, z1: c.z + o.maxZ, zoom: (c.dist - VIEW3D.minDist) / (VIEW3D.maxDist - VIEW3D.minDist) };
+  }
+
+  private sound(events: readonly GameEvent[]): void {
+    const w = this.world;
+    const held = this.hud.tipOpen || this.hud.menuOpen;
+    const playing = w.phase !== 'briefing' && w.phase !== 'ended';
+    this.audio.frame({
+      cues: this.cues.cues(w, events),
+      listener: this.listener(),
+      music: musicFor(w),
+      ambience: ambienceFor(this.night),
+      engine: this.cues.engine(w, held || !playing),
+      held,
+    });
   }
 
   private refreshHud(): void {
@@ -502,12 +558,17 @@ export class SliceGame {
   }
 
   private train(kind: UnitKind): void {
-    if (!enqueueUnit(this.world, kind)) this.hud.toast(this.world.money < UNITS[kind].cost ? 'Not enough money' : 'The queue is full');
+    if (enqueueUnit(this.world, kind)) return;
+    this.hud.toast(this.world.money < UNITS[kind].cost ? 'Not enough money' : 'The queue is full');
+    this.audio.ui('error');
   }
 
   private reinforce(id: number): void {
     if (this.world.reinforce(id)) this.hud.toast('Fence reinforced');
-    else this.hud.toast('Not enough money');
+    else {
+      this.hud.toast('Not enough money');
+      this.audio.ui('error');
+    }
   }
 
   private closePanels(): void {
@@ -688,6 +749,7 @@ export class SliceGame {
       return;
     }
     this.hud.showTip(tip.title, tip.body);
+    this.audio.ui('tip');
     if (tip.focus) this.focusAboveTip(tip.focus.x / this.world.T, tip.focus.y / this.world.T);
   }
 
@@ -1105,7 +1167,10 @@ export class SliceGame {
       return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
     });
     this.selected = new Set(picked.map((u) => u.id));
-    if (picked.length) this.closePanels();
+    if (picked.length) {
+      this.closePanels();
+      this.audio.ui('select');
+    }
   }
 
   private handleTap(sx: number, sy: number): void {
@@ -1130,6 +1195,7 @@ export class SliceGame {
     if (unit) {
       this.selected = new Set([unit.id]);
       if (this.hud.panel) this.closePanels();
+      this.audio.ui('select');
       return;
     }
     const g = this.view.groundAt(sx, sy);
@@ -1173,12 +1239,14 @@ export class SliceGame {
     if (jeep?.kind === 'jeep' && this.boardersSelected(jeep)) {
       orderBoard(w, [...this.selected].filter((id) => id !== jeep.id), jeep.id);
       this.view.markMove(jeep.x / w.T, jeep.y / w.T);
+      this.audio.ui('order');
       return;
     }
     const dino = this.dinoAt(sx, sy);
     if (dino) {
       orderAttack(w, this.selected, dino.id);
       this.view.markAttack(dino.x / w.T, dino.y / w.T);
+      this.audio.ui('order');
       return;
     }
     const g = this.view.groundAt(sx, sy);
@@ -1192,12 +1260,14 @@ export class SliceGame {
     if (sub) {
       const to = orderRepair(w, this.selected, sub.id, engineer ? { x: g.x * w.T, y: g.z * w.T } : undefined) ?? substationCenter(sub, w.T);
       this.view.markMove(to.x / w.T, to.y / w.T);
+      this.audio.ui('order');
       return;
     }
     const x = clamp(g.x, 0.05, w.grid.cols - 0.05) * w.T;
     const y = clamp(g.z, 0.05, w.grid.rows - 0.05) * w.T;
     orderMove(w, this.selected, x, y);
     this.view.markMove(x / w.T, y / w.T);
+    this.audio.ui('order');
   }
 
   private openSubstation(id: number): void {
@@ -1318,6 +1388,7 @@ export class SliceGame {
       const plan = this.towerPlan;
       if (!plan || !plan.valid) {
         this.hud.toast(plan?.reason ?? 'Can’t build there');
+        this.audio.ui('error');
         return;
       }
       this.world.buildTower(plan);
@@ -1328,6 +1399,7 @@ export class SliceGame {
     const plan = this.plan;
     if (!plan || !plan.valid) {
       this.hud.toast(plan?.reason ?? 'Can’t build there');
+      this.audio.ui('error');
       return;
     }
     const ex = this.world.build(plan);

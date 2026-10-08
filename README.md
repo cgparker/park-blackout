@@ -2,6 +2,8 @@
 
 A single-player RTS prototype for phones in five levels. Round up loose Triceratops, clear a raptor nest, then build a dinosaur park and train a containment team before a rival company cuts the fence power. After the blackout, sneak an Engineer past raptors on patrol to get the power back, then break up a fight between the T. rex and the raptors. The full design is in [SPEC.md](SPEC.md).
 
+The game players play is the 3D build, with music and sound (see [3D build](#3d-build)). The 2D build shares its rules and HUD and stays as a staging ground for working out mechanics.
+
 ## Status
 
 All six milestones in SPEC.md are built: map and building, visitors and income, the containment team, the blackout cascade, combat and scoring, and tuning tools. A second round made the blackout matter more: visitors who don't notice the blackout until danger is close, shorter visits so spacing costs money, a T. rex that locks onto one troop and charges, Tranq Towers, and a 5:00 build phase. Then the park stopped warning its guests: they keep touring and paying in the dark until the first animal gets out, and only then does the park evacuate. A design audit added a pause menu (Restart, End game), breakout times and team strength in the panels, an end-screen timeline with one "next time" suggestion, and edge arrows during the blackout. Stars are one per goal: get every dinosaur back, earn the revenue target, keep every guest alive. Two levels now come before that game, each in a park that's already built: level 1, Roundup, teaches training and moving troops by darting 6 loose Triceratops before the park opens; level 2, Raptor Nest, teaches fighting raptors that see in cones, 6 of them guarding a nest. The blackout is level 3. Two levels follow it in the same park. Level 4, Grid Down, is a stealth level at night: an Engineer, backed by one Tranq Squad and a loud Patrol 4x4, must fix three substations before dawn while three raptors walk loose patrol routes, each seeing in a cone that cover cuts short. Level 5, Showdown, opens with the T. rex breaking into a cage of raptors, then turns into a fight where animals can die; a fixed team of two Heavy Teams and two Tranq Squads has the 4x4, which carries two troops at a time. Calls made where the spec was silent are in [DECISIONS.md](DECISIONS.md).
@@ -10,10 +12,10 @@ All six milestones in SPEC.md are built: map and building, visitors and income, 
 
 ```bash
 npm install
-npm run dev
+npm run dev:3d
 ```
 
-Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it on your phone on the same Wi-Fi and turn the phone sideways. On iPhone, Share > Add to Home Screen gives you a full-screen version without Safari's bars.
+Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open `/slice.html` on it on your phone on the same Wi-Fi and turn the phone sideways. On iPhone, Share > Add to Home Screen gives you a full-screen version without Safari's bars. `npm run dev` serves the 2D staging build instead.
 
 ## Controls
 
@@ -52,7 +54,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 ## Checks
 
-- `npm test` runs 173 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge (and the roar only in level 5), combat, power return, breakout times against the simulation, the blackout log, the end-screen timeline and its advice, the star goals, when each tip fires, a full scripted game, and for levels 1, 2, 4, and 5 the built parks, how a level is won or lost, and their goals, timeline, tips, and briefings. Levels 1 and 2 add animals carried home and the nest raptors. Raptors' sight, touch, and calls are tested in the blackout, the nest, the patrols, and the fight, and so is the pack: circling out of dart range, spreading along a ring the park's edge cuts, rushing together, and keeping to its prey in the strike. Level 4 adds loose patrol routes and random starts, what a raptor sees and hears, the loud 4x4 and the raptors that come to look, the moment it takes to make out a troop, the hunt and the call to the others, darts from out of sight, substations and the pens they power, side taps and Stop, and a scripted sneak that has to get all three fixed unseen. Level 5 adds the cage, the T. rex smashing through when it's darted, the fight, the push toward dark pens, the shield and the roar, and the 4x4 and who gets its seats.
+- `npm test` runs 190 unit tests: map, pathing, placement, visitors and what makes them run, touring and paying in the dark, the evacuation, training, orders, towers, the blackout cascade, the T. rex lock-on and charge (and the roar only in level 5), combat, power return, breakout times against the simulation, the blackout log, the end-screen timeline and its advice, the star goals, when each tip fires, a full scripted game, and for levels 1, 2, 4, and 5 the built parks, how a level is won or lost, and their goals, timeline, tips, and briefings. Levels 1 and 2 add animals carried home and the nest raptors. Raptors' sight, touch, and calls are tested in the blackout, the nest, the patrols, and the fight, and so is the pack: circling out of dart range, spreading along a ring the park's edge cuts, rushing together, and keeping to its prey in the strike. Level 4 adds loose patrol routes and random starts, what a raptor sees and hears, the loud 4x4 and the raptors that come to look, the moment it takes to make out a troop, the hunt and the call to the others, darts from out of sight, substations and the pens they power, side taps and Stop, and a scripted sneak that has to get all three fixed unseen. Level 5 adds the cage, the T. rex smashing through when it's darted, the fight, the push toward dark pens, the shield and the roar, and the 4x4 and who gets its seats. Sound: the files on disk match the list, each level's music and background, which event makes which sound (and the T. rex's silence on the hunt), where a sound sits from the camera, spacing repeats, finding the sound in a decoded MP3, the Engineer's tools, and the 4x4's engine and how it loops.
 - `npm run stress` plays 40 randomized blackout games (towers included), 40 of levels 1 and 2, and 40 of levels 4 and 5, and fails if anyone walks through a rock, pen, or tower, a tower moves, a guest keeps touring after the evacuation, the revenue doesn't add up, the log is out of order, a number goes bad, or a game never ends.
 - `npm run smoke` plays the game in a browser at phone and desktop sizes with real taps, drags, and pinches, including the level picker and levels 1, 2, 4, and 5 (179 checks). Build and serve first: `npm run build && npx vite preview --port 4173`. It needs a Playwright browser once: `npx playwright install chromium`.
 - `node scripts/look.mjs` saves screenshots of the main game states, including a T. rex wind-up and charge, to `test-results/look`.
@@ -77,7 +79,7 @@ Vite prints a Network URL (something like `http://192.168.1.20:5173`). Open it o
 
 ## Deploy
 
-GitHub Actions (`.github/workflows/build.yml`) checks every pull request to `main` and every push to `main`: it runs the unit tests and builds the 2D game, the 3D build, and the 3D artifact version. Only a push to `main` can deploy. To publish to GitHub Pages:
+GitHub Actions (`.github/workflows/build.yml`) checks every pull request to `main` and every push to `main`: it runs the unit tests and builds the 2D staging build, the 3D game, and the 3D artifact version. Only a push to `main` can deploy, and it publishes the 3D game, with `slice.html` as the home page. To publish to GitHub Pages:
 
 1. Settings > Pages > Build and deployment > Source: **GitHub Actions**.
 2. Settings > Secrets and variables > Actions > Variables: add `PAGES_ENABLED` with the value `true`.
@@ -87,21 +89,24 @@ GitHub Pages on a private repo needs GitHub Pro or a team plan, and the site its
 
 ## 3D build
 
-All five levels in real 3D, to test the look and the frame rate on phones (SPEC section 10). Same rules, HUD, and controls as the 2D game.
+The game players play: all five levels in real 3D, with music and sound (SPEC section 10). Same rules, HUD, and controls as the 2D staging build.
 
 - `npm run dev:3d`, then open `/slice.html` on the Network URL Vite prints. `#level-4` opens on level 4, and so on.
 - The bar at the top right shows frames per second, switches **Night** lighting on and off, and switches between **High** and **Low quality** (the game keeps going; the view rebuilds in a second or two). Add `#debug` to also see draw calls and triangles.
-- `npm run build:3d` writes `dist-slice/`. `npm run smoke3d` checks it in a phone-sized browser (serve it first, on port 5180): level 2's training and orders and its troop flashlights at night, level 3's building, the blackout, and the power coming back, level 4's three raptors with their view cones and rings and no flashlights, the 4x4's engine ring as it drives, a substation's panel, the Engineer and Stop buttons, a repair from the side tapped, and a cone turning orange as a raptor makes out a troop and the pack it calls circling the squad, and level 5's loading and driving the 4x4 and the T. rex breaking into the cage.
+- `npm run build:3d` writes `dist-slice/`. `npm run smoke3d` checks it in a phone-sized browser (serve it first, on port 5180): level 2's training and orders and its troop flashlights at night, level 3's building, the blackout, and the power coming back, level 4's three raptors with their view cones and rings and no flashlights, the 4x4's engine ring as it drives, a substation's panel, the Engineer and Stop buttons, a repair from the side tapped, and a cone turning orange as a raptor makes out a troop and the pack it calls circling the squad, and level 5's loading and driving the 4x4 and the T. rex breaking into the cage. For sound it checks that the first tap starts it, each level's music and background, the Sound box in the pause menu, the sounds for orders, building, the power cut, and the cage breaking, and the 4x4's engine.
 - `npm run stills3d -- "mode=night" night.png 1280 720 1` saves review images from `still.html`: `mode` is `day` or `night` (a level 3 moment), `level1`, `level2`, `level4`, `level5`, `fences`, `troops`, or `crew` (the Engineer and the 4x4). With `level4`, `notice=0.5` shows a raptor half a second into making out a troop. Add `shots=x,z,distance,elevation;...` for close-ups, and `quality=low` or `quality=high` to see a frame as the game draws it.
-- `npm run build:3d-artifact` makes the Claude artifact version in `dist-slice-artifact/`: the page without its document wrapper, plus `artifact-files.json`, the list of files to publish beside it. Artifacts serve no binary files, so each model goes as a GLB in base64 text.
+- `npm run build:3d-artifact` makes the Claude artifact version in `dist-slice-artifact/`: the page without its document wrapper, plus `artifact-files.json`, the list of files to publish beside it. Artifacts serve no binary files but images and media, so each model goes as a GLB in base64 text, and the sounds go as they are.
 - `npm run assets3d` rebuilds `public3d/` from the source packs (not in the repo); `npm run assets3d -- people` rebuilds only the people (or `dinos`, `nature`). Sources and licenses: `public3d/LICENSES.md`.
+- Sound starts at the first tap (browsers require one). The **Sound** box on the briefing and in the pause menu turns it off and on. On iPhone the silent switch mutes it too.
+- `python3 scripts/audio3d.py --src /path/to/packs --fetch` downloads the CC0 sound packs (not in the repo), and `python3 scripts/audio3d.py --src /path/to/packs` turns them into `public3d/audio/` and writes `src/audio/files.ts`. It needs ffmpeg, numpy, and scipy.
 
 | Path | What |
 |---|---|
 | `src/render3d/` | The 3D view: terrain, decor, fences, buildings, actors, effects, materials |
-| `src/slice3d/` | The 3D game's controller: camera, touch input, building, HUD wiring |
+| `src/slice3d/` | The 3D game's controller: camera, touch input, building, HUD and sound wiring |
+| `src/audio/` | Sound: which event makes which sound and where (`cues.ts`, no Web Audio, so it's tested), the player (`player.ts`), the 4x4's engine (`engine.ts`), and the files |
 | `src/still3d/` | The stills page |
-| `public3d/` | Models and textures for the 3D builds |
+| `public3d/` | Models, textures, and sounds for the 3D builds |
 
 ## Builds
 

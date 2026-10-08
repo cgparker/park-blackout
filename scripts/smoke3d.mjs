@@ -5,8 +5,9 @@
 // it drives, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from the side
 // tapped, a raptor's cone turning orange as it makes
 // out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven, and the T. rex
-// breaking into the raptor cage after a while. Saves screenshots along the way. Uses a software GPU, so frame rates
-// here say nothing about a phone.
+// breaking into the raptor cage after a while. Sound: it starts at the first tap, each level plays its music and
+// background, the Sound box in the pause menu turns it off and on, and events and orders make their sounds. Saves
+// screenshots along the way. Uses a software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -31,6 +32,23 @@ const fail = (s) => {
   console.log('FAIL', s);
   process.exitCode = 1;
 };
+/** The sound player: what it has decoded and is playing, and how many of each sound it has played. */
+const sound = () => page.evaluate(() => ({ ...window.__pb3d.audio.state, played: Object.fromEntries(window.__pb3d.audio.played) }));
+/**
+ * After Start: waits for the frame that handles it, and for the camera's glide to the level's opening view to end,
+ * so taps land where the test expects. A slow frame (the software GPU, sound decoding) can come after the first look.
+ */
+const settled = () =>
+  page.waitForFunction(() => window.__pb3d.world.events.length === 0 && !window.__pb3d.camMove, null, { timeout: 120000 }).catch(() => fail('the camera should settle after Start'));
+/** Waits for the level's music to start (files decode after the first tap). */
+const soundStarted = async () => {
+  let a = await sound();
+  for (let i = 0; i < 40 && !(a.music && a.clips >= 40); i++) {
+    await page.waitForTimeout(500);
+    a = await sound();
+  }
+  return a;
+};
 
 await page.goto(`${url}#debug.level-2.${quality}`);
 await page.waitForSelector('#loading.hidden', { state: 'attached', timeout: 600000 });
@@ -39,6 +57,7 @@ await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/1-briefing.png`, timeout: 240000 });
 if ((await page.locator('.level-btn').count()) !== 5) fail('the briefing should offer all five levels');
 
+if (!(await page.isChecked('#opt-sound'))) fail('the briefing should show the Sound box, ticked');
 await page.click('button.start');
 await page.waitForTimeout(3000);
 step('started');
@@ -68,6 +87,24 @@ const state = () =>
 let s = await state();
 step(`phase ${s.phase}, level ${s.level}, ${s.troops.length} troops, ${s.loose.length} loose, ${s.fps}`);
 if (s.phase !== 'mission') fail('level 2 should be running');
+let a = await soundStarted();
+step(`sound: ${JSON.stringify(a)}`);
+if (a.context !== 'running' || a.music !== 'music_tension' || a.ambience !== 'amb_day') fail('the first tap should start sound: level 2 plays its creeping music over birdsong');
+// The Sound box in the pause menu turns it all off, and the choice is kept.
+await page.click('.pause-btn');
+await page.waitForTimeout(400);
+await page.click('#menu-sound');
+await page.waitForTimeout(800);
+a = await sound();
+const kept = await page.evaluate(() => localStorage.getItem('park-blackout.sound'));
+step(`sound off: ${a.on}, ${a.context}, kept ${kept}`);
+if (a.on || a.context === 'running' || kept !== 'off') fail('the Sound box should turn sound off and remember it');
+await page.click('#menu-sound');
+await page.waitForTimeout(800);
+a = await sound();
+if (!a.on || a.context !== 'running') fail('the Sound box should turn sound back on');
+await page.click('.menu-resume');
+await page.waitForTimeout(400);
 // Raptors see in cones in every level: each one at the nest shows its own.
 const nestCones = await page.evaluate(() => {
   let n = 0;
@@ -136,6 +173,9 @@ s = await state();
 const ordered = s.troops.find((u) => u.id === troop.id);
 step(`ordered: ${ordered?.order}`);
 if (ordered?.order !== 'attack') fail('tapping a raptor with a troop selected should order an attack');
+a = await sound();
+step(`played: ${JSON.stringify(a.played)}`);
+if (!a.played.select || !a.played.order || !a.played.ready) fail('selecting a troop, giving it an order, and a troop being ready should each make a sound');
 await page.screenshot({ path: `${out}/4-attack.png`, timeout: 240000 });
 
 // Pan with one finger, pinch is hard to script; check that a drag moves the camera.
@@ -236,6 +276,9 @@ await page.waitForTimeout(2500);
 s = await w3();
 step(`blackout: ${s.phase}, ${s.guests} guests, night ${s.night}`);
 if (s.phase !== 'blackout' || !s.night) fail('the blackout should turn the lights out');
+a = await sound();
+step(`blackout sound: ${a.music}, ${a.ambience}, ${JSON.stringify(a.played)}`);
+if (a.music !== 'music_chase' || a.ambience !== 'amb_night' || !a.played.build || !a.played.powerDown) fail('building should sound, and the blackout should cut the power with a sound, bring the chase music, and the crickets');
 await page.screenshot({ path: `${out}/7-blackout.png`, timeout: 240000 });
 await page.evaluate(() => {
   const w = window.__pb3d.world;
@@ -261,6 +304,7 @@ step('level 4 loaded');
 if (await page.isChecked('#opt-tips')) await page.click('#opt-tips');
 await page.click('button.start');
 await page.waitForTimeout(1500);
+await settled();
 const w4 = () =>
   page.evaluate(() => {
     const g = window.__pb3d;
@@ -317,6 +361,9 @@ for (let i = 0; i < 20 && !noise?.ring; i++) {
 }
 step(`4x4 driving: ${JSON.stringify(noise)}`);
 if (!noise?.ring) fail('a driving 4x4 should show how far raptors hear it');
+a = await sound();
+step(`level 4 sound: ${a.music}, ${a.ambience}, engine ${a.engine.toFixed(2)}`);
+if (a.music !== 'music_sneak' || a.ambience !== 'amb_night' || !(a.engine > 0)) fail('level 4 should sneak to its music at night, and the 4x4 should be heard while it drives');
 await page.screenshot({ path: `${out}/9b-level4-4x4.png`, timeout: 240000 });
 // Clear the selection, so the next tap on a substation opens its panel instead of sending the 4x4 there.
 await page.click('.sel-clear');
@@ -434,6 +481,7 @@ step('level 5 loaded');
 if (await page.isChecked('#opt-tips')) await page.click('#opt-tips');
 await page.click('button.start');
 await page.waitForTimeout(1500);
+await settled();
 const w5 = () =>
   page.evaluate(() => {
     const g = window.__pb3d;
@@ -493,6 +541,10 @@ const caged = await page.evaluate(() => {
 });
 step(`cage broken at ${caged.broke.toFixed(1)} s, animals hurt: ${caged.hurt}`);
 if (caged.broke < 20 || !caged.hurt) fail('the T. rex should break into the cage after a while, and the fight should wound the animals');
+await page.waitForTimeout(2500);
+a = await sound();
+step(`level 5 sound: ${a.music}, ${JSON.stringify(a.played)}`);
+if (a.music !== 'music_chase' || !a.played.breach) fail('the cage breaking should sound, and bring the chase music');
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/14-level5-fight.png`, timeout: 240000 });
 

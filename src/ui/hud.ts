@@ -75,6 +75,8 @@ export interface HudHandlers {
   endGame(): void;
   /** An arrow at the map edge was tapped. */
   focusArrow(key: string): void;
+  /** The 3D game: sound on or off (the Sound boxes on the briefing and in the pause menu). */
+  setSound?(on: boolean): void;
 }
 
 export interface TopView {
@@ -352,6 +354,8 @@ export class Hud {
   private readonly quickLabel: HTMLElement;
   private readonly debugBox: HTMLInputElement;
   private readonly tipsBox: HTMLInputElement;
+  /** The 3D game's Sound boxes, on the briefing and in the pause menu. Absent in the 2D game, which has no sound. */
+  private readonly soundBoxes: HTMLInputElement[] = [];
 
   private readonly tipCard: HTMLElement;
   private readonly tipTitle: HTMLElement;
@@ -377,7 +381,7 @@ export class Hud {
   /** Levels this build offers. Both builds offer all five. */
   private readonly levels: readonly LevelId[];
 
-  constructor(root: HTMLElement, opts: { levels?: readonly LevelId[] } = {}) {
+  constructor(root: HTMLElement, opts: { levels?: readonly LevelId[]; sound?: boolean } = {}) {
     this.levels = opts.levels ?? LEVEL_IDS;
     // ------------------------------------------------ top bar
     this.topBar = el('div', 'topbar');
@@ -584,6 +588,7 @@ export class Hud {
     this.quickBox = check('opt-quick', 'Quick test');
     this.quickLabel = this.quickBox.nextElementSibling as HTMLElement;
     this.tipsBox = check('opt-tips', 'Show tips');
+    if (opts.sound) this.soundBoxes.push(check('opt-sound', 'Sound'));
     this.debugBox = check('opt-debug', 'Debug tools');
     this.quickBox.addEventListener('change', () => this.renderBriefing());
     const start = button('primary start', 'Start');
@@ -653,8 +658,18 @@ export class Hud {
       this.menuGoals,
       el('p', 'star-rule', STAR_RULE),
       el('p', 'menu-text', 'Restart goes back to the briefing. End game shows what happened so far.'),
-      menuActions,
     );
+    if (opts.sound) {
+      const label = el('label', 'check menu-sound');
+      const input = el('input');
+      input.type = 'checkbox';
+      input.id = 'menu-sound';
+      label.append(input, el('span', '', 'Sound'));
+      menuCard.append(label);
+      this.soundBoxes.push(input);
+    }
+    menuCard.append(menuActions);
+    for (const box of this.soundBoxes) box.addEventListener('change', () => this.handlers?.setSound?.(box.checked));
     this.menu.append(menuCard);
 
     // ------------------------------------------------ edge arrows
@@ -1117,6 +1132,11 @@ export class Hud {
 
   hideMenu(): void {
     this.menu.classList.add('hidden');
+  }
+
+  /** Shows whether sound is on, in both Sound boxes. */
+  setSoundOn(on: boolean): void {
+    for (const box of this.soundBoxes) box.checked = on;
   }
 
   get menuOpen(): boolean {
