@@ -150,7 +150,7 @@ export function startBanner(w: World): string {
     const word = numberWord(loose.length);
     return `${word[0].toUpperCase()}${word.slice(1)} ${loose.length === 1 ? 'raptor is' : 'raptors are'} on patrol. Fix ${w.substations.length} substations before dawn.`;
   }
-  if (w.level === 5) return `The T. rex and the raptors are fighting. ${opens}`;
+  if (w.level === 5) return `The T. rex is breaking into the raptor cage. ${opens}`;
   const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
   return `${loose.length} ${animalNoun(kind, loose.length)} ${w.nest ? 'are guarding a nest' : 'are loose'}. ${opens}`;
 }

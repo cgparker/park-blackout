@@ -1,4 +1,4 @@
-import { GRID, MISSION, MISSIONS, NEST, type LevelId, type MissionConfig, type MissionLevelId, type Side } from '../config';
+import { FENCE, GRID, MISSION, MISSIONS, NEST, type LevelId, type MissionConfig, type MissionLevelId, type Side } from '../config';
 import type { Dino } from './dinos';
 import type { Exhibit } from './exhibit';
 import { Tile, type Point } from './grid';
@@ -56,6 +56,12 @@ export function setupMission(w: World, cfg: MissionConfig): void {
       animals = animals.slice(0, p.animals);
     }
     if (p.dent) dentSide(ex, p.dent.side, p.dent.hp);
+    if (p.cageHp !== undefined) {
+      for (const s of ex.segments) s.hp = s.maxHp = p.cageHp;
+      ex.reinforced = p.cageHp >= FENCE.concreteHp;
+      ex.cage = true;
+      ex.version++;
+    }
     if (p.breakoutAt !== undefined) ex.breakoutAt = p.breakoutAt;
     ex.powered = p.powered ?? true;
     if (!p.open) continue;
@@ -123,6 +129,7 @@ function startPatrol(w: World, d: Dino, route: readonly (readonly [number, numbe
   const stops = route.map(([x, y]) => ({ x: (x + 0.5) * T, y: (y + 0.5) * T }));
   if (w.rng() < 0.5) stops.reverse();
   d.patrol = stops;
+  d.patrolDir = 1;
   if (stops.length < 2) {
     letOut(w, d, stops[0].x, stops[0].y, null);
     d.patrolIndex = 0;

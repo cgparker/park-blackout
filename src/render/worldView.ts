@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
-import { COLORS, DINO_AI, DINOS, FIGHT, GRID, MAP, NEST, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
+import { COLORS, DINO_AI, DINOS, FIGHT, GRID, JEEP, MAP, NEST, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
 import type { Dino } from '../core/dinos';
 import { fenceRect, type Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
+import { engineRunning } from '../core/jeep';
 import { repairProgress, substationCenter } from '../core/power';
 import { preyOf, viewCone } from '../core/stealth';
 import { isTargetable, passengers, type Unit } from '../core/units';
@@ -11,6 +12,8 @@ import type { GameEvent, World } from '../core/world';
 const T = MAP.tileSize;
 const WORLD_W = MAP.cols * T;
 const WORLD_H = MAP.rows * T;
+/** One pulse of the 4x4's engine ring, from the 4x4 out to how far raptors hear it. */
+const NOISE_PULSE_SECONDS = 0.9;
 
 type DinoObj = Phaser.GameObjects.Ellipse | Phaser.GameObjects.Triangle | Phaser.GameObjects.Container;
 
@@ -446,6 +449,13 @@ export class WorldView {
     for (const u of w.units) {
       if (u.dead) continue;
       const r = UNITS[u.kind].radius;
+      // While the 4x4 drives, how far raptors hear its engine, and a pulse running out to it.
+      if (engineRunning(u)) {
+        const reach = JEEP.noiseTiles * w.T;
+        const k = (w.time / NOISE_PULSE_SECONDS) % 1;
+        g.lineStyle(2, COLORS.engineNoise, 0.35).strokeCircle(u.x, u.y, reach);
+        g.lineStyle(2, COLORS.engineNoise, 0.5 * (1 - k)).strokeCircle(u.x, u.y, Math.max(r, reach * k));
+      }
       if (ui.selected.has(u.id)) {
         g.lineStyle(2.5, COLORS.selection, 1).strokeCircle(u.x, u.y, r + 5);
         if (u.order === 'move' && u.path.length) {

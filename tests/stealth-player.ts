@@ -7,7 +7,7 @@ import type { Point } from '../src/core/grid';
 import { findPath, lineClear, toWaypoints } from '../src/core/nav';
 import { inReach, workTiles } from '../src/core/power';
 import { inView, lineOfSight } from '../src/core/stealth';
-import { orderAttack, orderMove, orderRepair, type Unit } from '../src/core/units';
+import { orderAttack, orderBoard, orderMove, orderRepair, type Unit } from '../src/core/units';
 import { World } from '../src/core/world';
 
 const T = MAP.tileSize;
@@ -44,7 +44,13 @@ function legPath(w: World, from: Point, to: Point): Point[] {
   return out;
 }
 
-/** Where a raptor on patrol is now and will be at each time ahead (ascending), walking its route the way it does. */
+const mid = ([lo, hi]: readonly [number, number]) => (lo + hi) / 2;
+
+/**
+ * Where a raptor on patrol is now and will be at each time ahead (ascending), walking its route the way it does. Its
+ * routes are loose, so this is a guess past what it's doing now: it reckons on the next stop the way it's going, with
+ * an average look at each, as a person who has watched it a while would.
+ */
 function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
   const out: Pose[] = [{ x: d.x, y: d.y, facing: d.look > 0 ? d.lookBase : d.facing, sweep: d.look > 0 }];
   const route = d.patrol;
@@ -56,7 +62,10 @@ function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
   // A raptor making something out stands still until it settles.
   let hold = d.notice;
   let i = d.patrolIndex;
-  let pts = look > 0 ? [] : d.pathIndex < d.path.length ? [...d.path.slice(d.pathIndex), route[i]] : legPath(w, d, route[i]);
+  // Partway along a leg, or off sniffing, it goes there first.
+  let detour = d.wander;
+  const goal = () => detour ?? route[i];
+  let pts = look > 0 ? [] : d.pathIndex < d.path.length ? [...d.path.slice(d.pathIndex), goal()] : legPath(w, d, goal());
   let t = 0;
   for (const target of ahead) {
     let left = target - t;
@@ -74,7 +83,8 @@ function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
         left -= used;
         sweep = true;
         if (look <= 0) {
-          i = (i + 1) % route.length;
+          if (detour) detour = null;
+          else i = (i + d.patrolDir + route.length) % route.length;
           pts = legPath(w, { x, y }, route[i]);
           sweep = left <= 0.3;
         }
@@ -82,7 +92,7 @@ function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
       }
       const p = pts[0];
       if (!p) {
-        look = STEALTH.lookSeconds;
+        look = mid(detour ? STEALTH.pauseSeconds : STEALTH.lookSeconds);
         continue;
       }
       const dist = Math.hypot(p.x - x, p.y - y);
@@ -99,7 +109,7 @@ function poses(w: World, d: Dino, ahead: readonly number[]): Pose[] {
         left -= dist / STEALTH.patrolSpeed;
         pts.shift();
         if (!pts.length) {
-          look = STEALTH.lookSeconds;
+          look = mid(detour ? STEALTH.pauseSeconds : STEALTH.lookSeconds);
           sweep = true;
         }
       }
@@ -233,7 +243,21 @@ export interface GridPlan {
    * there, so it comes alone; the Engineer goes in while it's busy.
    */
   squad?: 'home' | 'decoy' | 'dart' | 'ambush';
+  /**
+   * The Patrol 4x4. Unused, it stays parked and quiet. 'ride': once the west substation is fixed, the Engineer rides it
+   * to a drop point well short of the north substation, then sneaks on from there. 'lure': once the north one is fixed,
+   * the Tranq Squad drives it back and forth east of the south substation, engine running, to draw the raptors that
+   * hear it, while the Engineer sneaks in from the west; then it drives home.
+   */
+  jeep?: 'ride' | 'lure';
 }
+
+/** Where the 4x4 drops the Engineer for the north substation, and the two ends of its lure run by the south one. */
+const RIDE_DROP = { x: 20.5 * T, y: 1.5 * T };
+const LURE = [
+  { x: 33.5 * T, y: 21.5 * T },
+  { x: 37.5 * T, y: 19.5 * T },
+];
 
 export interface GridRun {
   world: World;
@@ -273,12 +297,16 @@ export function playGrid(seed: number, plan: GridPlan): GridRun {
   w.start();
   const e = w.units.find((u) => u.kind === 'engineer')!;
   const squad = w.units.find((u) => u.kind === 'tranq')!;
+  const jeep = w.units.find((u) => u.kind === 'jeep')!;
   const southRaptor = w.dinos.find((d) => d.state === 'loose' && d.patrol)!;
   const fixed: number[] = [];
   let seenAt = -1;
   let next = 0;
   let sent = false;
   let home = false;
+  // 'ride': 0 waiting, 1 climbing in, 2 driving, 3 dropped. 'lure': 0 waiting, 1 climbing in, 2 running, 3 going home.
+  let ride = 0;
+  let leg = 0;
   while (w.phase !== 'ended') {
     w.update(1 / 60);
     for (const ev of w.events) {
@@ -300,6 +328,31 @@ export function playGrid(seed: number, plan: GridPlan): GridRun {
       if (plan.squad === 'decoy') orderMove(w, [squad.id], 27.5 * T, 16.5 * T);
       else orderAttack(w, [squad.id], southRaptor.id);
       sent = true;
+    }
+    if (plan.jeep === 'ride' && !jeep.dead && goal === w.substations[1]) {
+      if (ride === 0) {
+        orderBoard(w, [e.id], jeep.id);
+        ride = 1;
+      } else if (ride === 1 && e.aboard) {
+        orderMove(w, [jeep.id], RIDE_DROP.x, RIDE_DROP.y);
+        ride = 2;
+      } else if (ride === 2 && !e.aboard) ride = 3;
+      if (ride < 3) continue;
+    }
+    if (plan.jeep === 'lure' && !jeep.dead && !squad.dead) {
+      if (south && ride === 0) {
+        orderBoard(w, [squad.id], jeep.id);
+        ride = 1;
+      } else if (ride === 1 && squad.aboard) ride = 2;
+      if (ride === 2 && jeep.order === 'idle') {
+        if (!south) {
+          orderMove(w, [jeep.id], 6.5 * T, 17.5 * T);
+          ride = 3;
+        } else {
+          const p = LURE[leg++ % LURE.length];
+          orderMove(w, [jeep.id], p.x, p.y);
+        }
+      }
     }
     // While the raptors are after the squad, the Engineer can go straight in.
     const busy = sent && !squad.dead && w.dinos.some((d) => d.state === 'loose' && d.target?.type === 'unit' && d.target.id === squad.id);

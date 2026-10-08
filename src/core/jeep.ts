@@ -3,7 +3,12 @@ import { nearestOpenTile } from './nav';
 import type { Unit } from './units';
 import type { World } from './world';
 
-/** Level 5's Patrol 4x4: who is inside, getting in, and getting out. Orders and driving are in units.ts. */
+/** The Patrol 4x4: who is inside, getting in, and getting out, and whether its engine is running. Orders and driving are in units.ts. */
+
+/** A 4x4 on the move: its engine is running, and calm raptors near it hear it (JEEP.noiseTiles). Parked, it's quiet. */
+export function engineRunning(u: Unit): boolean {
+  return u.kind === 'jeep' && !u.dead && (u.order === 'move' || u.order === 'attack');
+}
 
 /** Troops riding in the 4x4. */
 export function passengers(w: World, jeep: Unit): Unit[] {

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { DINO_AI, DINOS, UNITS, type AnimalKind, type UnitKind } from '../config';
+import { DINO_AI, DINOS, JEEP, UNITS, type AnimalKind, type UnitKind } from '../config';
 import type { DinoState } from '../core/dinos';
 import type { VisitorMode } from '../core/visitors';
 import { GUEST_SLOT, SCALE, type Assets, type DinoTemplate, type PersonTemplate } from './assets';
@@ -118,6 +118,10 @@ const heavySelGeo = new THREE.RingGeometry(0.36, 0.44, 48).rotateX(-Math.PI / 2)
 // The 4x4's rings: wide enough to go round it, with the same line weight as a troop's.
 const jeepRingGeo = new THREE.RingGeometry(0.66, 0.715, 64).rotateX(-Math.PI / 2);
 const jeepSelGeo = new THREE.RingGeometry(0.64, 0.72, 64).rotateX(-Math.PI / 2);
+// While the 4x4 drives, a ring on the ground shows how far raptors hear its engine, and a pulse runs out to it.
+const noiseGeo = new THREE.RingGeometry(JEEP.noiseTiles - 0.06, JEEP.noiseTiles, 128).rotateX(-Math.PI / 2);
+const pulseGeo = new THREE.RingGeometry(0.92, 1, 96).rotateX(-Math.PI / 2);
+const NOISE_PULSE_SECONDS = 0.9;
 const teamRingMat = new THREE.MeshBasicMaterial({ color: col('#4d8dff'), transparent: true, opacity: 0.7, depthWrite: false });
 // Selected: a plain yellow ring, kept under the bloom threshold so it reads without glaring.
 const selRingMat = new THREE.MeshBasicMaterial({ color: col('#f2c94a'), transparent: true, opacity: 0.85, depthWrite: false });
@@ -208,6 +212,10 @@ interface JeepActor {
   bar: Bar;
   blob: THREE.Mesh;
   driver: TroopActor;
+  /** How far its engine is heard, shown while it drives, and the pulse running out to it. */
+  noise: THREE.Mesh;
+  pulse: THREE.Mesh;
+  pulseT: number;
 }
 
 interface GuestActor {
@@ -319,7 +327,7 @@ export class Actors {
     for (const a of this.dinos.values()) this.root.remove(a.obj, a.bar.group, a.health.group, a.blob);
     for (const a of this.troops.values()) this.root.remove(a.obj, a.ring, a.bar.group, a.blob);
     for (const t of this.towers.values()) this.root.remove(t.build.group, t.bar.group);
-    for (const j of this.jeeps.values()) this.root.remove(j.build.group, j.ring, j.bar.group, j.blob, j.driver.obj);
+    for (const j of this.jeeps.values()) this.root.remove(j.build.group, j.ring, j.bar.group, j.blob, j.driver.obj, j.noise, j.pulse);
     this.jeeps.clear();
     for (const g of [...this.guests.values(), ...this.fallen, ...this.guestPool]) this.root.remove(g.obj);
     for (const c of this.corpses) this.root.remove(c.obj);
@@ -461,8 +469,12 @@ export class Actors {
     const driver = this.makeTroop({ ...u, id: u.id + 1, kind: 'tranq' });
     // The driver belongs to the 4x4: no ring, bar, or shadow of its own.
     this.root.remove(driver.ring, driver.bar.group, driver.blob);
-    this.root.add(build.group, ring, bar.group, blob);
-    return { build, rotY: facingToRotY(u.facing), lastX: u.x, lastZ: u.y, speed: 0, ring, bar, blob, driver };
+    const noise = new THREE.Mesh(noiseGeo, new THREE.MeshBasicMaterial({ color: col('#ffd98a'), transparent: true, opacity: 0.4, depthWrite: false }));
+    const pulse = new THREE.Mesh(pulseGeo, new THREE.MeshBasicMaterial({ color: col('#ffd98a'), transparent: true, opacity: 0, depthWrite: false }));
+    noise.renderOrder = pulse.renderOrder = 2;
+    noise.visible = pulse.visible = false;
+    this.root.add(build.group, ring, bar.group, blob, noise, pulse);
+    return { build, rotY: facingToRotY(u.facing), lastX: u.x, lastZ: u.y, speed: 0, ring, bar, blob, driver, noise, pulse, pulseT: 0 };
   }
 
   /** Bends a troop's legs to sit, after its clip has posed it. */
@@ -696,6 +708,15 @@ export class Actors {
       j.ring.position.set(x, 0.02, z);
       j.blob.position.set(x, 0.015, z);
       j.blob.rotation.y = j.rotY;
+      const loud = !u.dead && (u.order === 'move' || u.order === 'attack');
+      j.noise.visible = j.pulse.visible = loud;
+      if (loud) {
+        j.pulseT = (j.pulseT + dt / NOISE_PULSE_SECONDS) % 1;
+        j.noise.position.set(x, 0.03, z);
+        j.pulse.position.set(x, 0.03, z);
+        j.pulse.scale.setScalar(Math.max(0.05, j.pulseT * JEEP.noiseTiles));
+        (j.pulse.material as THREE.MeshBasicMaterial).opacity = 0.45 * (1 - j.pulseT);
+      }
       const hurt = u.hp < u.maxHp;
       j.bar.group.visible = hurt;
       if (hurt) {
@@ -821,7 +842,7 @@ export class Actors {
     for (const [id, j] of this.jeeps) {
       if (seenU.has(id)) continue;
       // Wrecked: it stays where it stopped, dark, a few seconds, then goes.
-      this.root.remove(j.ring, j.bar.group, j.blob, j.driver.obj);
+      this.root.remove(j.ring, j.bar.group, j.blob, j.driver.obj, j.noise, j.pulse);
       j.build.group.position.y -= dt * 0.05;
       if (j.build.group.position.y < -0.2) {
         this.root.remove(j.build.group);

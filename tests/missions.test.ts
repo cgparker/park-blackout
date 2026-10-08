@@ -25,6 +25,18 @@ function run(w: World, seconds: number, until?: () => boolean): GameEvent[] {
 }
 
 const loose = (w: World) => w.dinos.filter((d) => d.state === 'loose');
+/**
+ * Level 5: the T. rex reaches the cage and a troop darts it, so it smashes through and the fight starts. Returns the
+ * events up to the raptors coming out.
+ */
+function startFight(w: World): GameEvent[] {
+  const rex = w.dinos.find((d) => d.kind === 'trex')!;
+  const events = run(w, 6, () => rex.target?.type === 'segment' && rex.cooldown > 0);
+  const troop = w.units.find((u) => u.kind === 'tranq')!;
+  sedate(w, rex, 0, troop.id);
+  events.push(...run(w, 3, () => w.dinos.some((d) => d.kind === 'raptor' && d.state === 'loose' && d.target?.type === 'dino')));
+  return events;
+}
 /** An Engineer standing on the first work tile of a substation. */
 function engineerAt(w: World, subIndex: number, tile = 0) {
   const s = w.substations[subIndex];
@@ -37,9 +49,9 @@ describe('level 4: the park after the blackout', () => {
   const team = (w: World) => ({ e: w.units.find((u) => u.kind === 'engineer')!, sq: w.units.find((u) => u.kind === 'tranq')! });
   /** A tile centre, in world pixels. */
   const at = (x: number, y: number) => ({ x: (x + 0.5) * T, y: (y + 0.5) * T });
-  /** Puts the team somewhere quiet, away from the routes. */
+  /** Puts the team somewhere quiet, away from the routes, with the 4x4 parked out of the way. */
   function parkTeam(w: World) {
-    for (const u of w.units) Object.assign(u, at(3, 19));
+    for (const u of w.units) Object.assign(u, u.kind === 'jeep' ? at(3, 22) : at(3, 19));
   }
   /** A spot on open ground a few tiles ahead of a raptor, in its cone and in clear sight. */
   function inFront(w: World, d: { x: number; y: number; facing: number }) {
@@ -52,7 +64,7 @@ describe('level 4: the park after the blackout', () => {
     throw new Error('no open ground in front of the raptor');
   }
 
-  it('starts dark, with one Engineer, one Tranq Squad, three broken substations, and two raptors on patrol', () => {
+  it('starts dark, with one Engineer, one Tranq Squad, three broken substations, and three raptors on patrol', () => {
     const w = new World({ seed: 1, level: 4 });
     const cfg = MISSIONS[4];
     expect(w.exhibits.map((e) => e.kind)).toEqual(cfg.park.map((p) => p.kind));
@@ -66,10 +78,10 @@ describe('level 4: the park after the blackout', () => {
       expect(w.dinoWalk(s.x, s.y)).toBe(false);
       expect(w.unitWalk(s.x, s.y)).toBe(false);
     }
-    expect(w.startedLoose).toEqual({ raptor: 2 });
+    expect(w.startedLoose).toEqual({ raptor: 3 });
     expect(w.trainable).toEqual([]);
     expect(w.money).toBe(0);
-    expect(w.units.map((u) => u.kind).sort()).toEqual(['engineer', 'tranq']);
+    expect(w.units.map((u) => u.kind).sort()).toEqual(['engineer', 'jeep', 'tranq']);
     expect(w.teamSize).toBe(2);
     for (const d of raptors(w)) expect(d.patrol?.length).toBeGreaterThan(1);
     // The T. rex paddock's south side is dented.
@@ -77,7 +89,7 @@ describe('level 4: the park after the blackout', () => {
     expect(paddock.segments.filter((s) => !s.corner && s.ny === 1).every((s) => s.hp === 80)).toBe(true);
     w.start();
     expect(w.phase).toBe('mission');
-    expect(w.log[0]).toEqual({ t: 0, type: 'start', loose: { raptor: 2 }, nest: false, substations: 3, fight: false, stealth: true });
+    expect(w.log[0]).toEqual({ t: 0, type: 'start', loose: { raptor: 3 }, nest: false, substations: 3, fight: false, stealth: true });
   });
 
   it('the west raptors go for their fence at their set time, not before', () => {
@@ -92,25 +104,108 @@ describe('level 4: the park after the blackout', () => {
     expect(events.some((e) => e.type === 'fenceHit' && e.exhibitId === pen.id)).toBe(true);
   });
 
-  it('a raptor walks its route, and at each stop it looks around', () => {
+  it('a raptor walks its route, and at each stop it looks around for a while', () => {
     const w = new World({ seed: 3, level: 4 });
     w.start();
     parkTeam(w);
     const d = raptors(w)[0];
     const route = d.patrol!;
     const first = d.patrolIndex;
-    run(w, 30, () => d.look > 0);
+    // It may stop partway, or sniff off to one side, but it gets to the stop.
+    run(w, 60, () => d.look > 0 && !d.wander);
     expect(Math.hypot(d.x - route[first].x, d.y - route[first].y)).toBeLessThan(3);
-    // It sweeps its gaze either side of the way it came, then walks on to the next stop.
+    const [lo, hi] = STEALTH.lookSeconds;
+    expect(d.lookTotal).toBeGreaterThanOrEqual(lo);
+    expect(d.lookTotal).toBeLessThanOrEqual(hi);
+    // It sweeps its gaze either side of the way it came, then walks on to the next stop one way or the other.
     const facings: number[] = [];
-    run(w, STEALTH.lookSeconds + 0.5, () => {
+    run(w, hi + 0.5, () => {
       facings.push(d.facing);
       return d.look <= 0;
     });
     expect(Math.max(...facings) - Math.min(...facings)).toBeGreaterThan(((STEALTH.lookDeg * 2 - 10) * Math.PI) / 180);
-    expect(d.patrolIndex).toBe((first + 1) % route.length);
-    run(w, 1);
+    expect([(first + 1) % route.length, (first + route.length - 1) % route.length]).toContain(d.patrolIndex);
+    run(w, 0.5);
     expect(d.look).toBe(0);
+  });
+
+  it('routes are loose: looks of different lengths, stops partway, sniffs off the route, and turns back', () => {
+    const w = new World({ seed: 5, level: 4 });
+    w.start();
+    parkTeam(w);
+    // Keep them calm and on their routes the whole time, whatever they come across.
+    const watched = raptors(w);
+    const looks = new Set<number>();
+    let pauses = 0;
+    let sniffs = 0;
+    let turns = 0;
+    const was = watched.map((d) => ({ index: d.patrolIndex, dir: d.patrolDir, wander: d.wander }));
+    for (let i = 0; i < 300 / STEP; i++) {
+      w.update(STEP);
+      w.events = [];
+      watched.forEach((d, k) => {
+        if (d.look > 0) looks.add(Math.round(d.lookTotal * 10));
+        if (d.wander && d.wander !== was[k].wander) {
+          // Off the route: further than a tile from every leg.
+          const route = d.patrol!;
+          const off = route.every((a, j) => {
+            const b = route[(j + 1) % route.length];
+            const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+            const t = Math.max(0, Math.min(1, ((d.wander!.x - a.x) * (b.x - a.x) + (d.wander!.y - a.y) * (b.y - a.y)) / len ** 2));
+            return Math.hypot(a.x + (b.x - a.x) * t - d.wander!.x, a.y + (b.y - a.y) * t - d.wander!.y) > 1.5 * T;
+          });
+          if (off) sniffs++;
+          else pauses++;
+        }
+        if (d.patrolDir !== was[k].dir) turns++;
+        was[k] = { index: d.patrolIndex, dir: d.patrolDir, wander: d.wander };
+      });
+    }
+    expect(watched.every((d) => d.state === 'loose' && !d.target)).toBe(true);
+    expect(looks.size).toBeGreaterThan(5);
+    expect(pauses).toBeGreaterThan(0);
+    expect(sniffs).toBeGreaterThan(0);
+    expect(turns).toBeGreaterThan(0);
+  });
+
+  it('the 4x4 is loud: a calm raptor that hears it driving comes to look, then goes back to its route; parked, it’s quiet', () => {
+    const w = new World({ seed: 6, level: 4 });
+    w.start();
+    parkTeam(w);
+    expect(w.units.map((u) => u.kind).sort()).toEqual(['engineer', 'jeep', 'tranq']);
+    const jeep = w.units.find((u) => u.kind === 'jeep')!;
+    // A raptor in the open south of the west pen, facing east, and the 4x4 parked behind it, in earshot.
+    const d = raptors(w)[0];
+    Object.assign(d, at(15, 20), { facing: 0, look: 0, wander: null, path: [], pathIndex: 0 });
+    Object.assign(jeep, at(11, 22), { order: 'idle', dest: null, path: [], pathIndex: 0 });
+    let events = run(w, 0.5);
+    expect(d.heard).toBeNull();
+    expect(events.some((e) => e.type === 'heard')).toBe(false);
+    // It drives off west. The raptor hears it, drops what it was doing, and follows the sound while it can hear it.
+    orderMove(w, [jeep.id], 1.5 * T, 22.5 * T);
+    events = run(w, 0.1);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'heard', dinoId: d.id, unitId: jeep.id }));
+    expect(d.heard).not.toBeNull();
+    run(w, 3, () => jeep.order === 'idle');
+    // Parked out of earshot and out of sight: the raptor goes to the last place it heard it and looks around there.
+    expect(Math.hypot(jeep.x - d.x, jeep.y - d.y)).toBeGreaterThan(JEEP.noiseTiles * T);
+    const last = { ...d.heard! };
+    expect(Math.hypot(last.x - jeep.x, last.y - jeep.y)).toBeGreaterThan(STEALTH.sightTiles * T);
+    run(w, 10, () => !d.heard);
+    expect(Math.hypot(d.x - last.x, d.y - last.y)).toBeLessThan(T / 2);
+    expect(d.target).toBeNull();
+    run(w, 0.2);
+    expect(d.look).toBeGreaterThan(0);
+    // Then back to its route.
+    run(w, STEALTH.pauseSeconds[1] + 0.5);
+    expect(d.look === 0 || !d.wander).toBe(true);
+    expect(d.state).toBe('loose');
+    expect(d.target).toBeNull();
+    const route = d.patrol!;
+    const stop = route[d.patrolIndex];
+    const before = Math.hypot(stop.x - d.x, stop.y - d.y);
+    run(w, 2);
+    expect(Math.hypot(stop.x - d.x, stop.y - d.y)).toBeLessThan(before);
   });
 
   it('a raptor sees what is in its cone and in range, not behind it or past cover, and notices a troop that walks into it', () => {
@@ -150,9 +245,9 @@ describe('level 4: the park after the blackout', () => {
         expect(w.dinoWalk(Math.floor(d.x / T), Math.floor(d.y / T))).toBe(true);
       }
     }
-    expect(starts.size).toBeGreaterThan(12);
-    // Two routes, each walked both ways.
-    expect(ways.size).toBe(4);
+    expect(starts.size).toBeGreaterThan(20);
+    // Three routes, each walked both ways.
+    expect(ways.size).toBe(6);
   });
 
   it('a troop in a raptor’s cone takes a moment to make out: it stops and stares, and a troop that gets away in time is lost', () => {
@@ -362,7 +457,7 @@ describe('level 4: the park after the blackout', () => {
   });
 
   it('a fixed substation powers its pens: gaps seal and animals inside are contained', () => {
-    const w = new World({ seed: 10, level: 4 });
+    const w = new World({ seed: 12, level: 4 });
     w.start();
     parkTeam(w);
     const west = w.substations[0];
@@ -392,7 +487,7 @@ describe('level 4: the park after the blackout', () => {
     expect(w.result).toMatchObject({ won: true, reason: 'secured', level: 4, stars: 3, title: 'Power back on' });
     expect(w.result!.detail).toMatch(/The raptors never saw the Engineer\./);
     expect(w.result!.mission).toMatchObject({ fixed: 3, substations: 3, spotted: false });
-    expect(raptors(w).length).toBe(2);
+    expect(raptors(w).length).toBe(3);
 
     const seen = new World({ seed: 11, level: 4 });
     seen.start();
@@ -423,7 +518,7 @@ describe('level 4: the park after the blackout', () => {
 });
 
 describe('level 5: the fight', () => {
-  it('starts with a fixed team, no money, the fighters loose, and some pens dark', () => {
+  it('starts with a fixed team, no money, the T. rex loose by a caged raptor pack, and some pens dark', () => {
     const w = new World({ seed: 1, level: 5 });
     const cfg = MISSIONS[5];
     expect(w.units.map((u) => u.kind).sort()).toEqual(cfg.team!.map((m) => m.kind).sort());
@@ -432,17 +527,70 @@ describe('level 5: the fight', () => {
     expect(w.trainable).toEqual([]);
     w.start();
     expect(enqueueUnit(w, 'tranq')).toBe(false);
-    expect(w.startedLoose).toEqual({ trex: 1, raptor: 3 });
+    expect(w.startedLoose).toEqual({ trex: 1 });
     expect(w.powerOn).toBe(true);
     expect(w.exhibits.map((e) => e.powered)).toEqual(cfg.park.map((p) => p.powered ?? true));
     expect(w.log[0]).toMatchObject({ type: 'start', fight: true, substations: 0 });
+    // The cage: a raptor pen with no power and a fence far stronger than concrete, which looks reinforced.
+    const cages = w.exhibits.filter((e) => e.cage);
+    expect(cages.map((e) => e.kind)).toEqual(['raptor']);
+    const hp = cfg.park.find((p) => p.cageHp)!.cageHp!;
+    expect(hp).toBeGreaterThan(FENCE.concreteHp);
+    expect(cages[0].segments.every((s) => s.hp === hp && s.maxHp === hp)).toBe(true);
+    expect(cages[0].reinforced && !cages[0].powered).toBe(true);
+    expect(w.dinos.filter((d) => d.home === cages[0].id && d.state === 'penned')).toHaveLength(3);
+  });
+
+  it('left alone, the T. rex breaks into the cage in about 30 s and the raptors come out to fight it', () => {
+    const w = new World({ seed: 1, level: 5 });
+    w.start();
+    const rex = w.dinos.find((d) => d.kind === 'trex')!;
+    const cage = w.exhibits.find((e) => e.cage)!;
+    run(w, 5);
+    expect(rex.target).toMatchObject({ type: 'segment', exhibitId: cage.id });
+    const events = run(w, 40, () => cage.segments.some((s) => s.hp <= 0));
+    expect(w.phaseTime).toBeGreaterThan(25);
+    expect(w.phaseTime).toBeLessThan(35);
+    expect(events.some((e) => e.type === 'breach' && e.exhibitId === cage.id)).toBe(true);
+    run(w, 2);
+    const raptors = w.dinos.filter((d) => d.home === cage.id);
+    expect(raptors.every((r) => r.state === 'loose' && r.target?.type === 'dino' && r.target.id === rex.id)).toBe(true);
+    expect(w.log).toContainEqual(expect.objectContaining({ type: 'escape', kind: 'raptor', cage: true }));
+  });
+
+  it('at the cage the T. rex pays troops no mind: idle troops hold fire, and a dart makes it smash straight through', () => {
+    const w = new World({ seed: 2, level: 5 });
+    w.start();
+    const rex = w.dinos.find((d) => d.kind === 'trex')!;
+    const cage = w.exhibits.find((e) => e.cage)!;
+    run(w, 5);
+    // A Heavy Team standing well in range, idle: it holds fire, and the T. rex keeps at the fence.
+    const heavy = w.units.find((u) => u.kind === 'heavy')!;
+    Object.assign(heavy, { x: rex.x - 3 * T, y: rex.y, order: 'idle', dest: null, path: [], pathIndex: 0 });
+    run(w, 5);
+    expect(rex.sedation).toBe(DINOS.trex.sedation);
+    expect(rex.target).toMatchObject({ type: 'segment', exhibitId: cage.id });
+    expect(cage.segments.every((s) => s.hp > 0)).toBe(true);
+    // Told to dart it, it does, and the next hit breaks the cage. It doesn't lock on or roar.
+    orderAttack(w, [heavy.id], rex.id);
+    const events = run(w, 4, () => cage.segments.some((s) => s.hp <= 0));
+    expect(cage.segments.some((s) => s.hp <= 0)).toBe(true);
+    expect(rex.sedation).toBeLessThan(DINOS.trex.sedation);
+    expect(w.phaseTime).toBeLessThan(15);
+    events.push(...run(w, 2));
+    expect(rex.lockId).toBe(0);
+    expect(events.some((e) => e.type === 'roar')).toBe(false);
+    expect(w.dinos.filter((d) => d.home === cage.id).every((r) => r.state === 'loose')).toBe(true);
   });
 
   it('raptors fight the T. rex and wound it; the T. rex kills the most wounded raptor first', () => {
     const w = new World({ seed: 2, level: 5 });
     w.start();
+    startFight(w);
+    const t0 = w.phaseTime;
     const rex = w.dinos.find((d) => d.kind === 'trex')!;
     const raptors = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
+    expect(raptors).toHaveLength(3);
     run(w, 5);
     expect(rex.health).toBeLessThan(DINOS.trex.health);
     expect(raptors.every((r) => r.target?.type === 'dino' && r.target.id === rex.id)).toBe(true);
@@ -451,14 +599,16 @@ describe('level 5: the fight', () => {
     expect(killed).toMatchObject({ type: 'killed', kind: 'raptor', by: 'trex' });
     // One bite every FIGHT.trexBiteSeconds, the first at once, until the most wounded raptor's health runs out.
     const bites = Math.ceil(DINOS.raptor.health / FIGHT.trexBite);
-    expect(w.phaseTime).toBeGreaterThan((bites - 1) * FIGHT.trexBiteSeconds - 1);
-    expect(w.phaseTime).toBeLessThan(bites * FIGHT.trexBiteSeconds + 5);
+    expect(w.phaseTime - t0).toBeGreaterThan((bites - 1) * FIGHT.trexBiteSeconds - 1);
+    expect(w.phaseTime - t0).toBeLessThan(bites * FIGHT.trexBiteSeconds + 5);
     expect(w.log.some((e) => e.type === 'killed')).toBe(true);
   });
 
   it('the fight pushes slowly toward a dark pen with animals in it and breaks in; raptors inside join', () => {
     const w = new World({ seed: 3, level: 5 });
     w.start();
+    startFight(w);
+    run(w, 1);
     const rex = w.dinos.find((d) => d.kind === 'trex')!;
     const x0 = rex.x;
     const y0 = rex.y;
@@ -467,7 +617,11 @@ describe('level 5: the fight', () => {
     expect(moved).toBeLessThan(FIGHT.pushSpeed * 10 * 1.3);
     expect(moved).toBeGreaterThan(FIGHT.pushSpeed * 10 * 0.5);
     // Keep the raptors alive and fighting, so it can be watched all the way to the raptor pen.
-    const events = run(w, 90, () => w.dinos.some((d) => d.home === w.exhibits[0].id && d.state === 'loose'));
+    const fighters = loose(w).filter((d) => d.kind === 'raptor');
+    const events = run(w, 90, () => {
+      for (const r of fighters) r.health = DINOS.raptor.health;
+      return w.dinos.some((d) => d.home === w.exhibits[0].id && d.state === 'loose');
+    });
     expect(events.some((e) => e.type === 'breach')).toBe(true);
     const freed = w.dinos.filter((d) => d.home === w.exhibits[0].id && d.state === 'loose');
     expect(freed.length).toBeGreaterThan(0);
@@ -479,6 +633,7 @@ describe('level 5: the fight', () => {
   it('a darted raptor leaves the fight for whoever darted it, alone, and goes back once it loses them', () => {
     const w = new World({ seed: 4, level: 5 });
     w.start();
+    startFight(w);
     run(w, 1);
     const raptors = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
     const raptor = raptors[0];
@@ -501,6 +656,7 @@ describe('level 5: the fight', () => {
   it('while two raptors are on it, the T. rex ignores whoever darts it; with fewer, it locks on and roars before it comes', () => {
     const w = new World({ seed: 8, level: 5 });
     w.start();
+    startFight(w);
     run(w, 2);
     const rex = w.dinos.find((d) => d.kind === 'trex')!;
     const heavy = w.units.find((u) => u.kind === 'heavy')!;
@@ -545,6 +701,7 @@ describe('level 5: the fight', () => {
   it('three animals killed loses the level; darting every animal wins', () => {
     const w = new World({ seed: 5, level: 5 });
     w.start();
+    startFight(w);
     const raptors = w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose');
     for (const r of raptors) hurtAnimal(w, r, 1000, null);
     run(w, STEP);
@@ -552,6 +709,8 @@ describe('level 5: the fight', () => {
 
     const win = new World({ seed: 5, level: 5 });
     win.start();
+    startFight(win);
+    expect(loose(win)).toHaveLength(4);
     for (const d of loose(win)) sedate(win, d, 10000, 0);
     run(win, STEP);
     expect(win.result).toMatchObject({ won: true, reason: 'secured', stars: 3, title: 'The fight is over' });

@@ -21,6 +21,8 @@ export interface Exhibit {
   /** One segment per border tile, clockwise from the top-left corner. */
   segments: FenceSegment[];
   reinforced: boolean;
+  /** Level 5: a cage the T. rex is breaking into (ParkExhibit.cageHp). A dart makes it smash through. */
+  cage: boolean;
   /** Whether its fence has power. Animals inside leave a powered fence alone, and nothing can damage it. */
   powered: boolean;
   /**

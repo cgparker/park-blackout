@@ -13,8 +13,11 @@ export type LogEntry =
    * are down and whether the raptors are on patrol (level 4), and whether a fight is on (level 5).
    */
   | { t: number; type: 'start'; loose: Partial<Record<AnimalKind, number>>; nest: boolean; substations: number; fight: boolean; stealth: boolean }
-  /** The first animal out of one exhibit. `evacuation` marks the escape that started the evacuation. */
-  | { t: number; type: 'escape'; kind: AnimalKind; inPark: number; evacuation: boolean }
+  /**
+   * The first animal out of one exhibit. `evacuation` marks the escape that started the evacuation, and `cage` (level 5)
+   * an exhibit the T. rex broke into to start the fight.
+   */
+  | { t: number; type: 'escape'; kind: AnimalKind; inPark: number; evacuation: boolean; cage?: boolean }
   /** `near` is the closest exhibit, if any is close. `unguardedPen` means a raptor pen with no troops beside it was close. */
   | { t: number; type: 'death'; cause: CasualtyCause; near: ExhibitKind | null; unguardedPen: boolean }
   /** A troop, tower, or the 4x4 lost. `alone` means no more than one other troop was close by. */

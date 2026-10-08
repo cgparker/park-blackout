@@ -531,27 +531,63 @@ interface ShowdownPlan {
   wait?: number;
   /** Seconds between decisions. */
   reaction?: number;
+  /**
+   * Nobody darts until the T. rex breaks into the cage on its own. Meanwhile the team gathers (the Heavy Teams in the
+   * 4x4 if it's used), like a player getting their bearings: 'back', 6 tiles west of the cage; 'close', 3 tiles from the
+   * T. rex, in range as the fight starts.
+   */
+  stage?: 'back' | 'close';
 }
 
-/** Level 5, played with a plan. Also counts the pens the fight broke into. */
+/** Level 5, played with a plan. Also counts the pens the fight broke into, not counting the cage it starts at. */
 function showdown(seed: number, opts: ShowdownPlan) {
   const w = new World({ seed, level: 5 });
   w.start();
   let next = opts.wait ?? 0;
   const heavies = w.units.filter((u) => u.kind === 'heavy');
   const jeep = w.units.find((u) => u.kind === 'jeep')!;
+  const cage = w.exhibits.find((ex) => ex.cage)!;
+  const rally = footprintCenter(cage.footprint, T);
+  rally.x -= 6 * T;
   let stage = 0;
   let breaches = 0;
   let spin = 0;
+  let caged = true;
   const order = opts.order ?? 'raptors';
   while (w.phase !== 'ended') {
     w.update(1 / 60);
-    breaches += w.events.filter((e) => e.type === 'breach').length;
+    for (const e of w.events) {
+      if (e.type !== 'breach') continue;
+      if (e.exhibitId === cage.id) caged = false;
+      else breaches++;
+    }
     w.events = [];
     if (w.time < next) continue;
     next = w.time + Math.max(0.5, opts.reaction ?? 0.5);
     const loose = looseNow(w);
     if (!loose.length) continue;
+    if (opts.stage && caged) {
+      // Gather by the cage and hold fire.
+      const rex = loose.find((d) => d.kind === 'trex');
+      if (opts.stage === 'close' && rex) {
+        rally.x = rex.x - 3 * T;
+        rally.y = rex.y;
+      }
+      const walkers = w.units.filter((u) => (u.kind === 'heavy' || u.kind === 'tranq') && !u.dead && !u.aboard && !(opts.jeep && u.kind === 'heavy'));
+      if (opts.jeep && stage === 0) {
+        orderBoard(w, heavies.map((h) => h.id), jeep.id);
+        stage = 1;
+      }
+      if (opts.jeep && stage === 1 && passengers(w, jeep).length === heavies.length) {
+        orderMove(w, [jeep.id], rally.x, rally.y + T);
+        stage = 3;
+      }
+      const idle = walkers.filter((u) => u.order !== 'move' && Math.hypot(u.x - rally.x, u.y - rally.y) > 2 * T);
+      if (idle.length) orderMove(w, idle.map((u) => u.id), rally.x, rally.y);
+      continue;
+    }
+    // The 4x4 dropped its Heavy Teams by the cage, so it joins the plan as if it had driven them to the fight.
+    if (stage === 3 && !passengers(w, jeep).length) stage = 2;
     const troops = w.units.filter((u) => (u.kind === 'heavy' || u.kind === 'tranq') && !u.dead && !u.aboard);
     const rex = loose.find((d) => d.kind === 'trex');
     const raptors = loose.filter((d) => d.kind === 'raptor');
@@ -626,6 +662,8 @@ describe.skipIf(!process.env.BALANCE)('levels 4 and 5', () => {
       ['Sneak, squad sent straight at the south raptor', { engineer: 'sneak', squad: 'dart' }],
       ['Sneak, squad darts the south raptor from behind', { engineer: 'sneak', squad: 'ambush' }],
       ['Straight to each substation', { engineer: 'rush' }],
+      ['Sneak, ride the 4x4 toward the north one', { engineer: 'sneak', jeep: 'ride' }],
+      ['Sneak, squad drives the 4x4 as a lure at the south', { engineer: 'sneak', jeep: 'lure' }],
     ];
     const rows = plans.map(([name, plan]) => {
       const runs = Array.from({ length: seeds }, (_, i) => playGrid(i + 1, plan));
@@ -661,6 +699,13 @@ describe.skipIf(!process.env.BALANCE)('levels 4 and 5', () => {
       ['4x4, orders start after 10 s', { jeep: true, wait: 10 }],
       ['Walk, orders start after 20 s', { jeep: false, wait: 20 }],
       ['4x4, 3 s orders', { jeep: true, reaction: 3 }],
+      ['Wait 6 tiles back, 4x4, raptors first', { jeep: true, stage: 'back' }],
+      ['Wait 6 tiles back, 4x4, raptors first, decoy', { jeep: true, stage: 'back', decoy: true }],
+      ['Wait 6 tiles back, 4x4, T. rex first', { jeep: true, stage: 'back', order: 'rex' }],
+      ['Wait 6 tiles back, walk, raptors first', { jeep: false, stage: 'back' }],
+      ['Wait in range, 4x4, raptors first', { jeep: true, stage: 'close' }],
+      ['Wait in range, 4x4, T. rex first', { jeep: true, stage: 'close', order: 'rex' }],
+      ['Wait in range, walk, T. rex first', { jeep: false, stage: 'close', order: 'rex' }],
     ];
     const rows = plans.map(([name, opts]) => {
       const runs = Array.from({ length: seeds }, (_, i) => showdown(i + 1, opts));

@@ -4,7 +4,8 @@ import { animalNoun } from '../core/report';
 /**
  * What the briefing says about each level. No Phaser and no DOM here, so the wording can be tested.
  * Level 1 teaches training and moving troops, level 2 fighting raptors that see in cones, level 3 building, level 4
- * sneaking past patrols to make repairs, and level 5 making do with a fixed team and the 4x4.
+ * sneaking past patrols to make repairs, with a loud 4x4 to use or leave, and level 5 making do with a fixed team and
+ * the 4x4.
  */
 
 export interface LevelInfo {
@@ -113,6 +114,7 @@ export function briefingFor(level: LevelId, seconds: number, villain: string): B
         'Tap the Engineer, then the side of a substation to work from. Work done stays done.',
         'A raptor’s cone is what it sees. Rock, pens, and substations block it.',
         'The cone turns orange while the raptor makes you out. Get out of sight before it’s sure.',
+        'Tap troops, then the 4x4, to load two. It’s quick, but raptors near it hear the engine and come to look.',
         'Stop halts the selected troops. Tap a pen to see when its animals break out.',
         move,
         look,
@@ -122,11 +124,11 @@ export function briefingFor(level: LevelId, seconds: number, villain: string): B
   if (level === 5) {
     return {
       title: 'Break up the fight',
-      intro: `The two raptors from the night came back with a third, and the T. rex broke out through a fence still being fixed. Now they are fighting, and every animal killed is lost to the park. The west raptor pen lost power again, and the fight is heading for it. You have ${teamWords(5)}. Dart them all before the park opens in ${clock(MISSIONS[5].timeLimitSeconds)}.`,
+      intro: `The crew caged the raptors from the night in the east pen, but it still has no power, and the T. rex is out and going for them. The cage holds it off for a little while. Once it’s in, they fight, and every animal killed is lost to the park. The west raptor pen has no power either. You have ${teamWords(5)}. Dart every animal that gets out before the park opens in ${clock(MISSIONS[5].timeLimitSeconds)}.`,
       controls: [
         'Tap troops, then tap the 4x4 to load two. Heavy Teams get the seats first.',
         'Tap the 4x4, then tap the map to drive. Tap an animal to drop the troops beside it.',
-        `Tap a troop, then a dinosaur to dart it. Whatever you dart comes for you, but not the T. rex while ${numberWord(FIGHT.shieldRaptors)} raptors are on it.`,
+        `Tap a troop, then a dinosaur to dart it. Whatever you dart comes for you, but not the T. rex at the cage or while ${numberWord(FIGHT.shieldRaptors)} raptors are on it.`,
         move,
         look,
       ],

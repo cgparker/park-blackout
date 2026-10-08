@@ -469,6 +469,12 @@ export interface ParkExhibit {
   animals?: number;
   /** One side's fence is dented down to this many HP at the start. */
   dent?: { side: Side; hp: number };
+  /**
+   * Level 5: a cage. Every segment of its fence starts with this much HP (concrete-strong or more looks reinforced). A
+   * T. rex breaking in has eyes only for the animals inside: it pays darts no mind, and a dart makes its next hit
+   * smash straight through, so darting it there only starts the fight sooner.
+   */
+  cageHp?: number;
   /** Seconds into the level when the animals inside go for the fence while it has no power. null: never on their own. */
   breakoutAt?: number | null;
   /** Whether its fence has power at the start. Default: yes, unless a broken substation powers it. */
@@ -562,8 +568,8 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
     carryHome: true,
     stars: [{ type: 'spend', max: 13500 }, { type: 'noTroopsLost' }],
   },
-  // Grid Down: right after the blackout, the power is still out. One Engineer and one Tranq Squad fix three
-  // substations, one zone each, while two raptors from the east pen walk their routes.
+  // Grid Down: right after the blackout, the power is still out. One Engineer and one Tranq Squad, with the Patrol
+  // 4x4, fix three substations, one zone each, while three raptors from the east pen walk their routes.
   4: {
     timeLimitSeconds: 210,
     clock: 'dawn',
@@ -572,6 +578,8 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
     team: [
       { kind: 'engineer', at: [5.6, 13.6] },
       { kind: 'tranq', at: [5.6, 15.2] },
+      // Quick, but loud (JEEP.noiseTiles): a way across the park, or a decoy, that can give the Engineer away.
+      { kind: 'jeep', at: [7, 12] },
     ],
     park: [
       { kind: 'raptor', x: 16, y: 14, breakoutAt: 60 },
@@ -582,14 +590,16 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
         x: 33,
         y: 17,
         open: 'right',
-        animals: 2,
-        // Each raptor starts somewhere along its route, either way round, so no two nights are the same.
+        // Each raptor starts somewhere along its route, either way round, so no two nights are the same. The routes
+        // are loose (STEALTH): the stops are where each one goes, not a timetable.
         patrols: [
           // South: round and round the south substation, a tile out from where an Engineer would stand.
           [[25, 18], [30, 18], [30, 23], [25, 23]],
           // North: up the east path, over the top of the north substation a tile out, a look back at its east side,
           // down the east edge, and back. Every side, and the east edge, is watched some of the time.
           [[31, 12], [31, 5], [29, 0], [36, 0], [36, 3], [37, 9]],
+          // Middle: a loop between the paddock and the south pasture, across the ways east from the west substation.
+          [[19, 10], [25, 10], [25, 16], [19, 16]],
         ],
       },
       { kind: 'pasture', x: 22, y: 20 },
@@ -605,7 +615,7 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
     carryHome: false,
     stars: [{ type: 'noTroopsLost' }, { type: 'neverSpotted' }],
   },
-  // Showdown: the T. rex and a raptor pack fight north of the east rocks. A fixed team and the Patrol 4x4.
+  // Showdown: the T. rex breaks into the cage holding the east raptors, and they fight. A fixed team and the Patrol 4x4.
   5: {
     timeLimitSeconds: 180,
     clock: 'opening',
@@ -622,7 +632,9 @@ export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
       { kind: 'raptor', x: 16, y: 14, powered: false, breakoutAt: null },
       { kind: 'pasture', x: 8, y: 8 },
       { kind: 'trex', x: 27, y: 7, open: 'bottom', out: [[28, 11]] },
-      { kind: 'raptor', x: 33, y: 17, open: 'left', out: [[27, 10.2], [29.3, 10.6], [28, 12]] },
+      // The east raptors are caged with no power, and the T. rex is already out and going for them. The cage holds it
+      // off for about 30 s, so there's time to look around before the fight starts.
+      { kind: 'raptor', x: 33, y: 17, powered: false, breakoutAt: null, cageHp: 1500 },
       // The south pasture has power of its own, as in level 4, so the fight heads for the west raptor pen.
       { kind: 'pasture', x: 22, y: 20 },
     ],
@@ -667,9 +679,21 @@ export const STEALTH = {
   noticeSeconds: 0.8,
   /** Level 4: walking speed on its route (px/s). */
   patrolSpeed: 45,
-  /** Level 4: at each stop on its route it looks around for this long, turning this far each way. */
-  lookSeconds: 2.5,
+  /** Level 4: at each stop on its route it looks around for a while (seconds, low to high), turning this far each way. */
+  lookSeconds: [1.5, 4] as readonly [number, number],
   lookDeg: 70,
+  /**
+   * Level 4: routes are loose, so they can't be learned by heart. At a stop, the chance it turns back the way it came.
+   * On each leg, the chance it stops partway to look around (for pauseSeconds), and the chance it wanders this many
+   * tiles off to one side to sniff, and looks around there instead.
+   */
+  turnBackChance: 0.2,
+  pauseChance: 0.3,
+  pauseSeconds: [1, 2.5] as readonly [number, number],
+  sniffChance: 0.25,
+  sniffTiles: [2, 4] as readonly [number, number],
+  /** A calm raptor that hears the 4x4 (JEEP.noiseTiles) trots to where it heard it at this speed (px/s), then looks around there for pauseSeconds. */
+  investigateSpeed: 90,
   /** A raptor that spots someone, or sees who darted it, calls the calm ones within this many tiles: the whole park. */
   alertTiles: 40,
   /** On the hunt it keeps track of its prey this far away (tiles), in any direction... */
@@ -708,8 +732,12 @@ export const FIGHT = {
   joinTiles: 8,
   /** A raptor's bite on the T. rex, once per raptor bite interval. */
   raptorBite: 5,
-  /** The T. rex bites the most wounded raptor in reach for this much, this often. */
-  trexBite: 20,
+  /**
+   * The T. rex bites the most wounded raptor in reach for this much, this often: a raptor in 4 bites, about 9 s after
+   * the fight starts. At 20 (5 bites) a team in place before the cage broke could dart the T. rex first and save every
+   * raptor, and the 4x4 had nothing left to teach.
+   */
+  trexBite: 25,
   trexBiteSeconds: 3,
   /** Raptors this close count as on the T. rex (tiles between centers, past both bodies). */
   engageTiles: 0.6,
@@ -727,13 +755,18 @@ export const FIGHT = {
   deadSeconds: 4,
 };
 
-/** Level 5's Patrol 4x4. */
+/** The Patrol 4x4, in levels 4 and 5. */
 export const JEEP = {
   seats: 2,
   /** A troop climbs in from this far past both bodies (px). */
   boardReachPx: 14,
   /** Tapping an animal with the 4x4 selected drives it to within this many tiles, then drops the troops. */
   dropTiles: 3.5,
+  /**
+   * Its engine is loud. While it drives, calm raptors this many tiles away or nearer hear it, through anything, and
+   * come to look where they heard it (STEALTH.investigateSpeed). Parked, it's quiet.
+   */
+  noiseTiles: 6,
 };
 
 export const NEST = {
@@ -805,6 +838,8 @@ export const COLORS = {
   engineerRing: 0xffd84d,
   jeep: 0x1d2d5a,
   jeepTrim: 0xe8f0ff,
+  /** How far raptors hear the 4x4's engine while it drives. */
+  engineNoise: 0xffd98a,
   health: 0xff4d4d,
   dead: 0x2a2a2a,
   /** Level 4: what a raptor on patrol sees, and the line to a troop it's after. */

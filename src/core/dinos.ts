@@ -1,8 +1,9 @@
-import { DINO_AI, DINOS, EXHIBITS, FIGHT, NEST, PACK, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
+import { DINO_AI, DINOS, EXHIBITS, FIGHT, JEEP, NEST, PACK, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
 import { damageUnit } from './combat';
 import { fenceRect, footprintCenter, inFootprint, type Exhibit, type FenceSegment } from './exhibit';
 import { Tile, type Point } from './grid';
 import { findPath, followPath, lineClear, nearestOpenTile, stepToward, toWaypoints, type PathFollower } from './nav';
+import { engineRunning } from './jeep';
 import { inView, noticed, preyOf, tracking, type PreyRef } from './stealth';
 import { canDart, onMap, type Unit } from './units';
 import { panicNear, type Visitor } from './visitors';
@@ -39,6 +40,10 @@ export interface Dino extends PathFollower {
   /** Seconds until a loose dinosaur rethinks its target. */
   think: number;
   repath: number;
+  /**
+   * Calm: the spot it's wandering to. A patrolling raptor's is a stop partway along a leg, or a sniff a few tiles off
+   * its route; it looks around there, then goes on to its next stop.
+   */
   wander: Point | null;
   wait: number;
   /** Seconds until the next bite or fence hit. */
@@ -75,11 +80,16 @@ export interface Dino extends PathFollower {
   cdy: number;
   /** Level 2: the nest its raptors stay by while they're calm. */
   nest: Point | null;
-  /** Level 4: its patrol route (world pixels), the stop it's walking to, and how long it has left looking around there. */
+  /**
+   * Level 4: its patrol route (world pixels), the stop it's walking to, which way round it's going (1 or -1), and how
+   * long it has left looking around, out of how long.
+   */
   patrol: Point[] | null;
   patrolIndex: number;
+  patrolDir: number;
   look: number;
-  /** The way it faced when it reached the stop. It looks around either side of it. */
+  lookTotal: number;
+  /** The way it faced when it stopped to look. It looks around either side of it. */
   lookBase: number;
   /** Raptors: seconds on the hunt without seeing their prey, and where they last saw it. */
   lost: number;
@@ -91,6 +101,8 @@ export interface Dino extends PathFollower {
    * STEALTH.noticeSeconds. With nobody in sight it counts back down to 0 before it moves on.
    */
   notice: number;
+  /** Raptors: where it last heard the 4x4, while it goes to look. */
+  heard: Point | null;
   /** Raptors hunting a troop as a pack: seconds spent circling it, and whether they have started their rush. */
   circle: number;
   rush: boolean;
@@ -152,12 +164,15 @@ export function spawnAnimals(w: World, ex: Exhibit): void {
       nest: null,
       patrol: null,
       patrolIndex: 0,
+      patrolDir: 1,
       look: 0,
+      lookTotal: 0,
       lookBase: 0,
       lost: 0,
       seen: null,
       heardHit: -Infinity,
       notice: 0,
+      heard: null,
       circle: 0,
       rush: false,
       ring: NaN,
@@ -178,6 +193,7 @@ export function calm(d: Dino): void {
   d.charge = 0;
   d.roar = 0;
   d.notice = 0;
+  d.heard = null;
   d.lost = 0;
   d.seen = null;
   d.circle = 0;
@@ -587,7 +603,10 @@ function updateLoosePredator(w: World, d: Dino, dt: number): void {
       d.facing = Math.atan2(-s.ny, -s.nx);
       if (d.cooldown <= 0) {
         d.cooldown = cfg.fenceHitIntervalSeconds;
-        damageSegment(w, ex, t.index, cfg.fenceDamage);
+        // A dart at it while it breaks into a cage only makes it smash through. That dart is spent: it doesn't lock on.
+        const smash = ex.cage && d.lastHitBy !== 0 && w.time - d.lastHitTime <= DINO_AI.trexLockSeconds;
+        damageSegment(w, ex, t.index, smash ? s.hp : cfg.fenceDamage);
+        if (smash) d.lastHitBy = 0;
       }
       if (s.hp <= 0) {
         d.target = null;
@@ -742,7 +761,8 @@ function targetAlive(w: World, t: DinoTarget): boolean {
  * 3. The nearest visitor within 10 tiles.
  * 4. Break into the nearest exhibit with animals still inside (and no power).
  * 5. The nearest visitor anywhere, then the nearest troop or tower anywhere (and lock on).
- * In level 5, while FIGHT.shieldRaptors or more raptors are on it, it is too busy with them for 1 and 2.
+ * In level 5, while FIGHT.shieldRaptors or more raptors are on it, it is too busy with them for 1 and 2, and while it
+ * breaks into a cage it has eyes for nothing else.
  */
 function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const T = w.T;
@@ -753,6 +773,8 @@ function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
       if (!shielded) return { type: 'unit', id: u.id };
     } else d.lockId = 0;
   }
+  const cur = d.target;
+  if (cur?.type === 'segment' && targetAlive(w, cur) && w.exhibitById(cur.exhibitId)?.cage) return cur;
   if (!shielded && w.time - d.lastHitTime <= DINO_AI.trexLockSeconds) {
     const u = w.unitById(d.lastHitBy);
     if (u && onMap(u) && dist(u, d) <= DINO_AI.trexLockRadiusTiles * T) return lockOn(w, d, u);
@@ -760,7 +782,6 @@ function chooseTrexTarget(w: World, d: Dino): DinoTarget | null {
   const near = nearestVisitor(w, d, DINO_AI.trexVisitorRadiusTiles * T);
   if (near) return { type: 'visitor', id: near.id };
   // Stick with a fence it has already started on.
-  const cur = d.target;
   if (cur?.type === 'segment' && targetAlive(w, cur)) return cur;
   const breakIn = chooseBreakIn(w, d);
   if (breakIn) return breakIn;
@@ -911,9 +932,53 @@ function stalk(w: World, d: Dino, dt: number): void {
     if (d.lost >= STEALTH.giveUpSeconds) loseTrack(d);
     else if (to !== prey || !circleRound(w, d, dt)) chase(w, d, to.x, to.y, to === prey ? cfg.radius + prey.r : 0, cfg.speed, dt);
   } else if (d.notice <= 0) {
-    roam(w, d, dt);
+    listen(w, d);
+    if (!d.heard || !goLook(w, d, dt)) roam(w, d, dt);
   }
   biteTroops(w, d);
+}
+
+/** A calm raptor hears the nearest 4x4 driving within JEEP.noiseTiles, through anything, and makes for where it is. */
+function listen(w: World, d: Dino): void {
+  let best: Unit | null = null;
+  let bestD = JEEP.noiseTiles * w.T;
+  for (const u of w.units) {
+    if (!engineRunning(u)) continue;
+    const dd = dist(u, d);
+    if (dd <= bestD) {
+      bestD = dd;
+      best = u;
+    }
+  }
+  if (!best) return;
+  if (!d.heard) {
+    // It drops whatever it was looking at.
+    d.look = 0;
+    d.wander = null;
+    d.path = [];
+    d.pathIndex = 0;
+    d.repath = 0;
+    w.events.push({ type: 'heard', dinoId: d.id, unitId: best.id, x: d.x, y: d.y });
+  }
+  d.heard = { x: best.x, y: best.y };
+}
+
+/**
+ * Off to where it heard the 4x4. Once there it looks around, as at a stop partway along its route, and then goes back
+ * to what it was doing. Returns false once it's there.
+ */
+function goLook(w: World, d: Dino, dt: number): boolean {
+  const h = d.heard!;
+  if (dist(d, h) > DINOS.raptor.radius) {
+    chase(w, d, h.x, h.y, 0, STEALTH.investigateSpeed, dt);
+    return true;
+  }
+  d.heard = null;
+  d.path = [];
+  d.pathIndex = 0;
+  if (d.patrol?.length) d.wander = { x: d.x, y: d.y };
+  else d.wait = rand(w, STEALTH.pauseSeconds[0], STEALTH.pauseSeconds[1]);
+  return false;
 }
 
 /** A raptor makes someone out, or sees a troop shoot. It hunts them, and for a troop, every calm raptor within earshot comes too. */
@@ -939,6 +1004,7 @@ function hunt(w: World, d: Dino, t: PreyRef): void {
   d.ring = NaN;
   d.look = 0;
   d.wander = null;
+  d.heard = null;
   d.path = [];
   d.pathIndex = 0;
   d.repath = 0;
@@ -950,6 +1016,7 @@ function loseTrack(d: Dino): void {
   d.target = null;
   d.lost = 0;
   d.notice = 0;
+  d.heard = null;
   d.seen = null;
   d.circle = 0;
   d.rush = false;
@@ -1198,24 +1265,64 @@ function roamNest(w: World, d: Dino, nest: Point, dt: number): void {
   }
 }
 
-/** A calm raptor walks its route and stops at each stop to look around. */
+/**
+ * A calm raptor walks its route, loosely. At each stop it looks around for a while, and sometimes turns back the way
+ * it came. On the way to the next stop it sometimes stops partway to look around, or wanders a few tiles off to sniff
+ * at something, then goes on.
+ */
 function walkRoute(w: World, d: Dino, route: readonly Point[], dt: number): void {
   if (d.look > 0) {
     d.look = Math.max(0, d.look - dt);
-    const k = 1 - d.look / STEALTH.lookSeconds;
+    const k = 1 - d.look / (d.lookTotal || STEALTH.lookSeconds[1]);
     d.facing = d.lookBase + Math.sin(k * Math.PI * 2) * ((STEALTH.lookDeg * Math.PI) / 180);
-    if (d.look <= 0) d.patrolIndex = (d.patrolIndex + 1) % route.length;
+    if (d.look > 0) return;
+    // Done looking partway: on to the stop.
+    if (d.wander) {
+      d.wander = null;
+      return;
+    }
+    if (route.length > 2 && w.rng() < STEALTH.turnBackChance) d.patrolDir = -d.patrolDir;
+    d.patrolIndex = (d.patrolIndex + d.patrolDir + route.length) % route.length;
+    planLeg(w, d, route[d.patrolIndex]);
     return;
   }
-  const stop = route[d.patrolIndex];
-  if (Math.hypot(stop.x - d.x, stop.y - d.y) <= 2) {
-    d.look = STEALTH.lookSeconds;
+  const to = d.wander ?? route[d.patrolIndex];
+  if (Math.hypot(to.x - d.x, to.y - d.y) <= 2) {
+    const [lo, hi] = d.wander ? STEALTH.pauseSeconds : STEALTH.lookSeconds;
+    d.look = d.lookTotal = rand(w, lo, hi);
     d.lookBase = d.facing;
     d.path = [];
     d.pathIndex = 0;
     return;
   }
-  chase(w, d, stop.x, stop.y, 0, STEALTH.patrolSpeed, dt);
+  chase(w, d, to.x, to.y, 0, STEALTH.patrolSpeed, dt);
+}
+
+/**
+ * A patrol's next leg, from where it stands to `stop`: straight there, or with a look partway along (STEALTH.pauseChance),
+ * or with a sniff STEALTH.sniffTiles off to one side (STEALTH.sniffChance). A spot it can't reach is skipped.
+ */
+function planLeg(w: World, d: Dino, stop: Point): void {
+  d.wander = null;
+  const r = w.rng();
+  if (r >= STEALTH.pauseChance + STEALTH.sniffChance) return;
+  const k = rand(w, 0.3, 0.7);
+  let p = { x: d.x + (stop.x - d.x) * k, y: d.y + (stop.y - d.y) * k };
+  if (r >= STEALTH.pauseChance) {
+    const side = Math.atan2(stop.y - d.y, stop.x - d.x) + (w.rng() < 0.5 ? 1 : -1) * (Math.PI / 2);
+    const off = rand(w, STEALTH.sniffTiles[0], STEALTH.sniffTiles[1]) * w.T;
+    const tx = Math.floor((p.x + Math.cos(side) * off) / w.T);
+    const ty = Math.floor((p.y + Math.sin(side) * off) / w.T);
+    p = { x: (tx + 0.5) * w.T, y: (ty + 0.5) * w.T };
+  }
+  if (!standable(w, p.x, p.y)) return;
+  // findPath ends as near as it can get, so a spot cut off by water or pens ends somewhere else.
+  const T = w.T;
+  const gx = Math.floor(p.x / T);
+  const gy = Math.floor(p.y / T);
+  const end = findPath(w.grid.cols, w.grid.rows, w.dinoWalk, Math.floor(d.x / T), Math.floor(d.y / T), gx, gy).at(-1);
+  if (end && (end.x !== gx || end.y !== gy)) return;
+  d.wander = p;
 }
 
 function nearestVisitor(w: World, p: Point, radius: number): Visitor | null {

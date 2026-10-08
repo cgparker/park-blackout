@@ -259,6 +259,24 @@ describe('levels 4 and 5: timeline and next time', () => {
     expect(timelineLines([start4, { t: 210, type: 'end', reason: 'timeUp', loose: { raptor: 2 } }]).at(-1)!.text).toBe('Dawn, and the power is still out.');
   });
 
+  it('tells a fight: the T. rex at the cage, the break-in, a death, a pen broken, each one darted, and the end', () => {
+    const start5: LogEntry = { t: 0, type: 'start', loose: { trex: 1 }, nest: false, substations: 0, fight: true, stealth: false };
+    const lines = timelineLines([
+      start5,
+      { t: 29, type: 'escape', kind: 'raptor', inPark: 0, evacuation: false, cage: true },
+      { t: 38, type: 'killed', kind: 'raptor', by: 'trex' },
+      { t: 62, type: 'escape', kind: 'raptor', inPark: 0, evacuation: false },
+      { t: 70, type: 'back', kind: 'trex', how: 'darted', left: 0 },
+      { t: 70, type: 'end', reason: 'secured', loose: {} },
+    ]).map((l) => l.text);
+    expect(lines.slice(0, 4)).toEqual([
+      'The T. rex is going for the caged raptors.',
+      'The T. rex broke into the raptor cage, and the fight is on.',
+      'A raptor was killed by the T. rex.',
+      'Raptors are out of their pen.',
+    ]);
+  });
+
   it('level 4 advice: the T. rex timer, the west raptors, the cones, then working out of sight', () => {
     const lostTo = (by: 'trex' | 'raptor'): LogEntry => ({ t: 112, type: 'lost', kind: 'engineer', by, alone: true });
     expect(nextTime(level4({ won: false, reason: 'noEngineers', log: [start4, lostTo('trex')] }))).toBe('Fix the north substation before 1:50, when the T. rex goes for its fence.');
@@ -274,11 +292,11 @@ describe('levels 4 and 5: timeline and next time', () => {
   it('level 5 advice: speed when animals die, the 4x4 decoy when the T. rex takes a troop, then raptor bites, then the most hurt raptor', () => {
     const level5 = (over: Partial<Result>): Result =>
       result({ level: 5, revenue: 0, revenueTarget: 0, mission: { kind: 'raptor', loose: 4, returned: 4, timeLeft: 150, fixed: 0, substations: 0, spotted: false, killed: 0, team: 4 }, ...over });
-    const start5: LogEntry = { t: 0, type: 'start', loose: { trex: 1, raptor: 3 }, nest: false, substations: 0, fight: true, stealth: false };
+    const start5: LogEntry = { t: 0, type: 'start', loose: { trex: 1 }, nest: false, substations: 0, fight: true, stealth: false };
     const lost = (by: 'trex' | 'raptor'): LogEntry => ({ t: 20, type: 'lost', kind: 'tranq', by, alone: false });
     const every = Math.ceil(DINOS.raptor.health / FIGHT.trexBite) * FIGHT.trexBiteSeconds;
     expect(nextTime(level5({ won: false, reason: 'killed', mission: { kind: 'raptor', loose: 4, returned: 1, timeLeft: 100, fixed: 0, substations: 0, spotted: false, killed: 3, team: 4 }, log: [start5] }))).toBe(
-      `Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor every ${every} s.`,
+      `Be in place before the cage gives way, with two Heavy Teams brought over in the 4x4: once it’s in, the T. rex kills a raptor every ${every} s.`,
     );
     expect(nextTime(level5({ troopsLost: 1, log: [start5, lost('trex')] }))).toMatch(/^When the T\. rex roars at a troop, load that troop in the 4x4 and keep driving around nearby/);
     expect(nextTime(level5({ troopsLost: 1, log: [start5, lost('raptor')] }))).toBe('A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last 25 bites.');

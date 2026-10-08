@@ -99,7 +99,9 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
         const what = cap(animalList(e.loose, true));
         const n = Object.values(e.loose).reduce((a, k) => a + (k ?? 0), 0);
         const text = mission.fight
-          ? `${what} are fighting.`
+          ? e.loose.raptor
+            ? `${what} are fighting.`
+            : `${what} ${n === 1 ? 'is' : 'are'} going for the caged raptors.`
           : mission.substations
             ? `The power is out at ${mission.substations} substations. ${what} ${n === 1 ? 'is' : 'are'} ${mission.stealth ? 'on patrol' : 'loose'}.`
             : e.nest
@@ -141,6 +143,10 @@ export function timelineLines(log: readonly LogEntry[]): TimelineLine[] {
           i++;
         }
         const what = pens > 1 ? `${OUT[e.kind]} of ${pens} pens` : OUT[e.kind];
+        if (e.cage) {
+          out.push({ time: clock(e.t), text: 'The T. rex broke into the raptor cage, and the fight is on.', tone: 'bad' });
+          break;
+        }
         if (mission) {
           // No guests in a mission level, so an escape is just one more animal to catch.
           out.push({ time: clock(e.t), text: OUT_OF[e.kind](pens), tone: 'bad' });
@@ -320,7 +326,7 @@ function fightAdvice(r: Result): string | null {
   if (r.reason === 'killed' || (!r.won && killed >= 2)) {
     // A bite every FIGHT.trexBiteSeconds on the most hurt raptor, until it's gone.
     const every = Math.ceil(DINOS.raptor.health / FIGHT.trexBite) * FIGHT.trexBiteSeconds;
-    return `Get there sooner. Load two Heavy Teams in the 4x4 at the start: the T. rex kills a raptor every ${every} s.`;
+    return `Be in place before the cage gives way, with two Heavy Teams brought over in the 4x4: once it’s in, the T. rex kills a raptor every ${every} s.`;
   }
   if (byTrex) return 'When the T. rex roars at a troop, load that troop in the 4x4 and keep driving around nearby: the T. rex chases the 4x4 while the others dart it.';
   if (losses.length) return `A darted raptor comes for whoever darted it. Dart raptors with Heavy Teams, which last ${Math.round(UNITS.heavy.hp / DINOS.raptor.troopDamage)} bites.`;

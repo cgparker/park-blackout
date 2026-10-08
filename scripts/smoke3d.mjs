@@ -1,10 +1,12 @@
 // Checks the 3D build in a phone-sized browser. Level 2: it loads, a troop trains, takes a tap to select,
 // and takes an order. Level 3: a pen and a tower go up through the build bar, guests come, the lights go
 // out at the blackout and come back with the power. Raptors show view cones in every level, and troops carry
-// flashlights at night. Level 4: night, with troop flashlights off, a substation's panel, the Engineer and Stop
-// buttons, the Engineer sent to fix a substation from the side tapped, a raptor's cone turning orange as it makes
-// out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven. Saves
-// screenshots along the way. Uses a software GPU, so frame rates here say nothing about a phone.
+// flashlights at night. Level 4: night, three raptors on patrol with troop flashlights off, the 4x4's engine ring as
+// it drives, a substation's panel, the Engineer and Stop buttons, the Engineer sent to fix a substation from the side
+// tapped, a raptor's cone turning orange as it makes
+// out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven, and the T. rex
+// breaking into the raptor cage after a while. Saves screenshots along the way. Uses a software GPU, so frame rates
+// here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -282,7 +284,7 @@ const w4 = () =>
 s = await w4();
 step(`level 4: ${s.phase}, night ${s.night}, ${s.raptors} raptors, ${s.cones} cones`);
 if (s.phase !== 'mission' || !s.night) fail('level 4 should start at night');
-if (s.cones !== s.raptors || s.raptors !== 2) fail('each raptor on patrol should show its view cone');
+if (s.cones !== s.raptors || s.raptors !== 3) fail('each of the three raptors on patrol should show its view cone');
 if (s.hq) fail('level 4 trains nothing, so the HQ button should be hidden');
 // Level 4's troops keep their flashlights off while they sneak, and each raptor has a ring at its feet so it can be
 // found at the tip of its cone.
@@ -292,7 +294,34 @@ const marks = await page.evaluate(() => {
 });
 step(`level 4: ${marks.lights} flashlights on, ${marks.rings} raptor rings`);
 if (marks.lights) fail('level 4 troops should keep their flashlights off');
-if (marks.rings !== 2) fail('each raptor on patrol should have a ring at its feet');
+if (marks.rings !== 3) fail('each raptor on patrol should have a ring at its feet');
+// The 4x4 is loud: tap it, then the map, and while it drives a ring shows how far raptors hear it.
+const j4 = await page.evaluate(() => {
+  const j = window.__pb3d.world.units.find((u) => u.kind === 'jeep');
+  return { id: j.id, x: j.x, y: j.y };
+});
+await look(j4.x, j4.y);
+await page.waitForTimeout(400);
+const jp4 = await screenOf(j4.x, j4.y, 0.3);
+await page.touchscreen.tap(jp4.x, jp4.y);
+await page.waitForTimeout(600);
+const to4 = await screenOf(j4.x, j4.y + 5 * 40, 0);
+await page.touchscreen.tap(to4.x, to4.y);
+let noise = null;
+for (let i = 0; i < 20 && !noise?.ring; i++) {
+  await page.waitForTimeout(500);
+  noise = await page.evaluate((id) => {
+    const g = window.__pb3d;
+    return { order: g.world.unitById(id).order, ring: !!g.view.actors.jeeps.get(id)?.noise.visible };
+  }, j4.id);
+}
+step(`4x4 driving: ${JSON.stringify(noise)}`);
+if (!noise?.ring) fail('a driving 4x4 should show how far raptors hear it');
+await page.screenshot({ path: `${out}/9b-level4-4x4.png`, timeout: 240000 });
+// Clear the selection, so the next tap on a substation opens its panel instead of sending the 4x4 there.
+await page.click('.sel-clear');
+await page.waitForFunction(() => window.__pb3d.selected.size === 0, null, { timeout: 30000 }).catch(() => fail('Clear should empty the selection'));
+await page.waitForTimeout(1000);
 // Look at the south raptor and its cone.
 const south = await page.evaluate(() => {
   const d = window.__pb3d.world.dinos.find((d) => d.state === 'loose');
@@ -444,16 +473,26 @@ step(`4x4 order: ${s.jeep.order}`);
 if (s.jeep.order !== 'move') fail('tapping the 4x4, then the map, should drive it');
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/13-level5-4x4.png`, timeout: 240000 });
-// Let the fight go on a few seconds, for the wounds.
-await page.evaluate(() => {
+// Let the T. rex into the cage, and the fight go on a few seconds, for the wounds.
+const caged = await page.evaluate(() => {
   const w = window.__pb3d.world;
-  for (let i = 0; i < 60 * 10; i++) w.update(1 / 60);
+  const cage = w.exhibits.find((e) => e.cage);
+  const health = new Map(w.dinos.map((d) => [d.id, d.health]));
+  let broke = -1;
+  for (let i = 0; i < 60 * 40 && broke < 0; i++) {
+    w.update(1 / 60);
+    if (cage.segments.some((s) => s.hp <= 0)) broke = w.phaseTime;
+  }
+  for (let i = 0; i < 60 * 8; i++) w.update(1 / 60);
   const rex = w.dinos.find((d) => d.kind === 'trex');
   const g = window.__pb3d;
   g.cam.x = rex.x / 40;
   g.cam.z = rex.y / 40;
   g.applyCamera();
+  return { broke, hurt: w.dinos.some((d) => d.health < health.get(d.id)) };
 });
+step(`cage broken at ${caged.broke.toFixed(1)} s, animals hurt: ${caged.hurt}`);
+if (caged.broke < 20 || !caged.hurt) fail('the T. rex should break into the cage after a while, and the fight should wound the animals');
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/14-level5-fight.png`, timeout: 240000 });
 

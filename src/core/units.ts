@@ -520,7 +520,8 @@ function fire(w: World, u: Unit, d: Dino): void {
 
 /**
  * Idle troops shoot the nearest dinosaur in range, predators before Triceratops. In level 4 they hold fire at a
- * raptor that isn't after anyone, so a troop waiting in cover doesn't give itself away.
+ * raptor that isn't after anyone, so a troop waiting in cover doesn't give itself away. In level 5 they hold fire at a
+ * T. rex breaking into a cage, so getting the team into place doesn't start the fight.
  */
 function autoTarget(w: World, u: Unit): Dino | null {
   const range = UNITS[u.kind].range;
@@ -529,6 +530,7 @@ function autoTarget(w: World, u: Unit): Dino | null {
   for (const d of w.dinos) {
     if (!isTargetable(w, d)) continue;
     if (w.mission?.stealth && d.kind === 'raptor' && d.target?.type !== 'unit') continue;
+    if (d.target?.type === 'segment' && w.exhibitById(d.target.exhibitId)?.cage) continue;
     const dist = Math.hypot(d.x - u.x, d.y - u.y);
     if (dist > range) continue;
     const score = dist + (d.kind === 'triceratops' ? 100000 : 0);

@@ -1,4 +1,4 @@
-import { DINO_AI, DINOS, FIGHT, MAP, TIPS, UNITS } from '../config';
+import { DINO_AI, DINOS, FIGHT, JEEP, MAP, TIPS, UNITS } from '../config';
 import { huntersOf, packCircling } from '../core/dinos';
 import { footprintCenter, type Exhibit } from '../core/exhibit';
 import type { Point } from '../core/grid';
@@ -13,8 +13,10 @@ import { numberWord } from './levels';
  * and the T. rex picks off troops that are spread thin.
  * One more explains the evacuation rule: guests stay until the first animal gets out.
  * Levels 1 and 2 have their own: how to train and send troops, why Triceratops run, and how raptors fight.
- * Level 4: staying out of the raptors' sight, sending the Engineer, what a fixed substation does, and being seen.
- * Level 5: the fight, the 4x4, a pen broken open, the first animal killed, and pulling the T. rex's target away in the 4x4.
+ * Level 4: staying out of the raptors' sight, sending the Engineer, what a fixed substation does, being seen, and the
+ * 4x4's loud engine.
+ * Level 5: the T. rex at the cage, the 4x4, the fight once it's in, a pen broken open, the first animal killed, and
+ * pulling the T. rex's target away in the 4x4.
  * No Phaser and no DOM here, so the rules for when a tip fires can be tested.
  */
 export type TipId =
@@ -35,8 +37,10 @@ export type TipId =
   | 'powered'
   | 'spotted'
   | 'squadLost'
+  | 'cage'
   | 'fight'
   | 'jeep'
+  | 'engine'
   | 'penBroken'
   | 'killed'
   | 'jeepKite';
@@ -50,6 +54,7 @@ export interface Tip {
 }
 
 const T = MAP.tileSize;
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 /** Tips set off by this batch of events. The caller decides whether tips are on and which were seen. */
 export function tipsFor(w: World, events: readonly GameEvent[]): Tip[] {
@@ -191,7 +196,7 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'stealth',
           title: 'Stay out of sight',
-          body: 'Two raptors walk the east side of the park. The cone in front of each one shows what it sees, and rock, pens, and substations block its view. A raptor takes a moment to make out a troop in its cone, and the cone turns orange while it does. Once it’s sure, it comes for the troop and calls the other.',
+          body: `${cap(numberWord(w.dinos.filter((d) => d.kind === 'raptor' && d.state === 'loose').length))} raptors walk the park. Each keeps to its own beat, but not to a timetable. The cone in front of each one shows what it sees, and rock, pens, and substations block its view. A raptor takes a moment to make out a troop in its cone, and the cone turns orange while it does. Once it’s sure, it comes for the troop and calls the others.`,
           focus: raptor ? { x: raptor.x, y: raptor.y } : null,
         });
         const { pen, substation } = firstToBreak(w);
@@ -221,7 +226,7 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         out.push({
           id: 'noticed',
           title: `A raptor noticed ${engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`}`,
-          body: `It stopped to make out what it saw. Get out of its cone, or behind cover, before the ring fills, or it comes and calls the other.${engineer ? ' Being noticed at all costs the Engineer’s star.' : ''}`,
+          body: `It stopped to make out what it saw. Get out of its cone, or behind cover, before the ring fills, or it comes and calls the others.${engineer ? ' Being noticed at all costs the Engineer’s star.' : ''}`,
           focus: { x: e.x, y: e.y },
         });
         break;
@@ -234,17 +239,21 @@ function gridTips(w: World, events: readonly GameEvent[]): Tip[] {
         const who = engineer ? 'the Engineer' : `your ${UNITS[e.kind].name}`;
         const body = engineer
           ? both
-            ? 'It’s coming, and it called the other. The Engineer can’t outrun them. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw them off.'
+            ? 'It’s coming, and it called the others. The Engineer can’t outrun them. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw them off.'
             : 'It’s coming. The Engineer can’t outrun it. A raptor goes for whoever darts it, so darts from the Tranq Squad can draw it off.'
           : circling
-            ? 'It called the other. They circle out of dart range, then rush it together. Two raptors are too many for a Tranq Squad, but while they hunt it, the Engineer can work.'
+            ? 'It called the others. They circle out of dart range, then rush it together. A pack is too much for a Tranq Squad, but while they hunt it, the Engineer can work.'
             : both
-              ? 'It’s coming, and so is the other. Two raptors are too many for a Tranq Squad, but while they chase it, the Engineer can work.'
+              ? 'It’s coming, and so are the others. A pack is too much for a Tranq Squad, but while they chase it, the Engineer can work.'
               : 'It’s coming on its own. A Tranq Squad can put down one raptor, so keep darting.';
         const title = circling ? `Raptors are circling ${who}` : both ? `Raptors are after ${who}` : `A raptor is after ${who}`;
         out.push({ id: 'spotted', title, body, focus: { x: e.x, y: e.y } });
         break;
       }
+      case 'boarded':
+      case 'heard':
+        out.push(engineTip(w, e.type === 'heard' ? e.unitId : e.jeepId));
+        break;
       case 'unitLost':
         if (e.kind !== 'tranq') break;
         out.push({
@@ -268,9 +277,9 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
         const rex = w.dinos.find((d) => d.kind === 'trex' && d.state === 'loose');
         const jeep = w.units.find((u) => u.kind === 'jeep' && !u.dead);
         out.push({
-          id: 'fight',
-          title: 'They are killing each other',
-          body: `The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. A raptor you dart comes for you until it loses sight of you. The T. rex is too busy for you while ${numberWord(FIGHT.shieldRaptors)} or more raptors are on it; after that, it comes for whoever darts it.`,
+          id: 'cage',
+          title: 'The T. rex is breaking in',
+          body: 'It’s after the caged raptors and pays your troops no mind until it gets in. The cage holds for a little while, so get your team into place. Your troops hold fire until you tap the T. rex, and a dart makes it smash straight through.',
           focus: rex ? { x: rex.x, y: rex.y } : null,
         });
         out.push({
@@ -282,12 +291,25 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
         break;
       }
       case 'breach':
+        // The cage giving way starts the fight. Any pen after that, the fight broke into.
+        if (w.exhibitById(e.exhibitId)?.cage) {
+          out.push({
+            id: 'fight',
+            title: 'They are killing each other',
+            body: `The T. rex and the raptors are wounding each other, and the red bars show it. Dart them before they die. A raptor you dart comes for you until it loses sight of you. The T. rex is too busy for you while ${numberWord(FIGHT.shieldRaptors)} or more raptors are on it; after that, it comes for whoever darts it.`,
+            focus: { x: e.x, y: e.y },
+          });
+          break;
+        }
         out.push({
           id: 'penBroken',
           title: 'The fight broke into a pen',
           body: 'The T. rex pushes toward pens with no power, and the animals inside join the fight. Put it down before it reaches the next one.',
           focus: { x: e.x, y: e.y },
         });
+        break;
+      case 'heard':
+        out.push(engineTip(w, e.unitId));
         break;
       case 'roar':
         out.push({
@@ -308,6 +330,17 @@ function fightTips(w: World, events: readonly GameEvent[]): Tip[] {
     }
   }
   return out;
+}
+
+/** The 4x4's engine: shown the first time anyone climbs in, or a raptor hears it. */
+function engineTip(w: World, jeepId: number): Tip {
+  const jeep = w.unitById(jeepId);
+  return {
+    id: 'engine',
+    title: 'The 4x4 is loud',
+    body: `Tap the 4x4, then the map, to drive, and everyone climbs out where it stops. While it drives, raptors within ${JEEP.noiseTiles} tiles hear it, through anything, and come to look where they heard it. Parked, it’s quiet.`,
+    focus: jeep ? { x: jeep.x, y: jeep.y } : HQ_CENTER,
+  };
 }
 
 function raptorPenTip(ex: Exhibit): Tip {

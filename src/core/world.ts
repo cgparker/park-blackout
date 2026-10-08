@@ -60,6 +60,8 @@ export type GameEvent =
   | { type: 'killed'; dinoId: number; kind: AnimalKind; x: number; y: number; by: AnimalKind | null }
   /** Level 4: a raptor has started to make out a troop in its cone. It stands still, staring. */
   | { type: 'noticed'; dinoId: number; unitId: number; kind: UnitKind; x: number; y: number }
+  /** A calm raptor heard the 4x4 driving and is coming to look. */
+  | { type: 'heard'; dinoId: number; unitId: number; x: number; y: number }
   /** Level 4: a raptor made out a troop (or was darted by it, or was called by one that did) and is coming for it. */
   | { type: 'spotted'; dinoId: number; unitId: number; kind: UnitKind; x: number; y: number }
   /** A Triceratops starts to run. `byTroop`: a troop scared it, not a predator. */
@@ -414,6 +416,7 @@ export class World {
       viewingSpot: { ...plan.viewingSpot },
       segments: buildSegments(plan.footprint),
       reinforced: false,
+      cage: false,
       powered: this.powerOn,
       drift: 0,
       visits: 0,
@@ -510,7 +513,8 @@ export class World {
   noteEscape(d: Dino): void {
     if (this.logStart < 0 || this.escapedFrom.has(d.home)) return;
     this.escapedFrom.add(d.home);
-    this.log.push({ t: this.logTime, type: 'escape', kind: d.kind, inPark: this.inPark, evacuation: false });
+    const cage = this.exhibitById(d.home)?.cage;
+    this.log.push({ t: this.logTime, type: 'escape', kind: d.kind, inPark: this.inPark, evacuation: false, ...(cage ? { cage } : {}) });
   }
 
   noteDeath(cause: CasualtyCause, x: number, y: number): void {

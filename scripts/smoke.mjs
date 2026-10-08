@@ -530,12 +530,12 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   check('?level=4 opens the Grid Down briefing', (await world(() => window.__pb.world.level)) === 4 && (await page.textContent('.brief-title')) === 'Power back on by dawn');
   const brief4 = await page.textContent('.brief-side');
   check('the level 4 briefing names its goals', brief4.includes('Lose no troops.') && brief4.includes('Keep the Engineer out of every raptor’s sight.'), brief4.slice(0, 200));
-  check('the level 4 briefing names the team', (await page.textContent('.brief-intro')).includes('You have one Engineer and one Tranq Squad.'));
+  check('the level 4 briefing names the team', (await page.textContent('.brief-intro')).includes('You have one Engineer, one Tranq Squad, and a Patrol 4x4.'));
   await page.tap('.start');
-  check('level 4 starts with three broken substations, the lights off, and two raptors on patrol', (await world(() => {
+  check('level 4 starts with three broken substations, the lights off, and three raptors on patrol', (await world(() => {
     const w = window.__pb.world;
     const raptors = w.dinos.filter((d) => d.state === 'loose');
-    return w.phase === 'mission' && w.substations.length === 3 && w.substations.every((s) => !s.fixed) && !w.powerOn && raptors.length === 2 && raptors.every((d) => d.patrol);
+    return w.phase === 'mission' && w.substations.length === 3 && w.substations.every((s) => !s.fixed) && !w.powerOn && raptors.length === 3 && raptors.every((d) => d.patrol);
   })) === true);
   check('level 4 opens with a tip on staying out of sight', await tipIs('Stay out of sight'));
   await page.tap('.tip-ok');
@@ -629,24 +629,55 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   }));
   await page.tap('.menu-resume');
 
+  // The 4x4: tap it, then the map, to drive. A raptor in earshot hears it and comes to look, and a tip says why.
+  const j4 = await world(() => {
+    const w = window.__pb.world;
+    const j = w.units.find((u) => u.kind === 'jeep');
+    const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
+    // A raptor in the open south of the west pen, and the 4x4 parked behind it, in earshot but out of sight range.
+    Object.assign(d, { x: 15.5 * 40, y: 20.5 * 40, facing: 0, look: 0, wander: null, heard: null, notice: 0, target: null, path: [], pathIndex: 0 });
+    Object.assign(j, { x: 10.5 * 40, y: 22.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
+    return { id: j.id, x: j.x, y: j.y, d: d.id };
+  });
+  await centerOn(page, j4.x, j4.y);
+  await tapWorld(j4.x, j4.y);
+  check('tapping the 4x4 selects it', await soon(async () => (await page.textContent('.sel-summary')).startsWith('4x4 (0 in)')), await page.textContent('.sel-summary'));
+  check('a parked 4x4 is quiet', (await world((id) => !window.__pb.world.dinoById(id).heard, j4.d)) === true);
+  await tapWorld(j4.x - 4 * T, j4.y);
+  check('tap the map to drive it', (await world((id) => window.__pb.world.unitById(id).order, j4.id)) === 'move');
+  await advance(page, 0.3);
+  check('a raptor in earshot hears it and comes to look', (await world((id) => !!window.__pb.world.dinoById(id).heard, j4.d)) === true);
+  check('with a tip on the loud engine', await tipIs('The 4x4 is loud'));
+  await page.screenshot({ path: `${out}/11b-level4-4x4.png` });
+  // While the tip holds the game, park the 4x4 and send the raptor back to its route, so it doesn't come upon the
+  // 4x4 during the next steps.
+  await world(([id, jid]) => {
+    const w = window.__pb.world;
+    const d = w.dinoById(id);
+    Object.assign(w.unitById(jid), { order: 'idle', dest: null, path: [], pathIndex: 0 });
+    Object.assign(d, { x: d.patrol[0].x, y: d.patrol[0].y, heard: null, look: 0, wander: null, notice: 0, path: [], pathIndex: 0 });
+  }, [j4.d, j4.id]);
+  await page.tap('.tip-ok');
+  await page.tap('.sel-clear');
+
   // Put the Tranq Squad in front of a raptor on open grass, just out of dart range: it stops to make the squad out,
-  // then calls the other, and they circle the squad.
+  // then calls the others, and they circle the squad.
   await world(() => {
     const w = window.__pb.world;
     const d = w.dinos.find((d) => d.state === 'loose' && d.patrol);
     const sq = w.units.find((u) => u.kind === 'tranq');
-    Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, notice: 0, target: null, path: [], pathIndex: 0 });
+    Object.assign(d, { x: 23.5 * 40, y: 16.5 * 40, facing: 0, look: 0, wander: null, heard: null, notice: 0, target: null, path: [], pathIndex: 0 });
     Object.assign(sq, { x: 28 * 40, y: 16.5 * 40, order: 'idle', dest: null, path: [], pathIndex: 0 });
     for (let i = 0; i < 20; i++) w.update(1 / 60);
   });
   check('a raptor that sees the squad stops to make it out', (await world(() => window.__pb.world.dinos.find((d) => d.state === 'loose' && d.patrol).notice > 0)) === true);
-  check('with a tip on what that means', await tipIs('A raptor noticed your Tranq Squad'));
+  check('with a tip on what that means', await tipIs('A raptor noticed your Tranq Squad'), await page.textContent('.tip-title').catch(() => 'no tip'));
   await page.tap('.tip-ok');
   await world(() => {
     const w = window.__pb.world;
     for (let i = 0; i < 60 && !w.events.some((e) => e.type === 'spotted'); i++) w.update(1 / 60);
   });
-  check('then it calls the other, and they circle the squad, and it says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'Raptors are circling the Tranq Squad.'), await page.textContent('.toast'));
+  check('then it calls the others, and they circle the squad, and it says so', await soon(async () => (await page.isVisible('.toast')) && (await page.textContent('.toast')) === 'Raptors are circling the Tranq Squad.'), await page.textContent('.toast'));
   check('and the Engineer is still unseen', (await page.textContent('.stat.revenue .val')) === 'Unseen');
   if (await soon(() => page.isVisible('.tip'), 1500)) await page.tap('.tip-ok');
 
@@ -663,10 +694,11 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
   await page.tap('.next-level');
   check('Next level opens the level 5 briefing', await soon(async () => (await world(() => window.__pb.world.level)) === 5 && (await page.textContent('.brief-title')) === 'Break up the fight'));
   check('the level 5 briefing names the team', (await page.textContent('.brief-intro')).includes('2 Heavy Teams, 2 Tranq Squads, and a Patrol 4x4'), await page.textContent('.brief-intro'));
-  check('and follows on from the night', (await page.textContent('.brief-intro')).startsWith('The two raptors from the night came back with a third'), await page.textContent('.brief-intro'));
+  check('and follows on from the night', (await page.textContent('.brief-intro')).startsWith('The crew caged the raptors from the night'), await page.textContent('.brief-intro'));
 
   await page.tap('.start');
-  check('level 5 opens with a tip on the fight', await tipIs('They are killing each other'));
+  check('level 5 opens with a tip on the T. rex at the cage', await tipIs('The T. rex is breaking in'));
+  check('and the banner says what the T. rex is doing', await soon(async () => (await page.textContent('.banner')).startsWith('The T. rex is breaking into the raptor cage.')), await page.textContent('.banner'));
   await page.tap('.tip-ok');
   check('then a tip on the 4x4', await tipIs('The Patrol 4x4'));
   await page.tap('.tip-ok');
@@ -702,6 +734,16 @@ async function pinch(page, cdp, center, startGap, endGap, steps = 8) {
     return { aboard: u.aboard, gap: Math.hypot(u.x - jeep.x, u.y - jeep.y), order: jeep.order };
   }, [team.h.id, team.j.id]);
   check('the troop climbs out where the 4x4 stops', out5.aboard === 0 && out5.order === 'idle' && out5.gap < 2 * T, JSON.stringify(out5));
+  check('nothing is hurt while the cage holds', (await world((h) => window.__pb.world.dinos.every((d) => d.health === h[d.id]), health5)) === true);
+  // Let the T. rex in.
+  await world(() => {
+    const w = window.__pb.world;
+    const cage = w.exhibits.find((e) => e.cage);
+    for (let i = 0; i < 60 * 40 && cage.segments.every((s) => s.hp > 0); i++) w.update(1 / 60);
+  });
+  check('the T. rex breaks into the cage, with a tip on the fight', await tipIs('They are killing each other'));
+  await page.tap('.tip-ok');
+  await advance(page, 4);
   check('the fight wounds the animals', (await world((h) => window.__pb.world.dinos.some((d) => d.health < h[d.id]), health5)) === true);
   await page.screenshot({ path: `${out}/14-level5-fight.png` });
 
