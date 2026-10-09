@@ -16,8 +16,9 @@ import { viewOf } from './viewOf';
 import { goalsNow } from '../ui/goals';
 import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
 import { exhibitPlaceView, exhibitView, huntedToast, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
-import { loadSoundOn, loadTipsOn, loadVolumes, saveSoundOn, saveTipsOn, saveVolumes } from '../ui/prefs';
+import { loadFpsCap, loadSoundOn, loadTipsOn, loadVolumes, saveFpsCap, saveSoundOn, saveTipsOn, saveVolumes } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
+import { newPacer, paceFrame } from './pacing';
 
 /** Levels the 3D build offers. */
 export const SLICE_LEVELS: readonly LevelId[] = [1, 2, 3, 4, 5];
@@ -119,6 +120,10 @@ export class SliceGame {
   private readonly ringEl: HTMLElement;
   private readonly fpsEl: HTMLElement;
   private readonly nightBtn: HTMLButtonElement;
+  /** The frame-rate cap (`VIEW3D.fpsCap`): on by default on a phone, switched from the bar at the top right. */
+  private fpsCap = loadFpsCap();
+  private readonly pacer = newPacer();
+  private readonly capBtn: HTMLButtonElement;
 
   private switching = false;
   private readonly qualityBtn: HTMLButtonElement;
@@ -147,7 +152,7 @@ export class SliceGame {
     this.floatLayer.className = 'float-layer';
     container.append(this.boxEl, this.ringEl, this.floatLayer);
 
-    // A small bar for testing on a phone: frame rate, a day and night switch, and the quality setting.
+    // A small bar for testing on a phone: frame rate, a day and night switch, the frame-rate cap, and the quality setting.
     const bar = document.createElement('div');
     bar.className = 'test-bar';
     this.fpsEl = document.createElement('span');
@@ -158,13 +163,19 @@ export class SliceGame {
     this.nightBtn.textContent = 'Night';
     this.nightBtn.setAttribute('aria-pressed', 'false');
     this.nightBtn.addEventListener('click', () => this.setNight(!this.night));
+    this.capBtn = document.createElement('button');
+    this.capBtn.type = 'button';
+    this.capBtn.className = 'test-btn test-cap';
+    this.capBtn.textContent = `${VIEW3D.fpsCap} fps cap`;
+    this.capBtn.setAttribute('aria-pressed', this.fpsCap ? 'true' : 'false');
+    this.capBtn.addEventListener('click', () => this.setFpsCap(!this.fpsCap));
     const q = document.createElement('button');
     q.type = 'button';
     q.className = 'test-btn';
     q.textContent = quality === 'low' ? 'Low quality' : 'High quality';
     q.addEventListener('click', () => void this.setQuality(this.quality === 'low' ? 'high' : 'low'));
     this.qualityBtn = q;
-    bar.append(this.fpsEl, this.nightBtn, q);
+    bar.append(this.fpsEl, this.nightBtn, this.capBtn, q);
     document.getElementById('app')!.append(bar);
   }
 
@@ -265,6 +276,13 @@ export class SliceGame {
     this.nightBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
+  /** Turns the frame-rate cap on or off, and remembers the choice on this device. */
+  private setFpsCap(on: boolean): void {
+    this.fpsCap = on;
+    this.capBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    saveFpsCap(on);
+  }
+
   /**
    * Rebuilds the 3D view at another quality without losing the game: the renderer's settings are fixed
    * when it starts, so a new one is made on a new canvas, and the old one is let go once it is ready.
@@ -305,6 +323,8 @@ export class SliceGame {
 
   private readonly tick = (now: number): void => {
     requestAnimationFrame(this.tick);
+    // Under the cap, a screen tick that comes too soon after the last frame is skipped: no rules, no drawing.
+    if (this.fpsCap && !paceFrame(this.pacer, now, VIEW3D.fpsCap, VIEW3D.fpsCapSlackMs)) return;
     const started = performance.now();
     const dt = Math.min(now - this.last, 100) / 1000;
     this.last = now;

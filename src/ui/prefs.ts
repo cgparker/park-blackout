@@ -39,6 +39,35 @@ export function saveSoundOn(on: boolean): void {
   }
 }
 
+const FPS_CAP_KEY = 'park-blackout.fps-cap';
+
+/**
+ * The 3D game's frame-rate cap: the last choice on this device, or else on for a touch screen (a phone or tablet) and
+ * off elsewhere.
+ */
+export function loadFpsCap(): boolean {
+  let touch = false;
+  try {
+    touch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  } catch {
+    // No media queries: treat it as a desktop.
+  }
+  try {
+    const saved = window.localStorage.getItem(FPS_CAP_KEY);
+    return saved === 'on' ? true : saved === 'off' ? false : touch;
+  } catch {
+    return touch;
+  }
+}
+
+export function saveFpsCap(on: boolean): void {
+  try {
+    window.localStorage.setItem(FPS_CAP_KEY, on ? 'on' : 'off');
+  } catch {
+    // No storage: the choice lasts until the page closes.
+  }
+}
+
 /** The pause menu's Music and Effects sliders, 0 to 1. */
 export interface Volumes {
   music: number;

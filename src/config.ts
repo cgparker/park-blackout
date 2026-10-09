@@ -149,6 +149,16 @@ export const VIEW3D = {
   wheelZoomFactor: 0.0015,
   /** Taps within this many CSS px of a troop or animal pick it. */
   pickRadiusPx: 30,
+  /**
+   * Phones (touch screens) draw at most this many frames a second unless the player turns the cap off in the bar at
+   * the top right: a steady rate, and less battery.
+   */
+  fpsCap: 30,
+  /**
+   * A screen tick this close (ms) to when the next capped frame is due still draws it, since ticks come with a little
+   * jitter. Shorter than one tick of a 144 Hz screen (6.9 ms), so no frame is drawn a tick early.
+   */
+  fpsCapSlackMs: 4,
 };
 
 export const INPUT = {

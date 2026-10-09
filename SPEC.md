@@ -26,7 +26,7 @@ Working title. A single-player RTS for phones. Build a dinosaur park, earn money
 - Mouse support too, for testing on a desktop browser.
 - Development: run with `vite --host` so I can open it on my phone over Wi-Fi. Deploy: the 3D build, as a static site on GitHub Pages.
 - Pathfinding: grid A* (a small custom one or EasyStar.js).
-- Performance target: 60 fps on a recent iPhone with 80 visitors, 20 troops, and 20 dinosaurs.
+- Performance target: 60 fps on a recent iPhone with 80 visitors, 20 troops, and 20 dinosaurs, measured with the frame-rate cap off. Phones play capped at 30 fps (section 10), and the headroom keeps 30 steady in the busiest moments.
 
 ## 3. Game flow and levels
 
@@ -436,6 +436,7 @@ The game players play, `slice.html`, draws every level in real 3D with three.js.
 - Levels 4 and 5: the Patrol 4x4 is an open-top 4x4 with a roll bar, a light bar, and a spare wheel, in navy and white with the team's shield on the doors. It's built from shapes, with no maker's grille or badges. Troops inside ride in the seats. While it drives, a pale amber ring on the ground shows how far raptors hear it, with a pulse running out to it. In level 5, the cage is a concrete pen. Hurt animals flinch, and a killed one falls and stays down a few seconds.
 - Night: a test switch turns the blackout lighting on and off by hand, without changing the rules.
 - Quality: High and Low, switched from the bar at the top right, which also shows the frame rate and the game's own work per frame in ms. Low is for phones and is where a phone starts: one pixel per CSS pixel, no bloom or colour grade, no shadows from trees (the shade under them is baked into the ground), and fewer trees and grass tufts. Behind the briefing, the end screen, and the pause menu the park isn't drawn again.
+- Frame rate: a phone caps it at 30 fps, for a steady picture and less battery. The same bar turns the cap off and on, and the choice is remembered on that device.
 - Assets: Quaternius models (CC0), textures generated for the project, and sounds from CC0 packs or made for the project. `public3d/LICENSES.md` lists them.
 
 ### Sound (3D build)

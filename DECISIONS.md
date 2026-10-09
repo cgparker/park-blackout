@@ -2,6 +2,13 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## A 30 fps cap on phones
+
+Chris asked: "Can you cap the game at 30 fps on phones so it feels steady and saves battery?"
+
+196. **A touch screen starts with the frame rate capped at 30 (`VIEW3D.fpsCap`); a desktop starts without a cap.** A **30 fps cap** button in the bar at the top right turns it off and on, and the choice is kept on the device, as quality is. Under the cap, a screen tick that comes too soon after the last frame is skipped outright, and the next frame runs the rules for the time that passed, so on a 60 Hz screen every second tick draws. Each frame is due one interval after the last one was due, not after it came: a 120 or 144 Hz screen still averages 30, and a slow frame brings no burst of catch-up frames. A tick up to 4 ms early still counts (`VIEW3D.fpsCapSlackMs`), for jitter. The frame counter counts frames drawn, so with the cap on it reads 30 at best; turning the cap off shows what the phone can do.
+197. **The 60 fps target in SPEC section 2 stays, measured with the cap off.** That headroom is what keeps a capped 30 steady when the park is busiest.
+
 ## Volume sliders, and a smoother 3D game
 
 Chris asked for separate music and effects sliders in the pause menu, then: "the game is pretty slow. Can you figure out how to make it play smoother (higher frame rate)? Even the level selector is slow." On an iPhone Air at Low quality it ran at 20 fps. The measurements below are from a desktop browser with a software GPU, so they compare before and after; the phone has the last word.

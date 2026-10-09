@@ -6,8 +6,9 @@
 // tapped, a raptor's cone turning orange as it makes
 // out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven, and the T. rex
 // breaking into the raptor cage after a while. Sound: it starts at the first tap, each level plays its music and
-// background, the Sound box in the pause menu turns it off and on, and events and orders make their sounds. Saves
-// screenshots along the way. Uses a software GPU, so frame rates here say nothing about a phone.
+// background, the Sound box in the pause menu turns it off and on, and events and orders make their sounds. The 30 fps
+// cap starts on, holds the game to about 30 frames a second, and turns off. Saves screenshots along the way. Uses a
+// software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -90,6 +91,34 @@ if (s.phase !== 'mission') fail('level 2 should be running');
 let a = await soundStarted();
 step(`sound: ${JSON.stringify(a)}`);
 if (a.context !== 'running' || a.music !== 'music_tension' || a.ambience !== 'amb_day') fail('the first tap should start sound: level 2 plays its creeping music over birdsong');
+// The 30 fps cap is on by default on a touch screen, and the bar at the top right turns it off and on. Behind the
+// pause menu nothing is drawn, so the frame rate there is how often the game wakes: about 30 with the cap and 60
+// without, even on the software GPU.
+const fpsBehindMenu = async () => {
+  await page.click('.pause-btn');
+  let best = 0;
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(600);
+    best = Math.max(best, parseInt((await page.textContent('.test-fps')) ?? '', 10) || 0);
+  }
+  await page.click('.menu-resume');
+  await page.waitForTimeout(400);
+  return best;
+};
+const capStart = await page.getAttribute('.test-cap', 'aria-pressed');
+const cappedFps = await fpsBehindMenu();
+await page.click('.test-cap');
+const capOff = [await page.getAttribute('.test-cap', 'aria-pressed'), await page.evaluate(() => localStorage.getItem('park-blackout.fps-cap'))];
+const freeFps = await fpsBehindMenu();
+await page.click('.test-cap');
+const capBack = await page.getAttribute('.test-cap', 'aria-pressed');
+step(`fps cap: ${capStart}, ${cappedFps} fps behind the menu; off: ${capOff}, ${freeFps} fps; back on: ${capBack}`);
+if (capStart !== 'true') fail('a touch screen should start with the 30 fps cap on');
+if (cappedFps < 25 || cappedFps > 33) fail('with the cap on, the game should wake about 30 times a second');
+if (capOff[0] !== 'false' || capOff[1] !== 'off') fail('the cap button should turn the cap off, and the choice should be kept');
+if (freeFps < 45) fail('with the cap off, the game should wake with every screen tick');
+if (capBack !== 'true') fail('the cap button should turn the cap back on');
+
 // The Sound box in the pause menu turns it all off, and the choice is kept.
 await page.click('.pause-btn');
 await page.waitForTimeout(400);

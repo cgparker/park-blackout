@@ -48,7 +48,7 @@ canvas.view3d {
   pointer-events: none;
 }
 
-/* Frame rate, day and night, and quality, for testing on a phone. */
+/* Frame rate, day and night, the frame-rate cap, and quality, for testing on a phone. */
 .test-bar {
   position: absolute;
   top: calc(var(--top-h) + var(--safe-t) + 8px);
