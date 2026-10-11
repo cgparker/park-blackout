@@ -113,8 +113,10 @@ export class SliceGame {
   /** Seconds of play with a low frame rate, for the one-time hint to try Low quality. */
   private slowFor = 0;
   private slowHinted = false;
-  /** Canvas position on the page, in CSS pixels. */
+  /** Canvas position on the page, in CSS pixels. The canvas fills the window, under the HUD bars. */
   private area = { left: 0, top: 0, width: 1, height: 1 };
+  /** The band of the canvas between the top and bottom bars, on the page: where framing and edge arrows aim. */
+  private clear = { left: 0, top: 0, width: 1, height: 1 };
   private offsets = new Map<string, { minX: number; maxX: number; minZ: number; maxZ: number }>();
   private readonly boxEl: HTMLElement;
   private readonly ringEl: HTMLElement;
@@ -813,8 +815,9 @@ export class SliceGame {
     this.cam.x = x;
     this.cam.z = z;
     this.applyCamera();
-    const tipTop = Math.min(this.area.top + this.area.height, this.hud.tipTop) - this.area.top;
-    const want = this.view.groundAt(this.area.width / 2, tipTop / 2);
+    const bandTop = this.clear.top - this.area.top;
+    const tipTop = Math.min(this.clear.top + this.clear.height, this.hud.tipTop) - this.area.top;
+    const want = this.view.groundAt(this.area.width / 2, (bandTop + tipTop) / 2);
     if (want) {
       this.cam.x += x - want.x;
       this.cam.z += z - want.z;
@@ -824,30 +827,39 @@ export class SliceGame {
 
   // ---------------------------------------------------------------- camera
 
-  /** Lays the canvas out between the top and bottom bars. */
+  /**
+   * Lays the canvas out under the whole window, with the top and bottom bars floating over its edges. The band
+   * between the bars keeps the camera's field of view, so the bars cover extra park rather than park in play.
+   */
   private layout(): void {
     const app = document.getElementById('app')!;
     const { top, bottom } = this.hud.insets;
     const width = app.clientWidth;
-    const height = Math.max(1, app.clientHeight - top - bottom);
-    this.canvas.style.top = `${top}px`;
+    const height = Math.max(1, app.clientHeight);
+    this.canvas.style.top = '0px';
     this.canvas.style.height = `${height}px`;
-    this.area = { left: 0, top, width, height };
-    this.view.setSize(width, height);
+    this.area = { left: 0, top: 0, width, height };
+    this.clear = { left: 0, top, width, height: Math.max(1, height - top - bottom) };
+    this.view.setSize(width, height, this.clear.height);
     this.offsets.clear();
     this.applyCamera();
     this.redraw = true;
   }
 
-  /** Where the screen corners land on the ground, relative to the focus, at a given distance. */
-  private viewOffsets(dist: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
-    const key = `${dist.toFixed(2)}`;
+  /**
+   * Where the screen corners land on the ground, relative to the focus, at a given distance: the whole canvas, or
+   * with `band`, the clear band between the bars.
+   */
+  private viewOffsets(dist: number, band = false): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    const key = `${band ? 'b' : 'a'}${dist.toFixed(2)}`;
     const hit = this.offsets.get(key);
     if (hit) return hit;
     const keep = { ...this.view.rig };
     this.view.setRig(0, 0, dist);
     const o = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
-    for (const [sx, sy] of [[0, 0], [this.area.width, 0], [0, this.area.height], [this.area.width, this.area.height]]) {
+    const y0 = band ? this.clear.top - this.area.top : 0;
+    const y1 = band ? y0 + this.clear.height : this.area.height;
+    for (const [sx, sy] of [[0, y0], [this.area.width, y0], [0, y1], [this.area.width, y1]]) {
       const g = this.view.groundAt(sx, sy);
       if (!g) continue;
       o.minX = Math.min(o.minX, g.x);
@@ -920,7 +932,7 @@ export class SliceGame {
     const max = this.maxDist();
     let dist = max;
     for (let d = VIEW3D.defaultDist; d <= max; d += 0.5) {
-      const o = this.viewOffsets(Math.round(d * 2) / 2);
+      const o = this.viewOffsets(Math.round(d * 2) / 2, true);
       if (cx + o.minX <= x0 && cx + o.maxX >= x1 && cz + o.minZ <= z0 && cz + o.maxZ >= z1) {
         dist = d;
         break;
@@ -942,7 +954,7 @@ export class SliceGame {
     const dz = (k.has('s') || k.has('arrowdown') ? 1 : 0) - (k.has('w') || k.has('arrowup') ? 1 : 0);
     if (!dx && !dz) return;
     this.camMove = null;
-    const tilesPerPx = (2 * this.cam.dist * Math.tan((VIEW3D.fov * Math.PI) / 360)) / this.area.height;
+    const tilesPerPx = (2 * this.cam.dist * Math.tan((VIEW3D.fov * Math.PI) / 360)) / this.clear.height;
     this.cam.x += dx * CAMERA.keyPanSpeed * dt * tilesPerPx;
     this.cam.z += dz * CAMERA.keyPanSpeed * dt * tilesPerPx;
     this.applyCamera();
@@ -974,7 +986,8 @@ export class SliceGame {
     for (const b of this.breaches) join('breach', b.x, b.y);
     const urgency: Record<AnimalKind | 'breach', number> = { trex: 0, raptor: 1, breach: 2, triceratops: 3 };
     targets.sort((a, b) => urgency[a.kind] - urgency[b.kind]);
-    const { left, top, width, height } = this.area;
+    // Arrows sit inside the band the bars leave clear, and anything under a bar counts as off screen.
+    const { left, top, width, height } = this.clear;
     const mx = left + width / 2;
     const my = top + height / 2;
     const r = CAMERA.arrowInsetPx;
@@ -984,8 +997,8 @@ export class SliceGame {
     const out: ArrowView[] = [];
     for (const t of targets) {
       const s = this.view.project(t.x / T, 0, t.y / T);
-      const px = s.x + left;
-      const py = s.y + top;
+      const px = s.x + this.area.left;
+      const py = s.y + this.area.top;
       if (px >= left && px <= left + width && py >= top && py <= top + height) continue;
       const dx = px - mx;
       const dy = py - my;
@@ -1338,7 +1351,7 @@ export class SliceGame {
 
   /** Screen pixels per tile around the focus, for sizing tap targets. */
   private get pxPerTile(): number {
-    return this.area.height / (2 * this.cam.dist * Math.tan((VIEW3D.fov * Math.PI) / 360));
+    return this.clear.height / (2 * this.cam.dist * Math.tan((VIEW3D.fov * Math.PI) / 360));
   }
 
   /** The troop drawn under a tap. Towers can't be selected. */

@@ -18,7 +18,8 @@ const pick = (re, what) => {
 };
 const title = pick(/<title>[\s\S]*?<\/title>/, 'the title')[0];
 const head = pick(/<head>([\s\S]*?)<\/head>/, 'the head')[1];
-const links = head.match(/<link [^>]*>/g) ?? [];
+// Only the stylesheet and script preloads: the Home Screen icon and app manifest mean nothing inside an artifact.
+const links = (head.match(/<link [^>]*>/g) ?? []).filter((l) => /rel="(stylesheet|modulepreload)"/.test(l));
 const scripts = head.match(/<script [^>]*><\/script>/g) ?? [];
 const body = pick(/<body>([\s\S]*?)<\/body>/, 'the body')[1].trim();
 const page = [title, ...links, body, ...scripts].join('\n') + '\n';

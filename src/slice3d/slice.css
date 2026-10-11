@@ -1,4 +1,4 @@
-/* The 3D slice: the canvas sits between the top and bottom bars. */
+/* The 3D game: the canvas fills the window, and the top and bottom bars float over its edges. */
 
 canvas.view3d {
   position: absolute;
@@ -6,6 +6,52 @@ canvas.view3d {
   width: 100%;
   display: block;
   touch-action: none;
+}
+
+/*
+ * The top bar is a see-through strip, so its numbers stay readable over the park. The bottom bar has no strip, only
+ * its buttons, each on its own dark backing. Taps that miss a button reach the park under the bars.
+ */
+.topbar {
+  background: linear-gradient(to bottom, rgba(9, 16, 12, 0.84), rgba(9, 16, 12, 0.58));
+  border-bottom-color: transparent;
+  pointer-events: none;
+}
+
+.bottombar {
+  background: none;
+  border-top: none;
+  pointer-events: none;
+}
+
+.topbar button,
+.bottombar button {
+  pointer-events: auto;
+}
+
+.bottombar :is(.build-btn, .hq-btn, .sel-btn):not([aria-pressed='true']) {
+  background: rgba(9, 16, 12, 0.8);
+}
+
+.bottombar .sel-summary {
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(9, 16, 12, 0.8);
+}
+
+/* A button that can't be used keeps its backing, so it doesn't fade into a smudge over the park; only its words do. */
+#hud .bottombar .sel-btn:disabled {
+  opacity: 1;
+  color: rgba(241, 245, 242, 0.42);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.bottombar .build-btn:disabled {
+  opacity: 1;
+}
+
+.bottombar .build-btn:disabled > * {
+  opacity: 0.42;
 }
 
 .select-box {

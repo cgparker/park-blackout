@@ -376,7 +376,12 @@ export class View3D {
     this.composer.addPass(new OutputPass());
   }
 
-  setSize(cssW: number, cssH: number): void {
+  /**
+   * Sizes the canvas. `clearH` is the height of the band between the HUD bars that float over it: the camera keeps
+   * its field of view (`VIEW3D.fov`) across that band, so the canvas above and below shows more park instead of a
+   * closer view of the same park.
+   */
+  setSize(cssW: number, cssH: number, clearH = cssH): void {
     this.cssW = Math.max(1, cssW);
     this.cssH = Math.max(1, cssH);
     const pr = this.pixelRatio;
@@ -385,6 +390,8 @@ export class View3D {
     this.composer?.setPixelRatio(pr);
     this.composer?.setSize(this.cssW, this.cssH);
     this.camera.aspect = this.cssW / this.cssH;
+    const half = Math.tan(THREE.MathUtils.degToRad(VIEW3D.fov) / 2) * (this.cssH / Math.max(1, Math.min(clearH, this.cssH)));
+    this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(half));
     this.camera.updateProjectionMatrix();
     if (this.grade) this.grade.uniforms.aspect.value = this.cssW / this.cssH;
   }
@@ -1009,7 +1016,7 @@ export class View3D {
 
   /** How many tiles across and deep the camera sees at a given distance. */
   extentAt(dist: number): { w: number; d: number } {
-    const vfov = THREE.MathUtils.degToRad(VIEW3D.fov);
+    const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const el = THREE.MathUtils.degToRad(VIEW3D.elevationDeg);
     const h = 2 * dist * Math.tan(vfov / 2);
     return { w: h * this.camera.aspect, d: h / Math.sin(el) };

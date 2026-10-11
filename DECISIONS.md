@@ -2,6 +2,14 @@
 
 Calls made where SPEC.md was silent, or where following it literally would have made things worse. Each tuning number mentioned here lives in `src/config.ts`.
 
+## Full screen, and new music for level 1
+
+Chris, playing on an iPhone Air inside the Claude app: "I want this game to play full screen, there's a Claude HUD that takes up a lot of room." And: "the music for the game (at least the first level) is boring." He chose both ways to full screen below, the High-Energy Adventure Theme, and publishing by merging PR #1.
+
+198. **Level 1 has its own track: the High-Energy Adventure Theme by SRG774 (CC0), its full 3:45 performance (`music_roundup`).** It's longer than the level, so a level never hears it repeat; Bamboo Blitz, a 77-second loop, played about twice. Bamboo Blitz stays for level 3's build. Decoded, the track takes about 40 MB, held only while level 1 is loaded.
+199. **The park fills the window, and the bars float over it (3D game only).** The top bar is a see-through strip, so its numbers stay readable. The bottom bar is only its buttons, each on a dark backing, and a tap between them reaches the park. The camera keeps its field of view (`VIEW3D.fov`) across the band between the bars, so the bars cover extra park, not park in play. Framing and the edge arrows aim at that band; the camera's limits use the whole canvas, so nothing past the ground shows under a bar. The 2D staging build keeps its solid bars.
+200. **True full screen on iPhone comes from the Home Screen, not from the page.** A page inside the Claude app can't hide the app's own bar, and iPhone Safari doesn't let a page go full screen. Since iOS 26, a site added to the Home Screen opens as an app with no Safari bars. So the game is published on GitHub Pages and has what a Home Screen app wants: an icon (the security shield, drawn by `scripts/icons3d.mjs`), a short name, and a web app manifest asking for full screen in landscape. The artifact page leaves those out, since they mean nothing inside an artifact.
+
 ## A 30 fps cap on phones
 
 Chris asked: "Can you cap the game at 30 fps on phones so it feels steady and saves battery?"

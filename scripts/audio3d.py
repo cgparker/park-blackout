@@ -38,6 +38,7 @@ OGA = 'https://opengameart.org/sites/default/files/'
 # Pack folder -> (page, download). Every one is CC0 1.0.
 SOURCES = {
     'bamboo-blitz': ('https://opengameart.org/content/bamboo-blitz', OGA + 'bamboo_blitz.flac'),
+    'high-energy-adventure': ('https://opengameart.org/content/high-energy-adventure-theme-130-bpm', OGA + 'complete.zip'),
     'determined-pursuit': ('https://opengameart.org/content/determined-pursuit-epic-orchestra-loop', OGA + 'determined_pursuit_loop.wav'),
     'suspicious-loop': ('https://opengameart.org/content/suspicious-loop', OGA + 'sus_corner_loop.mp3'),
     'jungle-thriller': ('https://opengameart.org/content/jungle-thriller', OGA + 'jungle_thriller_0.mp3'),
@@ -106,6 +107,8 @@ SFX = [
 # start: the join can't click, and music is shortened by too little to hear.
 LOOPS = [
     ('music_day', 'bamboo-blitz', 'bamboo_blitz.flac', -18, '96k', 0.02),
+    # The whole 3:45 performance: longer than level 1 runs, so a level never hears it repeat.
+    ('music_roundup', 'high-energy-adventure', 'x/fulltheme.ogg', -18, '96k', 0.02),
     ('music_chase', 'determined-pursuit', 'determined_pursuit_loop.wav', -18, '96k', 0.02),
     ('music_sneak', 'suspicious-loop', 'sus_corner_loop.mp3', -18, '96k', 0.02),
     ('music_tension', 'jungle-thriller', 'jungle_thriller_0.mp3', -18, '96k', 0.02),

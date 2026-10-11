@@ -9,7 +9,7 @@ import { FILES, type FileId } from './files';
 import { SOUND_FILES, type AmbienceId, type MusicId } from './manifest';
 
 type LoopId = MusicId | AmbienceId;
-const LOOPS: readonly LoopId[] = ['music_day', 'music_chase', 'music_sneak', 'music_tension', 'amb_day', 'amb_night'];
+const LOOPS: readonly LoopId[] = ['music_roundup', 'music_day', 'music_chase', 'music_sneak', 'music_tension', 'amb_day', 'amb_night'];
 const isLoop = (f: FileId): f is LoopId => (LOOPS as readonly FileId[]).includes(f);
 
 /** A decoded file, and where its own sound sits in it, in seconds. */

@@ -7,8 +7,8 @@
 // out a troop, and the pack it calls circling the troop. Level 5: troops loaded into the 4x4 and driven, and the T. rex
 // breaking into the raptor cage after a while. Sound: it starts at the first tap, each level plays its music and
 // background, the Sound box in the pause menu turns it off and on, and events and orders make their sounds. The 30 fps
-// cap starts on, holds the game to about 30 frames a second, and turns off. Saves screenshots along the way. Uses a
-// software GPU, so frame rates here say nothing about a phone.
+// cap starts on, holds the game to about 30 frames a second, and turns off. The park fills the window under the bars.
+// Saves screenshots along the way. Uses a software GPU, so frame rates here say nothing about a phone.
 // Start a server first, then: node scripts/smoke3d.mjs [url] [outDir]
 // Example: npx vite --config vite.slice.config.ts --port 5180, then node scripts/smoke3d.mjs
 import { mkdirSync } from 'node:fs';
@@ -88,6 +88,15 @@ const state = () =>
 let s = await state();
 step(`phase ${s.phase}, level ${s.level}, ${s.troops.length} troops, ${s.loose.length} loose, ${s.fps}`);
 if (s.phase !== 'mission') fail('level 2 should be running');
+// The park fills the window and the bars float over it; a tap that misses their buttons reaches the park.
+const lay = await page.evaluate(() => {
+  const c = window.__pb3d.canvas.getBoundingClientRect();
+  const events = (sel) => getComputedStyle(document.querySelector(sel)).pointerEvents;
+  return { top: c.top, height: c.height, inner: innerHeight, topbar: events('.topbar'), bottombar: events('.bottombar'), pause: events('.pause-btn') };
+});
+step(`layout: ${JSON.stringify(lay)}`);
+if (lay.top !== 0 || Math.abs(lay.height - lay.inner) > 1) fail('the park should fill the window, under the bars');
+if (lay.topbar !== 'none' || lay.bottombar !== 'none' || lay.pause !== 'auto') fail('taps should reach the park except on the bars\' buttons');
 let a = await soundStarted();
 step(`sound: ${JSON.stringify(a)}`);
 if (a.context !== 'running' || a.music !== 'music_tension' || a.ambience !== 'amb_day') fail('the first tap should start sound: level 2 plays its creeping music over birdsong');
@@ -494,12 +503,17 @@ const watcher = await page.evaluate(() => {
   return d.id;
 });
 await look(25 * 40, 16.5 * 40);
-await page.waitForTimeout(2000);
-const seeing = await page.evaluate((id) => {
-  const g = window.__pb3d;
-  const c = g.view.cones.sets.get(id);
-  return { notice: g.world.dinos.find((d) => d.id === id).notice, arcs: c.arcs.filter((a) => a.visible).length, fan: c.fan.material.color.getHexString() };
-}, watcher);
+// The cone changes on the next frame drawn, and the software GPU can take a few seconds over one.
+let seeing;
+for (let i = 0; i < 30; i++) {
+  await page.waitForTimeout(500);
+  seeing = await page.evaluate((id) => {
+    const g = window.__pb3d;
+    const c = g.view.cones.sets.get(id);
+    return { notice: g.world.dinos.find((d) => d.id === id).notice, arcs: c.arcs.filter((a) => a.visible).length, fan: c.fan.material.color.getHexString() };
+  }, watcher);
+  if (seeing.arcs >= 1 && seeing.fan === 'ff8a2a') break;
+}
 step(`noticing: ${JSON.stringify(seeing)}`);
 if (!(seeing.notice > 0) || seeing.arcs < 1 || seeing.fan !== 'ff8a2a') fail('a raptor making out a troop should show an orange cone and a filling ring');
 await page.screenshot({ path: `${out}/12b-level4-noticing.png`, timeout: 240000 });

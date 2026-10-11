@@ -20,7 +20,7 @@ describe('sound files', () => {
       .map((p) => p.replace(/^.*\/(.*)\.mp3$/, '$1'))
       .sort();
     expect(onDisk).toEqual(Object.keys(FILES).sort());
-    const used = new Set<string>(['music_day', 'music_chase', 'music_sneak', 'music_tension', 'amb_day', 'amb_night']);
+    const used = new Set<string>(['music_roundup', 'music_day', 'music_chase', 'music_sneak', 'music_tension', 'amb_day', 'amb_night']);
     for (const id of Object.keys(SOUNDS) as SoundId[]) {
       expect(SOUND_FILES[id].length, id).toBeGreaterThan(0);
       for (const f of SOUND_FILES[id]) {
@@ -48,6 +48,14 @@ describe('sound files', () => {
 });
 
 describe('music', () => {
+  it('level 1 has its own track, long enough that a level never hears it repeat', () => {
+    const w = new World({ seed: 1, level: 1 });
+    w.start();
+    expect(musicFor(w)).toBe('music_roundup');
+    expect(levelMusic(1)).toEqual(['music_roundup']);
+    expect(FILES.music_roundup.samples / 44100).toBeGreaterThan(w.mission!.timeLimitSeconds + 30);
+  });
+
   it('level 3 builds to a bright tune, runs once the power is cut, and calms once nothing is loose', () => {
     const w = new World({ seed: 1, buildPhaseSeconds: 5 });
     w.start();

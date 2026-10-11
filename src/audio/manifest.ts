@@ -46,6 +46,6 @@ export const SOUND_FILES: Record<SoundId, readonly FileId[]> = {
 };
 
 /** Music, each track a loop. */
-export type MusicId = 'music_day' | 'music_chase' | 'music_sneak' | 'music_tension';
+export type MusicId = 'music_roundup' | 'music_day' | 'music_chase' | 'music_sneak' | 'music_tension';
 /** Background sound under the music: birds by day, crickets at night. */
 export type AmbienceId = 'amb_day' | 'amb_night';

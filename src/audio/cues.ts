@@ -40,7 +40,7 @@ export interface Listener {
 export function levelMusic(level: LevelId): MusicId[] {
   switch (level) {
     case 1:
-      return ['music_day'];
+      return ['music_roundup'];
     case 2:
       return ['music_tension'];
     case 3:
@@ -53,15 +53,16 @@ export function levelMusic(level: LevelId): MusicId[] {
 }
 
 /**
- * The music for this moment. Level 1 is a calm day out. Level 2 creeps up on a nest. Level 3 builds to a bright
- * tune and runs for it once the power is cut, until nothing is loose. Level 4 sneaks. Level 5 waits while the T. rex
- * works on the cage, and runs once the fight is on. Nothing plays on the briefing or after the end.
+ * The music for this moment. Level 1 is a race against the clock to round them up. Level 2 creeps up on a nest.
+ * Level 3 builds to a bright tune and runs for it once the power is cut, until nothing is loose. Level 4 sneaks.
+ * Level 5 waits while the T. rex works on the cage, and runs once the fight is on. Nothing plays on the briefing or
+ * after the end.
  */
 export function musicFor(w: World): MusicId | null {
   if (w.phase === 'briefing' || w.phase === 'ended') return null;
   switch (w.level) {
     case 1:
-      return 'music_day';
+      return 'music_roundup';
     case 2:
       return 'music_tension';
     case 3:

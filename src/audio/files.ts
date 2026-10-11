@@ -26,6 +26,7 @@ export const FILES = {
   jingle_win: { samples: 35157, frames: 32 },
   music_chase: { samples: 4761918, frames: 4135 },
   music_day: { samples: 3385998, frames: 2941 },
+  music_roundup: { samples: 9938671, frames: 8629 },
   music_sneak: { samples: 1955200, frames: 1699 },
   music_tension: { samples: 2115917, frames: 1838 },
   notice: { samples: 15876, frames: 15 },
