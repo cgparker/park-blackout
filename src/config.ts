@@ -2,11 +2,12 @@
 
 export type ExhibitKind = 'pasture' | 'raptor' | 'trex';
 export type AnimalKind = 'triceratops' | 'raptor' | 'trex';
-export type UnitKind = 'tranq' | 'heavy' | 'tower';
+/** Engineers fix level 4's substations. The jeep is level 5's Patrol 4x4. */
+export type UnitKind = 'tranq' | 'heavy' | 'tower' | 'engineer' | 'jeep';
 
 export const EXHIBIT_KINDS: readonly ExhibitKind[] = ['pasture', 'raptor', 'trex'];
-/** Troops trained at HQ. Towers are built, not trained. */
-export const UNIT_KINDS: readonly UnitKind[] = ['tranq', 'heavy'];
+/** Everything HQ trains in some level. Towers are built, not trained, and level 5's 4x4 comes with the level. */
+export const UNIT_KINDS: readonly UnitKind[] = ['tranq', 'heavy', 'engineer'];
 
 export interface ExhibitConfig {
   name: string;
@@ -131,9 +132,40 @@ export const CAMERA = {
   breachArrowSeconds: 4,
 };
 
+/** The 3D view (the 3d-slice build). Distances are in tiles. */
+export const VIEW3D = {
+  /** Vertical field of view, degrees. */
+  fov: 30,
+  /** How steeply the camera looks down, degrees above the horizon. */
+  elevationDeg: 56,
+  /** Closest and farthest camera distance from the point it looks at. */
+  minDist: 7,
+  maxDist: 44,
+  /** Distance at the start of a level, before it frames the action. */
+  defaultDist: 22,
+  /** How far past the map edge the camera's focus can go. */
+  edgeMarginTiles: 2,
+  /** Wheel zoom sensitivity. */
+  wheelZoomFactor: 0.0015,
+  /** Taps within this many CSS px of a troop or animal pick it. */
+  pickRadiusPx: 30,
+  /**
+   * Phones (touch screens) draw at most this many frames a second unless the player turns the cap off in the bar at
+   * the top right: a steady rate, and less battery.
+   */
+  fpsCap: 30,
+  /**
+   * A screen tick this close (ms) to when the next capped frame is due still draws it, since ticks come with a little
+   * jitter. Shorter than one tick of a 144 Hz screen (6.9 ms), so no frame is drawn a tick early.
+   */
+  fpsCapSlackMs: 4,
+};
+
 export const INPUT = {
   /** How far (CSS px) a finger can move and still count as a tap. */
   tapMoveThreshold: 10,
+  /** 3D build: a level picked on the briefing builds its park this long after the last tap (ms), so taps feel instant. */
+  levelPickSettleMs: 150,
   /** Hold this long, then drag, to draw a selection box. */
   longPressMs: 300,
   /** Extra reach (CSS px) when tapping small things like troops and dinosaurs. */
@@ -228,6 +260,30 @@ export const UNITS: Record<UnitKind, UnitConfig> = {
     fireIntervalSeconds: 1.5,
     radius: 20,
   },
+  /** Level 4. Fixes substations (see GRID). Can't dart. */
+  engineer: {
+    name: 'Engineer',
+    cost: 3000,
+    trainSeconds: 8,
+    hp: 60,
+    speed: 100,
+    range: 0,
+    dartSedation: 0,
+    fireIntervalSeconds: 1,
+    radius: 9,
+  },
+  /** Level 5's Patrol 4x4. Carries troops (see JEEP). Can't dart, and isn't for sale. */
+  jeep: {
+    name: 'Patrol 4x4',
+    cost: 0,
+    trainSeconds: 0,
+    hp: 400,
+    speed: 210,
+    range: 0,
+    dartSedation: 0,
+    fireIntervalSeconds: 1,
+    radius: 16,
+  },
 };
 
 export const COMBAT = {
@@ -251,6 +307,8 @@ export interface DinoConfig {
   name: string;
   plural: string;
   sedation: number;
+  /** Level 5's fights wear this down (see FIGHT). Darts don't touch it. */
+  health: number;
   /** Top speed when loose. For Triceratops this is the stampede speed. */
   speed: number;
   wanderSpeed: number;
@@ -273,6 +331,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'Triceratops',
     plural: 'Triceratops',
     sedation: 120,
+    health: 300,
     speed: 120,
     wanderSpeed: 12,
     wanderPauseSeconds: [1.5, 4],
@@ -288,6 +347,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'Raptor',
     plural: 'Raptors',
     sedation: 60,
+    health: 100,
     speed: 160,
     wanderSpeed: 34,
     wanderPauseSeconds: [0.4, 1.5],
@@ -307,6 +367,7 @@ export const DINOS: Record<AnimalKind, DinoConfig> = {
     name: 'T. rex',
     plural: 'T. rex',
     sedation: 800,
+    health: 1200,
     speed: 90,
     wanderSpeed: 16,
     wanderPauseSeconds: [1, 3],
@@ -337,9 +398,14 @@ export const DINO_AI = {
   trexChargeSpeedMultiplier: 2,
   trexChargeMinTiles: 1.5,
   trexChargeMaxTiles: 5,
-  raptorHuntRadiusTiles: 8,
   triThreatRadiusTiles: 4,
   triStampedeSeconds: 5,
+  /**
+   * A stampede that meets rock, water, a building, or the park's edge turns along it in steps of this
+   * many degrees, up to the most, instead of stopping dead. Only a cornered Triceratops stops.
+   */
+  triSlideStepDeg: 30,
+  triSlideMaxDeg: 90,
   /** Rest after a stampede before another one can start. */
   triRecoverSeconds: 1.5,
   visitorContactSeconds: 0.5,
@@ -357,6 +423,13 @@ export const BLACKOUT = {
   allClearSpeed: 30,
   /** The quick-test build phase offered on the briefing screen. */
   quickBuildPhaseSeconds: 120,
+  /** What HQ trains in the blackout. */
+  units: ['tranq', 'heavy'] as readonly UnitKind[],
+  /**
+   * Each game, the raptors (every pen together) and the T. rex each go for their fences up to this many seconds earlier
+   * or later than their breakout delay. So the T. rex isn't always out first, and no plan is safe every time.
+   */
+  breakoutDriftSeconds: 8,
   /** Placeholder: Mantah Corp is from Camp Cretaceous. Rename before sharing publicly. */
   villainName: 'Mantah Corp',
 };
@@ -379,10 +452,13 @@ export const SCORING = {
 
 // ------------------------------------------------------------ levels
 
-/** 1 and 2 start in a park that is already built, before it opens, with animals out. 3 is the blackout. */
-export type LevelId = 1 | 2 | 3;
-export const LEVEL_IDS: readonly LevelId[] = [1, 2, 3];
-export type HuntLevelId = 1 | 2;
+/**
+ * 3 is the blackout, where you build the park. The others are missions: the park is already built when they start.
+ * 1 and 2 come before the blackout, and 4 and 5 after it.
+ */
+export type LevelId = 1 | 2 | 3 | 4 | 5;
+export const LEVEL_IDS: readonly LevelId[] = [1, 2, 3, 4, 5];
+export type MissionLevelId = 1 | 2 | 4 | 5;
 
 export type Side = 'top' | 'right' | 'bottom' | 'left';
 
@@ -394,29 +470,88 @@ export interface ParkExhibit {
   y: number;
   /** The side whose fence is down. Its animals start loose. */
   open?: Side;
-  /** Where its loose animals start, in tiles. Raptors guarding a nest start around the nest instead. */
+  /** Where its loose animals start, in tiles. Raptors guarding a nest start around it instead. */
   out?: readonly (readonly [number, number])[];
+  /**
+   * Level 4: a patrol route for each of its loose animals, in tiles. Each starts at its route's first stop and walks
+   * the stops in a loop (STEALTH). A route that goes there and back lists the stops both ways.
+   */
+  patrols?: readonly (readonly (readonly [number, number])[])[];
+  /** How many animals it holds, when fewer than usual: the rest were taken away earlier. */
+  animals?: number;
+  /** One side's fence is dented down to this many HP at the start. */
+  dent?: { side: Side; hp: number };
+  /**
+   * Level 5: a cage. Every segment of its fence starts with this much HP (concrete-strong or more looks reinforced). A
+   * T. rex breaking in has eyes only for the animals inside: it pays darts no mind, and a dart makes its next hit
+   * smash straight through, so darting it there only starts the fight sooner.
+   */
+  cageHp?: number;
+  /** Seconds into the level when the animals inside go for the fence while it has no power. null: never on their own. */
+  breakoutAt?: number | null;
+  /** Whether its fence has power at the start. Default: yes, unless a broken substation powers it. */
+  powered?: boolean;
 }
 
-export interface HuntConfig {
-  /** Seconds until the park opens. Anything still loose then loses the level. */
+/** Level 4: a broken substation and the pens it powers once fixed. */
+export interface SubstationConfig {
+  name: string;
+  /** Top-left tile of its block (GRID.sizeTiles square). */
+  tile: readonly [number, number];
+  /** Indices into the level's park list. */
+  pens: readonly number[];
+}
+
+/** The second and third star goals of a mission level. The first is always the win. */
+export type StarGoal =
+  | { type: 'spend'; max: number }
+  | { type: 'timeLeft'; seconds: number }
+  | { type: 'noTroopsLost' }
+  | { type: 'noneKilled' }
+  /** Level 4: no raptor ever sees the Engineer. */
+  | { type: 'neverSpotted' };
+
+export interface MissionConfig {
+  /** Seconds on the clock. Anything still loose (or level 4's power still out) when it runs out loses the level. */
   timeLimitSeconds: number;
+  /** What the clock runs to: the park opening, or dawn. */
+  clock: 'opening' | 'dawn';
   startingMoney: number;
   /** What HQ can train in this level. */
   units: readonly UnitKind[];
+  /** Levels 4 and 5: the team the level starts with, beside HQ. Positions in tiles. */
+  team?: readonly { kind: UnitKind; at: readonly [number, number] }[];
   park: readonly ParkExhibit[];
   /** Raptors from the open pens guard a nest on this tile. */
   nest: readonly [number, number] | null;
-  /** Second star: spend no more than this. */
-  spendStar: number;
-  /** Third star: finish with this much time left, or lose no troops. */
-  thirdStar: { type: 'timeLeft'; seconds: number } | { type: 'noLosses' };
+  /** Level 4: the substations. Pens they power start without power. */
+  substations?: readonly SubstationConfig[];
+  /**
+   * What wins the level. 'secure' (the default): nothing loose, and any substations fixed. 'power' (level 4): every
+   * substation fixed, whatever is still loose.
+   */
+  win?: 'secure' | 'power';
+  /** Level 4: loose raptors only notice what they see (STEALTH), instead of hunting the whole park. */
+  stealth?: boolean;
+  /** Level 5: the T. rex and raptors fight each other (FIGHT). */
+  fights?: boolean;
+  /**
+   * Level 5: the T. rex roars when it locks onto a troop or tower. It stands facing it for FIGHT.lockRoarSeconds before
+   * it moves or charges, so there is time to get that troop away. In a fight it roars; on the hunt (levels 3 and 4) it
+   * comes without a sound.
+   */
+  roars?: boolean;
+  /** Levels 1 and 2: a darted animal wakes up back in its pen. Otherwise it's taken away, as in the blackout. */
+  carryHome: boolean;
+  /** Second and third stars. */
+  stars: readonly [StarGoal, StarGoal];
 }
 
-export const HUNTS: Record<HuntLevelId, HuntConfig> = {
+export const MISSIONS: Record<MissionLevelId, MissionConfig> = {
   // Roundup: three pastures are open and their Triceratops are out. Tranq Squads only.
   1: {
     timeLimitSeconds: 150,
+    clock: 'opening',
     startingMoney: 9000,
     units: ['tranq'],
     park: [
@@ -426,12 +561,13 @@ export const HUNTS: Record<HuntLevelId, HuntConfig> = {
       { kind: 'pasture', x: 22, y: 20, open: 'right', out: [[30, 19], [35, 21]] },
     ],
     nest: null,
-    spendStar: 4500,
-    thirdStar: { type: 'timeLeft', seconds: 60 },
+    carryHome: true,
+    stars: [{ type: 'spend', max: 4500 }, { type: 'timeLeft', seconds: 60 }],
   },
   // Raptor Nest: both raptor pens are open, and all six raptors guard a nest at the east edge.
   2: {
     timeLimitSeconds: 240,
+    clock: 'opening',
     startingMoney: 21000,
     units: ['tranq', 'heavy'],
     park: [
@@ -441,23 +577,371 @@ export const HUNTS: Record<HuntLevelId, HuntConfig> = {
       { kind: 'pasture', x: 22, y: 20 },
     ],
     nest: [35, 16],
-    spendStar: 13500,
-    thirdStar: { type: 'noLosses' },
+    carryHome: true,
+    stars: [{ type: 'spend', max: 13500 }, { type: 'noTroopsLost' }],
+  },
+  // Grid Down: right after the blackout, the power is still out. One Engineer and one Tranq Squad, with the Patrol
+  // 4x4, fix three substations, one zone each, while three raptors from the east pen walk their routes.
+  4: {
+    timeLimitSeconds: 210,
+    clock: 'dawn',
+    startingMoney: 0,
+    units: [],
+    team: [
+      { kind: 'engineer', at: [5.6, 13.6] },
+      { kind: 'tranq', at: [5.6, 15.2] },
+      // Quick, but loud (JEEP.noiseTiles): a way across the park, or a decoy, that can give the Engineer away.
+      { kind: 'jeep', at: [7, 12] },
+    ],
+    park: [
+      { kind: 'raptor', x: 16, y: 14, breakoutAt: 60 },
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'trex', x: 27, y: 7, breakoutAt: 110, dent: { side: 'bottom', hp: 80 } },
+      {
+        kind: 'raptor',
+        x: 33,
+        y: 17,
+        open: 'right',
+        // Each raptor starts somewhere along its route, either way round, so no two nights are the same. The routes
+        // are loose (STEALTH): the stops are where each one goes, not a timetable.
+        patrols: [
+          // South: round and round the south substation, a tile out from where an Engineer would stand.
+          [[25, 18], [30, 18], [30, 23], [25, 23]],
+          // North: up the east path, over the top of the north substation a tile out, a look back at its east side,
+          // down the east edge, and back. Every side, and the east edge, is watched some of the time.
+          [[31, 12], [31, 5], [29, 0], [36, 0], [36, 3], [37, 9]],
+          // Middle: a loop between the paddock and the south pasture, across the ways east from the west substation.
+          [[19, 10], [25, 10], [25, 16], [19, 16]],
+        ],
+      },
+      { kind: 'pasture', x: 22, y: 20 },
+    ],
+    nest: null,
+    substations: [
+      { name: 'West', tile: [10, 13], pens: [0, 1] },
+      { name: 'North', tile: [31, 2], pens: [2] },
+      { name: 'South', tile: [27, 20], pens: [3] },
+    ],
+    win: 'power',
+    stealth: true,
+    carryHome: false,
+    stars: [{ type: 'noTroopsLost' }, { type: 'neverSpotted' }],
+  },
+  // Showdown: the T. rex breaks into the cage holding the east raptors, and they fight. A fixed team and the Patrol 4x4.
+  5: {
+    timeLimitSeconds: 180,
+    clock: 'opening',
+    startingMoney: 0,
+    units: [],
+    team: [
+      { kind: 'heavy', at: [5.2, 14] },
+      { kind: 'heavy', at: [5.2, 15.2] },
+      { kind: 'tranq', at: [6.3, 14] },
+      { kind: 'tranq', at: [6.3, 15.2] },
+      { kind: 'jeep', at: [7, 12] },
+    ],
+    park: [
+      { kind: 'raptor', x: 16, y: 14, powered: false, breakoutAt: null },
+      { kind: 'pasture', x: 8, y: 8 },
+      { kind: 'trex', x: 27, y: 7, open: 'bottom', out: [[28, 11]] },
+      // The east raptors are caged with no power, and the T. rex is already out and going for them. The cage holds it
+      // off for about 30 s, so there's time to look around before the fight starts.
+      { kind: 'raptor', x: 33, y: 17, powered: false, breakoutAt: null, cageHp: 1500 },
+      // The south pasture has power of its own, as in level 4, so the fight heads for the west raptor pen.
+      { kind: 'pasture', x: 22, y: 20 },
+    ],
+    nest: null,
+    fights: true,
+    roars: true,
+    carryHome: false,
+    stars: [{ type: 'noTroopsLost' }, { type: 'noneKilled' }],
   },
 };
 
-export const HUNT = {
+export const MISSION = {
   /** Loose animals start up to this many tiles from their listed spot, so games differ a little. */
   jitterTiles: 0.4,
 };
 
+/** Level 4's substations. */
+export const GRID = {
+  /** Seconds of one Engineer's work to fix a substation. Engineers working together add up. */
+  repairSeconds: 20,
+  /** A substation is this many tiles square. */
+  sizeTiles: 2,
+  /** An Engineer works while its center is this close to the substation's center, in tiles: the ring of tiles around it. */
+  reachTiles: 2.2,
+};
+
+/**
+ * What every loose raptor knows, in every level. It sees a cone ahead of it, but not through rock, a pen, HQ, a tower,
+ * or a substation, and it feels anyone who walks into it. Whatever it makes out, it hunts, and it calls the others. A
+ * dart from a troop it can't see sends it after the shooter alone.
+ */
+export const STEALTH = {
+  /** How far a raptor sees, in tiles, and how wide its view is, in degrees. */
+  sightTiles: 5,
+  coneDeg: 90,
+  /** Anyone this close (tiles) has walked into it: noticed at once, whichever way it's looking. Touching distance. */
+  hearTiles: 0.6,
+  /**
+   * Someone in its cone takes this long to make out. It stops where it is, its cone turns orange, and it hunts once
+   * the time is up. Someone who gets out of sight first is lost, and the raptor takes as long to settle back.
+   */
+  noticeSeconds: 0.8,
+  /** Level 4: walking speed on its route (px/s). */
+  patrolSpeed: 45,
+  /** Level 4: at each stop on its route it looks around for a while (seconds, low to high), turning this far each way. */
+  lookSeconds: [1.5, 4] as readonly [number, number],
+  lookDeg: 70,
+  /**
+   * Level 4: routes are loose, so they can't be learned by heart. At a stop, the chance it turns back the way it came.
+   * On each leg, the chance it stops partway to look around (for pauseSeconds), and the chance it wanders this many
+   * tiles off to one side to sniff, and looks around there instead.
+   */
+  turnBackChance: 0.2,
+  pauseChance: 0.3,
+  pauseSeconds: [1, 2.5] as readonly [number, number],
+  sniffChance: 0.25,
+  sniffTiles: [2, 4] as readonly [number, number],
+  /** A calm raptor that hears the 4x4 (JEEP.noiseTiles) trots to where it heard it at this speed (px/s), then looks around there for pauseSeconds. */
+  investigateSpeed: 90,
+  /** A raptor that spots someone, or sees who darted it, calls the calm ones within this many tiles: the whole park. */
+  alertTiles: 40,
+  /** On the hunt it keeps track of its prey this far away (tiles), in any direction... */
+  chaseSightTiles: 10,
+  /** ...and calms down after this many seconds without seeing it. A dart shows it where the shooter is. */
+  giveUpSeconds: 4,
+  /** Rays in a drawn view cone. */
+  coneRays: 24,
+};
+
+/**
+ * Raptors hunting a troop together, in every level: they circle it before they strike. Only troops and towers that
+ * can dart are worth circling; anything else, and a lone raptor, gets a straight charge.
+ */
+export const PACK = {
+  /** Troops this close to the prey (tiles) count as its group: the ring stays out of reach of every one of them... */
+  groupTiles: 3,
+  /** ...by this many tiles past the farthest dart. */
+  marginTiles: 1,
+  /** Within this many tiles of its place, a raptor is in position. */
+  placeTiles: 1.2,
+  /** Going round the ring, a raptor aims this many degrees ahead of where it is. */
+  aheadDeg: 30,
+  /**
+   * Where a rock or the corner of a pen sits on the ring, a raptor waits up to this many tiles farther out, or half
+   * the margin in, so only water, a whole pen, or the park's edge cuts the ring.
+   */
+  slackTiles: 2,
+  /** They rush once every raptor is in position, or after this long, whichever comes first. */
+  circleSeconds: 6,
+};
+
+/** Level 5's fight between the T. rex and raptors. */
+export const FIGHT = {
+  /** Calm raptors this close to a loose T. rex (tiles) go for it. In the fight they pay troops no mind until one darts them. */
+  joinTiles: 8,
+  /** A raptor's bite on the T. rex, once per raptor bite interval. */
+  raptorBite: 5,
+  /**
+   * The T. rex bites the most wounded raptor in reach for this much, this often: a raptor in 4 bites, about 9 s after
+   * the fight starts. At 20 (5 bites) a team in place before the cage broke could dart the T. rex first and save every
+   * raptor, and the 4x4 had nothing left to teach.
+   */
+  trexBite: 25,
+  trexBiteSeconds: 3,
+  /** Raptors this close count as on the T. rex (tiles between centers, past both bodies). */
+  engageTiles: 0.6,
+  /** Raptors on the T. rex keep circling it at this many radians per second, each from its own side. */
+  circleSpeed: 0.5,
+  /** While raptors are on it, the T. rex pushes toward a pen without power at this speed (px/s) instead of its own. */
+  pushSpeed: 20,
+  /** While this many raptors or more are on the T. rex, it is too busy with them to lock onto a troop that darts it. */
+  shieldRaptors: 2,
+  /** Where it roars (MissionConfig.roars), the T. rex stands facing the troop it locked onto this long before it moves or charges. */
+  lockRoarSeconds: 2,
+  /** Animals killed before the level is lost. */
+  killLimit: 3,
+  /** A killed animal stays down this long before it's gone. */
+  deadSeconds: 4,
+};
+
+/** The Patrol 4x4, in levels 4 and 5. */
+export const JEEP = {
+  seats: 2,
+  /** A troop climbs in from this far past both bodies (px). */
+  boardReachPx: 14,
+  /** Tapping an animal with the 4x4 selected drives it to within this many tiles, then drops the troops. */
+  dropTiles: 3.5,
+  /**
+   * Its engine is loud. While it drives, calm raptors this many tiles away or nearer hear it, through anything, and
+   * come to look where they heard it (STEALTH.investigateSpeed). Parked, it's quiet.
+   */
+  noiseTiles: 6,
+};
+
 export const NEST = {
-  /** Raptors at a nest wander within this many tiles of it. */
+  /** Calm raptors at a nest wander within this many tiles of it. On the hunt they follow the same rules as anywhere. */
   roamTiles: 2,
-  /** They go after troops within DINO_AI.raptorHuntRadiusTiles of themselves, but not past this many tiles from the nest. */
-  leashTiles: 10,
   /** How big the nest is drawn, in tiles. */
   drawRadiusTiles: 1.1,
+};
+
+/** A sound in the 3D game. src/audio/manifest.ts says which files each one plays. */
+export type SoundId =
+  | 'tap'
+  | 'select'
+  | 'order'
+  | 'error'
+  | 'ready'
+  | 'tip'
+  | 'build'
+  | 'reinforce'
+  | 'tower'
+  | 'coin'
+  | 'dartLight'
+  | 'dartHeavy'
+  | 'secured'
+  | 'down'
+  | 'fenceChain'
+  | 'fenceConcrete'
+  | 'breach'
+  | 'raptorCall'
+  | 'raptorHiss'
+  | 'raptorBite'
+  | 'raptorDie'
+  | 'trexRoar'
+  | 'trexGrowl'
+  | 'trexBite'
+  | 'trexDie'
+  | 'trikeBellow'
+  | 'guestCry'
+  | 'warning'
+  | 'siren'
+  | 'powerDown'
+  | 'powerUp'
+  | 'notice'
+  | 'troopLost'
+  | 'jeepDoor'
+  | 'jeepWreck'
+  | 'work'
+  | 'win'
+  | 'lose';
+
+/** How one sound sits in the mix. */
+export interface SoundMix {
+  /** 0 to 1. Every file is matched for loudness first (scripts/audio3d.py), so this is the balance between them. */
+  level: number;
+  /** Off screen a sound fades with distance, but never below this fraction, so warnings are heard from anywhere. */
+  floor?: number;
+  /** The least time between two plays, in seconds. Faster repeats are dropped. */
+  gap?: number;
+  /** Plays on the HUD's channel, not the game's. */
+  ui?: boolean;
+  /** Pitch wobble from play to play, as a fraction. Default AUDIO.pitchJitter. */
+  jitter?: number;
+}
+
+/** The 3D game's sounds. Events in the world pick them (src/audio/cues.ts); this sets how loud each is. */
+export const SOUNDS: Record<SoundId, SoundMix> = {
+  // The HUD.
+  tap: { level: 0.35, ui: true, jitter: 0, gap: 0.04 },
+  select: { level: 0.5, ui: true, jitter: 0, gap: 0.05 },
+  order: { level: 0.5, ui: true, jitter: 0, gap: 0.05 },
+  error: { level: 0.55, ui: true, jitter: 0, gap: 0.2 },
+  ready: { level: 0.6, ui: true, jitter: 0 },
+  tip: { level: 0.5, ui: true, jitter: 0 },
+  // Building and money. Guests pay often, so coins are quiet and spaced out.
+  build: { level: 0.7 },
+  reinforce: { level: 0.7 },
+  tower: { level: 0.7 },
+  coin: { level: 0.25, gap: 0.3 },
+  // Darts, and an animal going down.
+  dartLight: { level: 0.45, gap: 0.04 },
+  dartHeavy: { level: 0.55, gap: 0.04 },
+  secured: { level: 0.6, floor: 0.5, jitter: 0 },
+  down: { level: 0.6 },
+  // Fences.
+  fenceChain: { level: 0.45, gap: 0.1 },
+  fenceConcrete: { level: 0.5, gap: 0.1 },
+  breach: { level: 0.8, floor: 0.45, gap: 0.3 },
+  // Animals. The T. rex hunts in silence in levels 3 and 4 (MissionConfig.roars), so its voice is only heard in level 5.
+  raptorCall: { level: 0.7, floor: 0.35, gap: 0.6 },
+  raptorHiss: { level: 0.55, floor: 0.2, gap: 0.5 },
+  raptorBite: { level: 0.6, gap: 0.08 },
+  raptorDie: { level: 0.7, floor: 0.3 },
+  trexRoar: { level: 0.95, floor: 0.6, gap: 1 },
+  trexGrowl: { level: 0.75, floor: 0.3, gap: 2.5 },
+  trexBite: { level: 0.75, gap: 0.2 },
+  trexDie: { level: 0.95, floor: 0.5 },
+  trikeBellow: { level: 0.6, floor: 0.15, gap: 0.8 },
+  guestCry: { level: 0.5, gap: 0.4 },
+  // The park.
+  warning: { level: 0.6, jitter: 0 },
+  siren: { level: 0.55, jitter: 0 },
+  powerDown: { level: 0.85, jitter: 0 },
+  powerUp: { level: 0.75, floor: 0.6, jitter: 0 },
+  // Troops, the 4x4, and the Engineer.
+  notice: { level: 0.6, floor: 0.6, gap: 0.3, jitter: 0 },
+  troopLost: { level: 0.7, jitter: 0 },
+  jeepDoor: { level: 0.55, gap: 0.25 },
+  jeepWreck: { level: 0.8, floor: 0.4 },
+  work: { level: 0.35 },
+  // The end of a level.
+  win: { level: 0.75, jitter: 0 },
+  lose: { level: 0.75, jitter: 0 },
+};
+
+/** Sound in the 3D game: the mix, how sounds follow the camera, and the 4x4's engine. */
+export const AUDIO = {
+  /** Levels of each part of the mix, 0 to 1. */
+  master: 0.9,
+  /** Everything together is held under this level (dB), so a crowd of sounds doesn't crackle. */
+  limiterDb: -6,
+  music: 0.4,
+  ambience: 0.6,
+  sfx: 0.85,
+  ui: 0.6,
+  /** Seconds for music to fade in, or cross to another track... */
+  musicFadeSeconds: 1.5,
+  /** ...and to stop, at the end of a level, so the jingle plays on its own. */
+  musicStopSeconds: 0.5,
+  /** Music drops to this fraction while a tip holds the game. Not in the pause menu, where the Music slider needs the real level. */
+  heldMusic: 0.55,
+  /**
+   * The pause menu's Music and Effects sliders scale their parts of the mix by the slider's position to this power. At
+   * 2, halfway plays a quarter as loud in level (-12 dB), which sounds about half as loud, so the slider feels even.
+   */
+  volumeCurve: 2,
+  ambienceFadeSeconds: 2.5,
+  /** A sound on screen plays in full. Off screen it fades over this many tiles, down to its floor (SoundMix.floor). */
+  offscreenTiles: 12,
+  /** Zoomed all the way out, sounds play at this fraction of their zoomed-in level. */
+  zoomedOut: 0.7,
+  /** How far to one side a sound can sit, 0 to 1. */
+  panWidth: 0.6,
+  /** Quieter than this, a sound isn't played at all. */
+  minLevel: 0.02,
+  /** Pitch wobble from play to play, as a fraction, so repeats don't sound copied. */
+  pitchJitter: 0.04,
+  /** The most sounds at once, and of one kind. */
+  maxVoices: 16,
+  maxSame: 3,
+  /** An Engineer at work makes a tool sound this often (seconds, low to high). */
+  workSeconds: [0.8, 1.6] as readonly [number, number],
+  /** A bite is put down to the nearest raptor or T. rex within this many tiles of it, for its sound. */
+  biterTiles: 2,
+  /**
+   * The Patrol 4x4's engine, made in the game (src/audio/engine.ts). Driving it is heard (JEEP.noiseTiles); parked
+   * it's quiet. It plays faster with speed: from the first of these rates at a crawl to the second at full speed.
+   */
+  engine: {
+    level: 0.5,
+    rate: [0.85, 1.2] as readonly [number, number],
+    /** Seconds to start up or die away. */
+    fadeSeconds: 0.35,
+  },
 };
 
 export const SIM = {
@@ -512,4 +996,23 @@ export const COLORS = {
   nest: 0x6b4a2b,
   nestRim: 0x3d2a17,
   egg: 0xefe4c8,
+  substation: 0x2b3138,
+  substationTrim: 0x8a96a3,
+  bolt: 0xffd84d,
+  substationBroken: 0xff4d4d,
+  substationFixed: 0x3fe0ff,
+  cableOff: 0x6b7178,
+  cableOn: 0x3fe0ff,
+  engineerRing: 0xffd84d,
+  jeep: 0x1d2d5a,
+  jeepTrim: 0xe8f0ff,
+  /** How far raptors hear the 4x4's engine while it drives. */
+  engineNoise: 0xffd98a,
+  health: 0xff4d4d,
+  dead: 0x2a2a2a,
+  /** Level 4: what a raptor on patrol sees, and the line to a troop it's after. */
+  cone: 0xffd36b,
+  coneAlert: 0xff5a4a,
+  /** Level 4: a raptor making out a troop in its cone. */
+  coneNotice: 0xff8a2a,
 };

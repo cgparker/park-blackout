@@ -1,10 +1,14 @@
-# Tests and builds every push to main. Also deploys to GitHub Pages once you turn it on:
+# Tests and builds every pull request to main and every push to main: the unit tests, the 2D staging
+# build, and the 3D game with its artifact version. A push to main also deploys the 3D game to GitHub
+# Pages once you turn it on:
 #   1. Settings > Pages > Build and deployment > Source: GitHub Actions
 #   2. Settings > Secrets and variables > Actions > Variables: add PAGES_ENABLED = true
 name: Build
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -27,14 +31,21 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - if: vars.PAGES_ENABLED == 'true'
+      - name: 3D build
+        run: npm run build:3d
+      - name: 3D artifact build
+        run: npm run build:3d-artifact
+      # Pull requests are checked, never deployed. The 3D game is what players get, so its page is the home page.
+      - if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
+        run: cp dist-slice/slice.html dist-slice/index.html
+      - if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
-          path: dist
+          path: dist-slice
 
   deploy:
     needs: build
-    if: vars.PAGES_ENABLED == 'true'
+    if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       pages: write

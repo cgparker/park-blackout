@@ -1,14 +1,19 @@
 import Phaser from 'phaser';
-import { COLORS, DINO_AI, DINOS, MAP, NEST, UNITS, VISITORS, type AnimalKind } from '../config';
+import { COLORS, DINO_AI, DINOS, FIGHT, GRID, JEEP, MAP, NEST, STEALTH, UNITS, VISITORS, type AnimalKind } from '../config';
 import type { Dino } from '../core/dinos';
-import type { Exhibit } from '../core/exhibit';
+import { fenceRect, type Exhibit } from '../core/exhibit';
 import { Tile, type Rect } from '../core/grid';
-import { isTargetable, type Unit } from '../core/units';
+import { engineRunning } from '../core/jeep';
+import { repairProgress, substationCenter } from '../core/power';
+import { preyOf, viewCone } from '../core/stealth';
+import { isTargetable, passengers, type Unit } from '../core/units';
 import type { GameEvent, World } from '../core/world';
 
 const T = MAP.tileSize;
 const WORLD_W = MAP.cols * T;
 const WORLD_H = MAP.rows * T;
+/** One pulse of the 4x4's engine ring, from the 4x4 out to how far raptors hear it. */
+const NOISE_PULSE_SECONDS = 0.9;
 
 type DinoObj = Phaser.GameObjects.Ellipse | Phaser.GameObjects.Triangle | Phaser.GameObjects.Container;
 
@@ -68,11 +73,19 @@ export class WorldView {
   private visitorGfx!: Phaser.GameObjects.Graphics;
   private overlay!: Phaser.GameObjects.Graphics;
   private gridGfx!: Phaser.GameObjects.Graphics;
+  /** Level 4: the substations, and the cables from each to its pens. */
+  private subGfx!: Phaser.GameObjects.Graphics;
+  private cableGfx!: Phaser.GameObjects.Graphics;
+  private cableKey = '';
+  /** Level 4: what each raptor on patrol sees. */
+  private coneGfx!: Phaser.GameObjects.Graphics;
 
   private readonly exhibitGfx = new Map<number, { gfx: Phaser.GameObjects.Graphics; version: number; power: boolean }>();
   private readonly unitObjs = new Map<number, Phaser.GameObjects.Container>();
   /** A tower's base stays square; only its turret turns. */
   private readonly turrets = new Map<number, Phaser.GameObjects.Container>();
+  /** The 4x4's seats, one dot each, shown when someone sits there. */
+  private readonly seats = new Map<number, Phaser.GameObjects.Arc[]>();
   private readonly dinoObjs = new Map<number, DinoObj>();
   private readonly floaters: Floater[] = [];
   private readonly floaterPool: Phaser.GameObjects.Text[] = [];
@@ -100,6 +113,11 @@ export class WorldView {
     this.marks = this.scene.add.graphics().setDepth(3);
     this.drawHQ();
     this.drawNest();
+    // Above the night dimming, so a powered cable glows; below the pens.
+    this.cableGfx = this.scene.add.graphics().setDepth(1.6);
+    // Over the pens, so a cone cut short by a fence still shows its edge; under everyone standing on it.
+    this.coneGfx = this.scene.add.graphics().setDepth(2.5);
+    this.subGfx = this.scene.add.graphics().setDepth(4);
     this.visitorGfx = this.scene.add.graphics().setDepth(5);
     this.overlay = this.scene.add.graphics().setDepth(9);
     this.gridGfx = this.scene.add.graphics().setDepth(1.2).setVisible(false);
@@ -152,6 +170,29 @@ export class WorldView {
         case 'charge':
           this.float('Charge!', e.x, e.y - DINOS.trex.radius - 16, '#ff9a4d', 1.2);
           break;
+        case 'roar':
+          this.float('Roar!', e.x, e.y - DINOS.trex.radius - 16, '#ff9a4d', 1.4);
+          break;
+        case 'maul':
+          this.markers.push({ x: e.x, y: e.y, life: 0.3, color: COLORS.health });
+          break;
+        case 'killed':
+          this.float('Killed', e.x, e.y - DINOS[e.kind].radius - 14, '#ff6b6b', 1.8);
+          break;
+        case 'noticed':
+          this.float('?', e.x, e.y - DINOS.raptor.radius - 16, '#ffae5a', 1);
+          break;
+        case 'spotted':
+          this.float('!', e.x, e.y - DINOS.raptor.radius - 16, '#ff6b5a', 1.4);
+          break;
+        case 'substationFixed': {
+          const s = this.world.substationById(e.id);
+          if (s) {
+            const c = substationCenter(s, T);
+            this.float('Power on', c.x, c.y - T, '#7fefff', 1.8);
+          }
+          break;
+        }
       }
     }
   }
@@ -188,6 +229,8 @@ export class WorldView {
       this.scene.cameras.main.setBackgroundColor(w.powerOn ? COLORS.background : COLORS.backgroundBlackout);
     }
     for (const ex of w.exhibits) this.syncExhibit(ex);
+    if (w.substations.length) this.drawSubstations();
+    this.drawCones();
     this.drawVisitors();
     this.syncDinos(dt);
     this.syncUnits(dt, ui.selected);
@@ -199,18 +242,18 @@ export class WorldView {
   private syncExhibit(ex: Exhibit): void {
     let entry = this.exhibitGfx.get(ex.id);
     if (!entry) {
-      entry = { gfx: this.scene.add.graphics().setDepth(2), version: -1, power: !this.world.powerOn };
+      entry = { gfx: this.scene.add.graphics().setDepth(2), version: -1, power: !ex.powered };
       this.exhibitGfx.set(ex.id, entry);
     }
-    if (entry.version === ex.version && entry.power === this.world.powerOn) return;
+    if (entry.version === ex.version && entry.power === ex.powered) return;
     entry.version = ex.version;
-    entry.power = this.world.powerOn;
+    entry.power = ex.powered;
     this.drawExhibit(entry.gfx, ex);
   }
 
   private drawExhibit(g: Phaser.GameObjects.Graphics, ex: Exhibit): void {
     g.clear();
-    const powered = this.world.powerOn;
+    const powered = ex.powered;
     const { x, y, w, h } = ex.footprint;
     const fill = Phaser.Display.Color.IntegerToColor(COLORS.interior[ex.kind]);
     if (!powered) fill.darken(12);
@@ -300,7 +343,9 @@ export class WorldView {
       }
       obj.setPosition(d.x, d.y);
       obj.rotation = turnToward(obj.rotation, d.facing, (d.stampede > 0 || d.charge > 0 ? 14 : 7) * dt);
-      obj.setAlpha(d.state === 'secured' ? clamp(d.fade / DINO_AI.secureFadeSeconds, 0, 1) : 1);
+      obj.setAlpha(
+        d.state === 'secured' ? clamp(d.fade / DINO_AI.secureFadeSeconds, 0, 1) : d.state === 'dead' ? 0.55 * clamp(d.fade / FIGHT.deadSeconds, 0, 1) : 1,
+      );
     }
     for (const [id, obj] of this.dinoObjs) {
       if (!seen.has(id)) {
@@ -312,6 +357,17 @@ export class WorldView {
 
   private makeUnit(u: Unit): Phaser.GameObjects.Container {
     const r = UNITS[u.kind].radius;
+    if (u.kind === 'jeep') {
+      // An open-top 4x4 seen from above: navy body, white roll bar, a dot for each troop in it.
+      const body = this.scene.add.rectangle(0, 0, r * 2.3, r * 1.4, COLORS.jeep).setStrokeStyle(2, COLORS.jeepTrim, 1);
+      const hood = this.scene.add.rectangle(r * 0.75, 0, r * 0.7, r * 1.15, COLORS.jeep).setStrokeStyle(1, COLORS.jeepTrim, 0.5);
+      const bar = this.scene.add.rectangle(-r * 0.1, 0, 3, r * 1.3, COLORS.jeepTrim);
+      const seats = [-1, 1].map((side) => this.scene.add.circle(-r * 0.55, side * r * 0.32, 4.5, COLORS.unit).setStrokeStyle(1.5, COLORS.unitStroke, 1).setVisible(false));
+      this.seats.set(u.id, seats);
+      const obj = this.scene.add.container(u.x, u.y, [body, hood, bar, ...seats]).setDepth(7);
+      obj.rotation = u.facing;
+      return obj;
+    }
     if (u.kind === 'tower') {
       const side = T - 8;
       const base = this.scene.add.rectangle(0, 0, side, side, COLORS.tower).setStrokeStyle(2.5, COLORS.towerTrim, 1);
@@ -326,8 +382,11 @@ export class WorldView {
     const body =
       u.kind === 'tranq'
         ? this.scene.add.circle(0, 0, r, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1)
-        : this.scene.add.rectangle(0, 0, r * 2, r * 2, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1);
-    const barrel = this.scene.add.rectangle(r + 3, 0, 8, 3, 0xe8f0ff);
+        : u.kind === 'engineer'
+          ? this.scene.add.circle(0, 0, r, COLORS.unit).setStrokeStyle(3, COLORS.engineerRing, 1)
+          : this.scene.add.rectangle(0, 0, r * 2, r * 2, COLORS.unit).setStrokeStyle(2, COLORS.unitStroke, 1);
+    // Engineers carry a toolbox, not a dart gun.
+    const barrel = u.kind === 'engineer' ? this.scene.add.rectangle(r + 2, 0, 5, 7, COLORS.engineerRing) : this.scene.add.rectangle(r + 3, 0, 8, 3, 0xe8f0ff);
     const obj = this.scene.add.container(u.x, u.y, [barrel, body]).setDepth(7);
     obj.rotation = u.facing;
     return obj;
@@ -336,12 +395,18 @@ export class WorldView {
   private syncUnits(dt: number, selected: ReadonlySet<number>): void {
     const seen = new Set<number>();
     for (const u of this.world.units) {
-      if (u.dead) continue;
+      // Troops riding in the 4x4 are drawn as its seat dots instead.
+      if (u.dead || u.aboard) continue;
       seen.add(u.id);
       let obj = this.unitObjs.get(u.id);
       if (!obj) {
         obj = this.makeUnit(u);
         this.unitObjs.set(u.id, obj);
+      }
+      const seats = this.seats.get(u.id);
+      if (seats) {
+        const n = passengers(this.world, u).length;
+        seats.forEach((dot, i) => dot.setVisible(i < n));
       }
       const turret = this.turrets.get(u.id);
       if (turret) {
@@ -357,6 +422,7 @@ export class WorldView {
         obj.destroy();
         this.unitObjs.delete(id);
         this.turrets.delete(id);
+        this.seats.delete(id);
       }
     }
   }
@@ -383,6 +449,13 @@ export class WorldView {
     for (const u of w.units) {
       if (u.dead) continue;
       const r = UNITS[u.kind].radius;
+      // While the 4x4 drives, how far raptors hear its engine, and a pulse running out to it.
+      if (engineRunning(u)) {
+        const reach = JEEP.noiseTiles * w.T;
+        const k = (w.time / NOISE_PULSE_SECONDS) % 1;
+        g.lineStyle(2, COLORS.engineNoise, 0.35).strokeCircle(u.x, u.y, reach);
+        g.lineStyle(2, COLORS.engineNoise, 0.5 * (1 - k)).strokeCircle(u.x, u.y, Math.max(r, reach * k));
+      }
       if (ui.selected.has(u.id)) {
         g.lineStyle(2.5, COLORS.selection, 1).strokeCircle(u.x, u.y, r + 5);
         if (u.order === 'move' && u.path.length) {
@@ -395,9 +468,21 @@ export class WorldView {
 
     for (const d of w.dinos) {
       const cfg = DINOS[d.kind];
+      const width = d.kind === 'trex' ? 38 : d.kind === 'triceratops' ? 28 : 22;
+      if (d.state === 'dead') {
+        const a = clamp(d.fade / FIGHT.deadSeconds, 0, 1);
+        const k = cfg.radius * 0.6;
+        g.lineStyle(3, COLORS.casualty, a);
+        g.lineBetween(d.x - k, d.y - k, d.x + k, d.y + k);
+        g.lineBetween(d.x - k, d.y + k, d.x + k, d.y - k);
+        continue;
+      }
       if (d.state !== 'secured' && d.sedation < cfg.sedation) {
-        const width = d.kind === 'trex' ? 38 : d.kind === 'triceratops' ? 28 : 22;
         this.bar(d.x, d.y - cfg.radius - 12, width, d.sedation / cfg.sedation, COLORS.sedation);
+      }
+      // Level 5: a hurt animal's health, under its sedation bar.
+      if (d.state === 'loose' && d.health < cfg.health) {
+        this.bar(d.x, d.y - cfg.radius - 5, width, d.health / cfg.health, COLORS.health);
       }
       if (d.state === 'loose' && isTargetable(w, d) && d.kind !== 'triceratops') {
         g.lineStyle(1.5, COLORS.attackMarker, 0.35).strokeCircle(d.x, d.y, cfg.radius + 3);
@@ -460,6 +545,114 @@ export class WorldView {
     } else if (d.charge > 0) {
       g.lineStyle(3, COLORS.charge, 0.9).strokeCircle(d.x, d.y, r + 6);
       g.lineStyle(7, COLORS.charge, 0.3).lineBetween(d.x - d.cdx * (r + 8), d.y - d.cdy * (r + 8), d.x - d.cdx * (r + 48), d.y - d.cdy * (r + 48));
+    }
+  }
+
+  /**
+   * Every loose raptor that's calm shows what it sees as a pale cone, cut short by cover. While it makes someone out
+   * the cone turns orange and a ring fills around it; once it's sure, it hunts, and shows a red line to its prey and a
+   * ring around it instead: thin while its pack circles, thick once it rushes. A raptor in level 5's fight shows
+   * neither: it isn't looking.
+   */
+  private drawCones(): void {
+    const g = this.coneGfx;
+    const w = this.world;
+    g.clear();
+    for (const d of w.dinos) {
+      if (d.kind !== 'raptor' || d.state !== 'loose' || d.target?.type === 'dino') continue;
+      const prey = preyOf(w, d.target);
+      if (prey) {
+        // A pack circling a troop shows a thin line; once they rush, or a raptor charges alone, a thick one.
+        const circling = d.target?.type === 'unit' && !d.rush;
+        g.lineStyle(circling ? 1.5 : 3, COLORS.coneAlert, circling ? 0.35 : 0.8).lineBetween(d.x, d.y, prey.x, prey.y);
+        g.lineStyle(2, COLORS.coneAlert, 0.9).strokeCircle(prey.x, prey.y, prey.r + 7);
+        continue;
+      }
+      const pts = viewCone(w, d);
+      const k = Math.min(1, d.notice / STEALTH.noticeSeconds);
+      const color = k > 0 ? COLORS.coneNotice : COLORS.cone;
+      g.beginPath();
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      g.closePath();
+      g.fillStyle(color, 0.16 + 0.14 * k).fillPath();
+      g.lineStyle(1.5 + k, color, 0.45 + 0.4 * k).strokePath();
+      if (k > 0) {
+        const r = DINOS.raptor.radius + 7;
+        g.lineStyle(3, COLORS.coneNotice, 0.95);
+        g.beginPath();
+        g.arc(d.x, d.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k, false);
+        g.strokePath();
+      }
+    }
+  }
+
+  /**
+   * Level 4: each substation is a steel block with a lightning bolt and a light, red while broken and cyan once fixed.
+   * A ring fills while Engineers work. Cables run from it to each pen it powers, gray until it's fixed.
+   */
+  private drawSubstations(): void {
+    const w = this.world;
+    const key = w.substations.map((s) => (s.fixed ? 1 : 0)).join('');
+    if (key !== this.cableKey) {
+      this.cableKey = key;
+      const c = this.cableGfx;
+      c.clear();
+      for (const s of w.substations) {
+        const from = substationCenter(s, T);
+        for (const id of s.pens) {
+          const ex = w.exhibitById(id);
+          if (!ex) continue;
+          const r = fenceRect(ex.footprint, T);
+          const to = { x: clamp(from.x, r.left, r.right), y: clamp(from.y, r.top, r.bottom) };
+          // Dashes along the ground.
+          const len = Math.hypot(to.x - from.x, to.y - from.y);
+          const n = Math.max(1, Math.floor(len / 14));
+          c.lineStyle(2, s.fixed ? COLORS.cableOn : COLORS.cableOff, s.fixed ? 0.85 : 0.6);
+          for (let i = 0; i < n; i += 2) {
+            const a = i / n;
+            const b = Math.min(1, (i + 1) / n);
+            c.lineBetween(from.x + (to.x - from.x) * a, from.y + (to.y - from.y) * a, from.x + (to.x - from.x) * b, from.y + (to.y - from.y) * b);
+          }
+        }
+      }
+    }
+    const g = this.subGfx;
+    g.clear();
+    const size = GRID.sizeTiles * T;
+    for (const s of w.substations) {
+      const x = s.x * T + 4;
+      const y = s.y * T + 4;
+      const side = size - 8;
+      const c = substationCenter(s, T);
+      g.fillStyle(COLORS.substation, 1).fillRoundedRect(x, y, side, side, 8);
+      g.lineStyle(3, s.fixed ? COLORS.substationFixed : COLORS.substationTrim, 1).strokeRoundedRect(x, y, side, side, 8);
+      // Lightning bolt.
+      const b = side * 0.42;
+      g.fillStyle(COLORS.bolt, s.fixed ? 1 : 0.85);
+      const bolt = [
+        [0.15, -1],
+        [-0.45, 0.1],
+        [-0.05, 0.1],
+        [-0.2, 1],
+        [0.45, -0.15],
+        [0.05, -0.15],
+      ];
+      g.beginPath();
+      bolt.forEach(([px, py], i) => (i ? g.lineTo(c.x + px * b, c.y + py * b) : g.moveTo(c.x + px * b, c.y + py * b)));
+      g.closePath();
+      g.fillPath();
+      // Status light in the corner.
+      g.fillStyle(s.fixed ? COLORS.substationFixed : COLORS.substationBroken, 1).fillCircle(x + side - 9, y + 9, 5);
+      // Progress ring while it's being fixed.
+      const p = repairProgress(s);
+      if (!s.fixed && p > 0) {
+        g.lineStyle(5, COLORS.bolt, 0.95);
+        g.beginPath();
+        g.arc(c.x, c.y, side * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+        g.strokePath();
+      }
+      if (s.fixed) g.lineStyle(2, COLORS.substationFixed, 0.45).strokeCircle(c.x, c.y, side * 0.66);
     }
   }
 

@@ -1,0 +1,16 @@
+{
+  "name": "Park Blackout",
+  "short_name": "Park Blackout",
+  "description": "Round up loose dinosaurs, build a park, and keep it standing through the blackout.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b130e",
+  "theme_color": "#14251a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

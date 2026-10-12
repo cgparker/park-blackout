@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DINO_AI, DINOS, EXHIBITS, HUNTS, MAP, NEST, UNITS, type HuntLevelId } from '../src/config';
+import { DINO_AI, DINOS, EXHIBITS, MAP, MISSIONS, NEST, STEALTH, UNITS } from '../src/config';
 import { sedate } from '../src/core/combat';
 import { fenceRect, inFootprint } from '../src/core/exhibit';
-import { huntGoalsMet } from '../src/core/report';
-import { enqueueUnit, isTargetable, orderMove, spawnUnit } from '../src/core/units';
+import { missionGoalsMet } from '../src/core/report';
+import { inView } from '../src/core/stealth';
+import { enqueueUnit, isTargetable, spawnUnit } from '../src/core/units';
 import { World, type GameEvent } from '../src/core/world';
 
 const STEP = 1 / 60;
@@ -23,8 +24,8 @@ function run(w: World, seconds: number, until?: () => boolean): GameEvent[] {
 const loose = (w: World) => w.dinos.filter((d) => d.state === 'loose');
 
 describe('levels 1 and 2: the park they start with', () => {
-  for (const level of [1, 2] as HuntLevelId[]) {
-    const cfg = HUNTS[level];
+  for (const level of [1, 2] as const) {
+    const cfg = MISSIONS[level];
 
     it(`level ${level} builds its park for free, with the open fences down and their animals out`, () => {
       const w = new World({ seed: 1, level });
@@ -59,9 +60,9 @@ describe('levels 1 and 2: the park they start with', () => {
       expect(w.canBuild).toBe(false);
       expect(w.clockSeconds).toBe(cfg.timeLimitSeconds);
       w.start();
-      expect(w.phase).toBe('hunt');
+      expect(w.phase).toBe('mission');
       expect(w.canBuild).toBe(false);
-      expect(w.log).toEqual([{ t: 0, type: 'start', loose: { [loose(w)[0].kind]: loose(w).length }, nest: !!cfg.nest }]);
+      expect(w.log).toEqual([{ t: 0, type: 'start', loose: { [loose(w)[0].kind]: loose(w).length }, nest: !!cfg.nest, substations: 0, fight: false, stealth: false }]);
       run(w, 10);
       expect(w.clockSeconds).toBeCloseTo(cfg.timeLimitSeconds - 10, 3);
       for (const kind of ['tranq', 'heavy'] as const) expect(enqueueUnit(w, kind)).toBe(cfg.units.includes(kind));
@@ -79,7 +80,7 @@ describe('levels 1 and 2: the park they start with', () => {
     }
     const blackout = new World({ seed: 1 });
     expect(blackout.level).toBe(3);
-    expect(blackout.hunt).toBeNull();
+    expect(blackout.mission).toBeNull();
     expect(blackout.exhibits).toHaveLength(0);
     blackout.start();
     expect(blackout.phase).toBe('build');
@@ -121,6 +122,50 @@ describe('levels 1 and 2: getting animals back', () => {
     expect(w.log.at(-1)).toMatchObject({ type: 'back', kind: 'triceratops', how: 'walked', left: 5 });
   });
 
+  it('a stampede into the edge of the park turns and runs along it', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const d = loose(w)[0];
+    d.x = 10.5 * T;
+    d.y = 0.3 * T;
+    spawnUnit(w, 'tranq', { x: 10.5 * T, y: 2.5 * T });
+    run(w, 1);
+    expect(d.stampede).toBeGreaterThan(0);
+    expect(Math.abs(d.x - 10.5 * T)).toBeGreaterThan(2 * T);
+    expect(d.y).toBeGreaterThanOrEqual(0);
+    expect(d.y).toBeLessThan(T);
+  });
+
+  it('a stampede along a powered fence goes around it, and the fence takes no damage', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const whole = w.exhibits.find((e) => e.segments.every((s) => s.hp > 0))!;
+    const r = fenceRect(whole.footprint, T);
+    const d = loose(w)[0];
+    d.x = r.left - 0.3 * T;
+    d.y = (r.top + r.bottom) / 2;
+    spawnUnit(w, 'tranq', { x: r.left - 2.5 * T, y: d.y });
+    const hp = whole.segments.map((s) => s.hp);
+    run(w, 1);
+    expect(d.stampede).toBeGreaterThan(0);
+    expect(d.x).toBeLessThan(r.left);
+    expect(Math.abs(d.y - (r.top + r.bottom) / 2)).toBeGreaterThan(T);
+    expect(whole.segments.map((s) => s.hp)).toEqual(hp);
+  });
+
+  it('a cornered Triceratops stops', () => {
+    const w = new World({ seed: 2, level: 1 });
+    w.start();
+    const d = loose(w)[0];
+    d.x = 0.2 * T;
+    d.y = 0.2 * T;
+    spawnUnit(w, 'tranq', { x: 2.2 * T, y: 2.2 * T });
+    const events = run(w, 1);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'stampede', dinoId: d.id }));
+    expect(d.x).toBeLessThan(0.6 * T);
+    expect(d.y).toBeLessThan(0.6 * T);
+  });
+
   it('a troop close enough to dart a Triceratops scares it into running, and says so', () => {
     const w = new World({ seed: 2, level: 1 });
     w.start();
@@ -143,18 +188,18 @@ describe('levels 1 and 2: winning and losing', () => {
     expect(w.phase).toBe('ended');
     const r = w.result!;
     expect(r).toMatchObject({ won: true, reason: 'secured', level: 1, stars: 3, title: 'Every Triceratops is back' });
-    expect(r.hunt).toMatchObject({ kind: 'triceratops', loose: 6, returned: 6 });
-    expect(r.hunt!.timeLeft).toBeCloseTo(HUNTS[1].timeLimitSeconds - 20, 0);
+    expect(r.mission).toMatchObject({ kind: 'triceratops', loose: 6, returned: 6 });
+    expect(r.mission!.timeLeft).toBeCloseTo(MISSIONS[1].timeLimitSeconds - 20, 0);
     expect(r.log.at(-1)).toMatchObject({ type: 'end', reason: 'secured', loose: {} });
   });
 
   it('the park opening with animals loose loses the level', () => {
     const w = new World({ seed: 3, level: 1 });
     w.start();
-    run(w, HUNTS[1].timeLimitSeconds + 1);
+    run(w, MISSIONS[1].timeLimitSeconds + 1);
     expect(w.result).toMatchObject({ won: false, reason: 'timeUp', stars: 0, title: 'The park opened with Triceratops loose' });
     expect(w.result!.log.at(-1)).toMatchObject({ type: 'end', reason: 'timeUp', loose: { triceratops: 6 } });
-    expect(w.result!.log.at(-1)!.t).toBeCloseTo(HUNTS[1].timeLimitSeconds, 1);
+    expect(w.result!.log.at(-1)!.t).toBeCloseTo(MISSIONS[1].timeLimitSeconds, 1);
   });
 
   it('no troops, none coming, and too little money for one ends the level early', () => {
@@ -163,20 +208,23 @@ describe('levels 1 and 2: winning and losing', () => {
     const u = spawnUnit(w, 'tranq', { x: 6.5 * T, y: 13.5 * T });
     w.money = UNITS.tranq.cost - 1;
     run(w, 1);
-    expect(w.phase).toBe('hunt');
+    expect(w.phase).toBe('mission');
     u.dead = true;
     run(w, STEP);
     expect(w.result).toMatchObject({ won: false, reason: 'noTroops', title: 'Out of troops' });
   });
 
   it('second star: spend no more than the cap; third: time left in level 1, no troops lost in level 2', () => {
-    const one = HUNTS[1];
-    const third = one.thirdStar.type === 'timeLeft' ? one.thirdStar.seconds : 0;
-    expect(huntGoalsMet(one, one.spendStar, third, 3)).toEqual({ spend: true, third: true });
-    expect(huntGoalsMet(one, one.spendStar + 1, third - 1, 0)).toEqual({ spend: false, third: false });
-    const two = HUNTS[2];
-    expect(huntGoalsMet(two, 0, 0, 0)).toEqual({ spend: true, third: true });
-    expect(huntGoalsMet(two, 0, 999, 1)).toEqual({ spend: true, third: false });
+    const tally = (spent: number, timeLeft: number, troopsLost: number) => ({ spent, timeLeft, troopsLost, killed: 0, spotted: false });
+    const one = MISSIONS[1];
+    const [spend, time] = one.stars;
+    const cap = spend.type === 'spend' ? spend.max : 0;
+    const third = time.type === 'timeLeft' ? time.seconds : 0;
+    expect(missionGoalsMet(one, tally(cap, third, 3))).toEqual([true, true]);
+    expect(missionGoalsMet(one, tally(cap + 1, third - 1, 0))).toEqual([false, false]);
+    const two = MISSIONS[2];
+    expect(missionGoalsMet(two, tally(0, 0, 0))).toEqual([true, true]);
+    expect(missionGoalsMet(two, tally(0, 999, 1))).toEqual([true, false]);
   });
 });
 
@@ -195,20 +243,58 @@ describe('level 2: raptors guarding a nest', () => {
     expect(raptors.every((d) => d.target === null)).toBe(true);
   });
 
-  it('go after a troop close to the nest, then give up once it leaves the leash, and run home', () => {
+  /** Open ground about three tiles from a raptor that it sees (`seen`), or that no raptor sees (not `seen`). */
+  function spotNear(w: World, d: { x: number; y: number; facing: number }, seen: boolean) {
+    const raptors = loose(w).filter((o) => o.kind === 'raptor');
+    for (const r of [3, 2.5, 3.5, 2, 4]) {
+      for (let i = 0; i < 16; i++) {
+        const a = seen ? d.facing + (i % 2 ? 1 : -1) * Math.floor(i / 2) * 0.1 : d.facing + Math.PI + (i % 2 ? 1 : -1) * Math.floor(i / 2) * 0.2;
+        const p = { x: d.x + Math.cos(a) * r * T, y: d.y + Math.sin(a) * r * T };
+        if (!w.unitWalk(Math.floor(p.x / T), Math.floor(p.y / T))) continue;
+        if (seen ? inView(w, d, p.x, p.y) : raptors.every((o) => !inView(w, o, p.x, p.y))) return p;
+      }
+    }
+    throw new Error('no open ground for the test');
+  }
+
+  it('see in cones like every raptor: a troop in one cone brings the whole nest, and they go home once they lose it', () => {
     const { w, nest, raptors } = setup();
-    const u = spawnUnit(w, 'heavy', { x: nest.x - 6 * T, y: nest.y });
+    // Out of every cone: nothing happens. (It holds its fire, so only being seen sets them off.)
+    const u = spawnUnit(w, 'heavy', { x: nest.x - (STEALTH.sightTiles + NEST.roamTiles + 1.5) * T, y: nest.y });
     u.hp = 1e9;
-    run(w, 2);
-    expect(raptors.filter((d) => d.target?.type === 'unit').length).toBeGreaterThan(0);
-    // Out past the leash: the chase stops and they head back.
-    u.x = nest.x - (NEST.leashTiles + 2) * T;
-    orderMove(w, [u.id], u.x - 4 * T, u.y);
-    run(w, 1);
+    u.cooldown = 1e9;
+    run(w, 3);
+    expect(raptors.every((d) => d.target === null)).toBe(true);
+    // In front of one raptor: it stops to make the troop out, then calls the rest.
+    const r = raptors[0];
+    Object.assign(u, spotNear(w, r, true));
+    run(w, STEALTH.noticeSeconds + 0.2);
+    expect(raptors.filter((d) => d.state === 'loose').every((d) => d.target?.type === 'unit' && d.target.id === u.id)).toBe(true);
+    // Gone, far out of sight: they give up after a few seconds and go back to the nest.
+    u.x = 6.5 * T;
+    u.y = 14.5 * T;
+    run(w, STEALTH.giveUpSeconds + 1);
     expect(raptors.every((d) => d.state !== 'loose' || d.target === null)).toBe(true);
     run(w, 15);
     for (const d of raptors.filter((d) => d.state === 'loose')) {
       expect(Math.hypot(d.x - nest.x, d.y - nest.y)).toBeLessThanOrEqual((NEST.roamTiles + 1) * T);
     }
+  });
+
+  it('a raptor darted by a troop none of them sees comes alone, but any raptor that sees it hit comes too', () => {
+    const { w, raptors } = setup();
+    run(w, 1);
+    const r = raptors[0];
+    const u = spawnUnit(w, 'tranq', spotNear(w, r, false));
+    u.hp = 1e9;
+    u.cooldown = 1e9;
+    const saw = raptors.filter((o) => o !== r && inView(w, o, r.x, r.y)).map((o) => o.id);
+    sedate(w, r, 10, u.id);
+    run(w, STEP * 2);
+    expect(r.target).toEqual({ type: 'unit', id: u.id });
+    // No call: just it and whoever watched it get hit, charging at once.
+    const hunters = raptors.filter((d) => d.target !== null);
+    expect(new Set(hunters.map((d) => d.id))).toEqual(new Set([r.id, ...saw]));
+    expect(hunters.every((d) => d.rush)).toBe(true);
   });
 });

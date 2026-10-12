@@ -21,6 +21,20 @@ export interface Exhibit {
   /** One segment per border tile, clockwise from the top-left corner. */
   segments: FenceSegment[];
   reinforced: boolean;
+  /** Level 5: a cage the T. rex is breaking into (ParkExhibit.cageHp). A dart makes it smash through. */
+  cage: boolean;
+  /** Whether its fence has power. Animals inside leave a powered fence alone, and nothing can damage it. */
+  powered: boolean;
+  /**
+   * Seconds into the level when the animals inside go for the fence while it has no power, when the level sets it
+   * (null: never on their own). Undefined means the animal's own breakout delay, as in the blackout.
+   */
+  breakoutAt?: number | null;
+  /**
+   * Level 3: seconds this pen's animals go for the fence early (negative) or late this game, drawn when the power goes
+   * out. Every pen of a kind shares it.
+   */
+  drift: number;
   visits: number;
   revenue: number;
   /** The segment a raptor pack is breaking, so the whole pack hits the same one. */

@@ -194,6 +194,15 @@ body {
   color: var(--bad);
 }
 
+/* Level 4: the revenue slot says whether a raptor has seen the Engineer. No meter. */
+.stat.revenue.flag .meter {
+  visibility: hidden;
+}
+
+.stat.revenue.flag.met .val {
+  color: var(--good);
+}
+
 /* Levels 1 and 2: the revenue slot tracks spending, and turns red past the star's cap. */
 .stat.revenue.over .meter i {
   background: var(--bad);
@@ -572,6 +581,59 @@ body {
   color: var(--muted);
 }
 
+/* Level 4: a substation's panel, with how far the fix has got. */
+.substation-panel {
+  width: 250px;
+}
+
+.substation-panel .panel-head {
+  justify-content: flex-start;
+}
+
+.substation-panel .panel-title {
+  flex: 1;
+}
+
+.sub-icon {
+  display: grid;
+  flex: none;
+}
+
+.sub-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.sub-bar {
+  display: block;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sub-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--warn);
+  transition: width 0.25s linear;
+}
+
+.substation-panel.fixed .sub-bar i {
+  background: var(--accent);
+}
+
+.sub-status {
+  color: var(--text);
+}
+
+/* Level 4: the last slot counts substations fixed, and turns green when they all are. */
+.stat.casualties.good .val {
+  color: var(--good);
+}
+
 .team-note {
   margin-top: 8px;
   font-size: 12px;
@@ -807,9 +869,8 @@ body {
   box-sizing: border-box;
   padding: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
   overflow-y: auto;
-  background: rgba(4, 8, 6, 0.8);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  /* No backdrop blur: on a phone, blurring the whole screen over the 3D view costs every frame. */
+  background: rgba(4, 8, 6, 0.84);
   pointer-events: auto;
   touch-action: pan-y;
 }
@@ -850,18 +911,19 @@ body {
 /* Level picker on the briefing. */
 .levels {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
 }
 
+/* Five levels in one row: the number on top, the name and what it teaches under it. */
 .level-btn {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  column-gap: 7px;
-  align-items: baseline;
-  padding: 6px 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
   min-height: 44px;
+  min-width: 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--panel-raised);
@@ -875,21 +937,23 @@ body {
 }
 
 .level-num {
-  grid-row: span 2;
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.05;
   font-weight: 800;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
 .level-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.15;
   min-width: 0;
+  max-width: 100%;
 }
 
 .level-teaches {
+  max-width: 100%;
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
@@ -1237,6 +1301,38 @@ body {
   flex: none;
 }
 
+/* Sound, Music, and Effects on one row, so the menu still fits a short phone held sideways. */
+.menu-card.with-sound {
+  max-width: 540px;
+}
+
+.sound-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+}
+
+.volume {
+  display: flex;
+  flex: 1 1 150px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.volume input {
+  flex: 1;
+  min-width: 70px;
+  accent-color: var(--good);
+}
+
+.sound-row.off .volume {
+  opacity: 0.45;
+}
+
 /* ------------------------------------------------------------ debug */
 
 .debug {
@@ -1409,18 +1505,14 @@ body {
     display: none;
   }
   .level-btn {
-    grid-template-rows: auto;
-    align-items: center;
     min-height: 40px;
-    padding: 4px 8px;
-    column-gap: 6px;
+    padding: 4px 7px;
   }
   .level-num {
-    grid-row: auto;
-    font-size: 18px;
+    font-size: 15px;
   }
   .level-name {
-    font-size: 13px;
+    font-size: 12px;
   }
   .brief-intro {
     font-size: 14px;

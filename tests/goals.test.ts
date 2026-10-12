@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { HUNTS, SCORING } from '../src/config';
+import { MISSIONS, SCORING, type StarGoal } from '../src/config';
 import type { Result } from '../src/core/report';
 import { goalRules, goalsAtEnd, goalsNow, STAR_RULE } from '../src/ui/goals';
+
+const spendCap = (g: StarGoal) => (g.type === 'spend' ? g.max : 0);
 
 function result(over: Partial<Result>): Result {
   return {
@@ -20,14 +22,16 @@ function result(over: Partial<Result>): Result {
     casualtyTotal: 0,
     troopsTrained: 0,
     troopsLost: 0,
+    engineersLost: 0,
     towersBuilt: 0,
     towersLost: 0,
+    jeepsLost: 0,
     dinosSecured: 0,
     dinosContained: 0,
     visitorsAtBlackout: 0,
     evacuatedBy: null,
     visitorsSafe: 0,
-    hunt: null,
+    mission: null,
     log: [],
     ...over,
   };
@@ -92,7 +96,7 @@ describe('star goals in levels 1 and 2', () => {
       level,
       revenue: 0,
       revenueTarget: 0,
-      hunt: { kind: level === 1 ? 'triceratops' : 'raptor', loose: 6, returned: 6, timeLeft },
+      mission: { kind: level === 1 ? 'triceratops' : 'raptor', loose: 6, returned: 6, timeLeft, fixed: 0, substations: 0, spotted: false, killed: 0, team: 0 },
       ...rest,
     });
   };
@@ -101,36 +105,36 @@ describe('star goals in levels 1 and 2', () => {
   it('the briefing states each level’s goals', () => {
     expect(goalRules(0, 1)).toEqual([
       'Get all 6 Triceratops back before the park opens in 2:30.',
-      `Spend no more than $${HUNTS[1].spendStar.toLocaleString('en-US')} on troops.`,
+      `Spend no more than $${spendCap(MISSIONS[1].stars[0]).toLocaleString('en-US')} on troops.`,
       'Finish with 1:00 or more left on the clock.',
     ]);
     expect(goalRules(0, 2)).toEqual([
       'Clear the nest before the park opens in 4:00: all 6 raptors back in their pens.',
-      `Spend no more than $${HUNTS[2].spendStar.toLocaleString('en-US')} on troops.`,
+      `Spend no more than $${spendCap(MISSIONS[2].stars[0]).toLocaleString('en-US')} on troops.`,
       'Lose no troops.',
     ]);
   });
 
   it('the pause menu marks spending past the cap and time below the mark as missed', () => {
-    const cap = HUNTS[1].spendStar;
-    const now = goalsNow({ phase: 'hunt', loose: 4, revenue: 0, target: 0, casualties: 0, level: 1, spent: cap + 2250, timeLeft: 59.2, troopsLost: 0 });
+    const cap = spendCap(MISSIONS[1].stars[0]);
+    const now = goalsNow({ phase: 'mission', loose: 4, revenue: 0, target: 0, casualties: 0, level: 1, spent: cap + 2250, timeLeft: 59.2, troopsLost: 0 });
     expect(now.map((g) => [g.name, g.status, g.met])).toEqual([
       ['Get every Triceratops back', '4 loose now', null],
       [`Spend $${cap.toLocaleString('en-US')} or less`, `$${(cap + 2250).toLocaleString('en-US')} spent so far`, false],
       ['Finish with 1:00 left', '1:00 left now', null],
     ]);
     // The clock rounds up, so 1:00 still shows until it ticks to 0:59.
-    expect(goalsNow({ phase: 'hunt', loose: 4, revenue: 0, target: 0, casualties: 0, level: 1, spent: 0, timeLeft: 58.9 })[2].met).toBe(false);
-    const nest = goalsNow({ phase: 'hunt', loose: 6, revenue: 0, target: 0, casualties: 0, level: 2, spent: 0, troopsLost: 2 });
+    expect(goalsNow({ phase: 'mission', loose: 4, revenue: 0, target: 0, casualties: 0, level: 1, spent: 0, timeLeft: 58.9 })[2].met).toBe(false);
+    const nest = goalsNow({ phase: 'mission', loose: 6, revenue: 0, target: 0, casualties: 0, level: 2, spent: 0, troopsLost: 2 });
     expect(nest.map((g) => [g.name, g.status, g.met])).toEqual([
       ['Clear the nest', '6 loose now', null],
-      [`Spend $${HUNTS[2].spendStar.toLocaleString('en-US')} or less`, '$0 spent so far', null],
+      [`Spend $${spendCap(MISSIONS[2].stars[0]).toLocaleString('en-US')} or less`, '$0 spent so far', null],
       ['Lose no troops', '2 lost', false],
     ]);
   });
 
   it('the end screen marks each goal, and time to spare only counts on a win', () => {
-    const cap = HUNTS[1].spendStar;
+    const cap = spendCap(MISSIONS[1].stars[0]);
     expect(summary(goalsAtEnd(hunt(1, { spending: spent(cap), timeLeft: 83.4 })))).toEqual([
       '★ Get every Triceratops back: All 6 are back met',
       `★ Spend $${cap.toLocaleString('en-US')} or less: $${cap.toLocaleString('en-US')} spent met`,
@@ -147,5 +151,42 @@ describe('star goals in levels 1 and 2', () => {
       '☆ Lose no troops: 1 lost missed',
     ]);
     expect(goalsAtEnd(hunt(2, { won: false, reason: 'noTroops', stars: 0 }))[0].status).toBe('Ran out of troops');
+  });
+});
+
+describe('star goals in levels 4 and 5', () => {
+  const mission = (level: 4 | 5, over: Partial<Result> & { spotted?: boolean; killed?: number }): Result => {
+    const { spotted = false, killed = 0, ...rest } = over;
+    return result({
+      level,
+      revenue: 0,
+      revenueTarget: 0,
+      mission: { kind: 'raptor', loose: 2, returned: 0, timeLeft: 60, fixed: level === 4 ? 3 : 0, substations: level === 4 ? 3 : 0, spotted, killed, team: level === 4 ? 2 : 4 },
+      ...rest,
+    });
+  };
+
+  it('the briefing states each level’s goals', () => {
+    expect(goalRules(0, 4)).toEqual(['Fix all 3 substations before dawn, 3:30 from now.', 'Lose no troops.', 'Keep the Engineer out of every raptor’s sight.']);
+    expect(goalRules(0, 5)[2]).toBe('Keep every animal alive.');
+  });
+
+  it('the pause menu counts substations, and loses the third star once the Engineer is seen', () => {
+    const now = goalsNow({ phase: 'mission', loose: 2, revenue: 0, target: 0, casualties: 0, level: 4, fixed: 1, substations: 3, troopsLost: 0, spotted: true });
+    expect(now.map((g) => [g.name, g.status, g.met])).toEqual([
+      ['Power back on', '1 of 3 fixed', null],
+      ['Lose no troops', 'No troops lost so far', null],
+      ['Never spotted', 'A raptor saw the Engineer', false],
+    ]);
+  });
+
+  it('the end screen marks each goal', () => {
+    expect(summary(goalsAtEnd(mission(4, { troopsLost: 1, stars: 2 })))).toEqual([
+      '★ Power back on: Every substation fixed met',
+      '☆ Lose no troops: 1 lost missed',
+      '★ Never spotted: Never seen met',
+    ]);
+    expect(goalsAtEnd(mission(4, { won: false, reason: 'noEngineers', stars: 0, spotted: true }))[0].status).toBe('The Engineer was lost');
+    expect(summary(goalsAtEnd(mission(5, { killed: 1, stars: 2 })))[2]).toBe('☆ No animal killed: 1 killed missed');
   });
 });

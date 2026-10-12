@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, SCORING, SQUAD, UNITS, VISITORS, type ExhibitKind } from '../src/config';
-import { damageUnit } from '../src/core/combat';
+import { BLACKOUT, DINO_AI, DINOS, ECONOMY, EXHIBITS, FENCE, MAP, PACK, SCORING, SQUAD, STEALTH, UNITS, VISITORS, type ExhibitKind } from '../src/config';
+import { damageUnit, sedate } from '../src/core/combat';
 import { damageSegment, hasExit, killVisitor, type Dino } from '../src/core/dinos';
 import { breakoutSeconds, secondsToSedate, sedationPerSecond } from '../src/core/estimates';
 import { Tile } from '../src/core/grid';
@@ -396,7 +396,7 @@ describe('blackout and cascade', () => {
     expect(w.dinos.every((d) => d.state === 'penned')).toBe(true);
   });
 
-  it('the T. rex breaks chain-link in 3 hits after 10 seconds', () => {
+  it('the T. rex breaks chain-link in 3 hits after its 10 s delay, moved by this game\'s drift', () => {
     let rex!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (rex = place(w, 'trex', 20, 16)));
     const events = run(w, 40, () => w.dinos.some((d) => d.kind === 'trex' && d.state === 'loose'));
@@ -404,8 +404,30 @@ describe('blackout and cascade', () => {
     expect(breach).toBeTruthy();
     const hits = events.filter((e) => e.type === 'fenceHit' && e.exhibitId === rex.id);
     expect(hits).toHaveLength(3);
-    expect(w.phaseTime).toBeGreaterThan(DINOS.trex.breakoutDelaySeconds!);
-    expect(w.phaseTime).toBeLessThan(18);
+    const start = DINOS.trex.breakoutDelaySeconds! + rex.drift;
+    expect(w.phaseTime).toBeGreaterThan(start);
+    expect(w.phaseTime).toBeLessThan(start + 8);
+  });
+
+  it('the raptors and the T. rex each go for their fences a few seconds early or late, a new draw each game', () => {
+    const drifts: number[] = [];
+    for (let seed = 1; seed <= 12; seed++) {
+      let rex!: ReturnType<typeof place>;
+      let a!: ReturnType<typeof place>;
+      let b!: ReturnType<typeof place>;
+      blackoutWorld((w) => {
+        a = place(w, 'raptor', 9, 11);
+        b = place(w, 'raptor', 9, 4);
+        rex = place(w, 'trex', 20, 16);
+      }, seed);
+      // Every raptor pen moves together; the T. rex moves on its own.
+      expect(b.drift).toBe(a.drift);
+      expect(rex.drift).not.toBe(a.drift);
+      drifts.push(rex.drift, a.drift);
+    }
+    expect(drifts.every((d) => Math.abs(d) <= BLACKOUT.breakoutDriftSeconds)).toBe(true);
+    expect(drifts.some((d) => d < -2)).toBe(true);
+    expect(drifts.some((d) => d > 2)).toBe(true);
   });
 
   it('concrete takes the T. rex 8 hits', () => {
@@ -427,8 +449,8 @@ describe('blackout and cascade', () => {
     const events = run(w, 40, () => w.dinos.some((d) => d.state === 'loose'));
     const breach = events.find((e) => e.type === 'breach');
     expect(breach && breach.type === 'breach' && breach.x).toBe((pen.segments[weak].x + 0.5) * T);
-    expect(w.phaseTime).toBeGreaterThan(DINOS.raptor.breakoutDelaySeconds!);
-    expect(w.phaseTime).toBeLessThan(DINOS.raptor.breakoutDelaySeconds! + 3);
+    expect(w.phaseTime).toBeGreaterThan(DINOS.raptor.breakoutDelaySeconds! + pen.drift);
+    expect(w.phaseTime).toBeLessThan(DINOS.raptor.breakoutDelaySeconds! + pen.drift + 3);
     run(w, 1);
     expect(w.dinos.filter((d) => d.kind === 'raptor').every((d) => d.state === 'loose')).toBe(true);
   });
@@ -554,8 +576,11 @@ describe('combat', () => {
     setLoose(rex, 24.5 * T, 21.5 * T);
     const u = spawnUnit(w, 'heavy', { x: 28.5 * T, y: 21.5 * T });
     u.hp = u.maxHp = 100000;
+    // On the hunt in the blackout it doesn't roar: it locks on and winds up at once.
     const events = run(w, 0.5, () => rex.windup > 0);
     expect(rex.lockId).toBe(u.id);
+    expect(rex.roar).toBe(0);
+    expect(events.some((e) => e.type === 'roar')).toBe(false);
     expect(events.some((e) => e.type === 'charge')).toBe(true);
     const x0 = rex.x;
     run(w, DINO_AI.trexChargeWindupSeconds - 0.05);
@@ -591,7 +616,7 @@ describe('combat', () => {
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
     const fp = pen.footprint;
     spawnUnit(w, 'heavy', { x: (fp.x + fp.w + 1.5) * T, y: (fp.y + 1.5) * T });
-    const events = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    const events = run(w, DINOS.raptor.breakoutDelaySeconds! + pen.drift - 1);
     expect(events.some((e) => e.type === 'dart')).toBe(false);
     expect(w.dinos.every((d) => d.sedation === DINOS[d.kind].sedation)).toBe(true);
   });
@@ -615,6 +640,170 @@ describe('combat', () => {
     expect(w.casualties.raptor).toBe(1);
     expect(contactSeen).toBeGreaterThan(DINO_AI.visitorContactSeconds - 0.05);
     expect(events.some((e) => e.type === 'casualty')).toBe(true);
+  });
+
+  it('a loose raptor heads for the crowd, and hunts the first guest it sees at once', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    // A guest on the path by the pen, 8 tiles north of a raptor on open grass that faces away from it.
+    const spot = pen.viewingSpot;
+    const v = bystander(w, (spot.x - 0.5) * T, (spot.y + 0.5) * T);
+    setLoose(raptor, (spot.x - 0.5) * T, (spot.y + 8.5) * T);
+    raptor.facing = Math.PI / 2;
+    const y0 = raptor.y;
+    run(w, 0.5);
+    // It doesn't see the guest yet, but it knows where the crowd is.
+    expect(raptor.target).toBeNull();
+    expect(raptor.y).toBeLessThan(y0);
+    // The guest sees it coming and would run; hold it where it stands. A guest panicking in the dark takes no
+    // making out: the raptor hunts it the moment it comes into view.
+    const hold = { x: v.x, y: v.y };
+    let beat = 0;
+    run(w, 3, () => {
+      Object.assign(v, hold);
+      beat = Math.max(beat, raptor.notice);
+      return raptor.target !== null;
+    });
+    expect(raptor.target).toEqual({ type: 'visitor', id: v.id });
+    expect(beat).toBe(0);
+  });
+
+  it('with the guests gone, a loose raptor heads for the troops, and makes one out before it hunts', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    // On open grass along the south edge, looking west, with a squad 7 tiles behind it that holds its fire.
+    setLoose(raptor, 6.5 * T, 22.5 * T);
+    raptor.facing = Math.PI;
+    const squad = spawnUnit(w, 'tranq', { x: raptor.x + 7 * T, y: raptor.y });
+    squad.cooldown = 1e9;
+    const away = () => Math.hypot(raptor.x - squad.x, raptor.y - squad.y);
+    const d0 = away();
+    run(w, 0.3);
+    // It doesn't see the squad yet, but it knows where the troops are.
+    expect(raptor.target).toBeNull();
+    expect(away()).toBeLessThan(d0);
+    run(w, 3, () => raptor.notice > 0);
+    expect(raptor.notice).toBeGreaterThan(0);
+    expect(raptor.target).toBeNull();
+    run(w, STEALTH.noticeSeconds, () => raptor.target !== null);
+    expect(raptor.target).toEqual({ type: 'unit', id: squad.id });
+  });
+
+  it('a loose raptor feels a troop that walks into it, whichever way it looks', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const raptor = w.dinos.find((d) => d.home === pen.id)!;
+    setLoose(raptor, 6.5 * T, 22.5 * T);
+    raptor.facing = Math.PI;
+    const squad = spawnUnit(w, 'tranq', { x: raptor.x + 0.4 * T, y: raptor.y });
+    squad.cooldown = 1e9;
+    run(w, STEP * 2);
+    expect(raptor.target).toEqual({ type: 'unit', id: squad.id });
+  });
+
+  /** A raptor pen's three raptors out on open grass: one looking at a Tranq Squad from 4.5 tiles, two farther back. */
+  function packAndSquad() {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const [a, b, c] = w.dinos.filter((d) => d.home === pen.id);
+    const squad = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 16.5 * T });
+    squad.hp = squad.maxHp = 1e6;
+    setLoose(a, 16 * T, 16.5 * T);
+    a.facing = 0;
+    setLoose(b, 12.5 * T, 14.5 * T);
+    setLoose(c, 12.5 * T, 18.5 * T);
+    for (const d of [b, c]) {
+      d.facing = Math.PI;
+      d.wait = 10;
+    }
+    return { w, pack: [a, b, c], squad };
+  }
+
+  it('raptors that hunt a troop together circle it out of dart range, then rush it together', () => {
+    const { w, pack, squad } = packAndSquad();
+    const away = (d: Dino) => Math.hypot(d.x - squad.x, d.y - squad.y);
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    // The one that made the squad out called the others; nobody rushes yet.
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    expect(pack.some((d) => d.rush)).toBe(false);
+    // While they circle, none comes within the squad's dart range, and they end up on every side of it.
+    let closest = Infinity;
+    run(w, PACK.circleSeconds + 0.5, () => {
+      if (!pack.some((d) => d.rush)) closest = Math.min(closest, ...pack.map(away));
+      return pack.every((d) => d.rush);
+    });
+    expect(closest).toBeGreaterThan(UNITS.tranq.range);
+    expect(pack.every((d) => d.rush)).toBe(true);
+    const sides = pack.map((d) => Math.atan2(d.y - squad.y, d.x - squad.x));
+    const gap = Math.min(...sides.flatMap((s, i) => sides.slice(i + 1).map((t) => Math.abs(Math.atan2(Math.sin(s - t), Math.cos(s - t))))));
+    expect(gap).toBeGreaterThan(Math.PI / 3);
+    // Then all three strike.
+    run(w, 3, () => pack.every((d) => away(d) < 1.2 * T));
+    expect(pack.every((d) => away(d) < 1.2 * T)).toBe(true);
+  });
+
+  it('raptors hem in a squad with its back to the park edge: they spread along the open side, then strike', () => {
+    let pen!: ReturnType<typeof place>;
+    const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
+    const [a, b, c] = w.dinos.filter((d) => d.home === pen.id);
+    // Two and a half tiles from the south edge, so the ring round it is cut.
+    const squad = spawnUnit(w, 'tranq', { x: 20.5 * T, y: 21.5 * T });
+    squad.hp = squad.maxHp = 1e6;
+    setLoose(a, 16 * T, 21.5 * T);
+    a.facing = 0;
+    setLoose(b, 12.5 * T, 18.5 * T);
+    setLoose(c, 12.5 * T, 22.5 * T);
+    for (const d of [b, c]) {
+      d.facing = Math.PI;
+      d.wait = 10;
+    }
+    const pack = [a, b, c];
+    run(w, STEALTH.noticeSeconds + 0.1, () => a.target !== null);
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    let closest = Infinity;
+    run(w, PACK.circleSeconds + 0.5, () => {
+      if (!pack.some((d) => d.rush)) closest = Math.min(closest, ...pack.map((d) => Math.hypot(d.x - squad.x, d.y - squad.y)));
+      return pack.every((d) => d.rush);
+    });
+    // They got into place before the time ran out, without coming into dart range.
+    expect(pack.every((d) => d.rush)).toBe(true);
+    expect(pack.every((d) => d.circle < PACK.circleSeconds)).toBe(true);
+    expect(closest).toBeGreaterThan(UNITS.tranq.range);
+    // Spread over the open side: the two outermost are more than a third of a turn apart round the squad.
+    const sides = pack.map((d) => Math.atan2(d.y - squad.y, d.x - squad.x)).sort((p, q) => p - q);
+    const widest = Math.max(...sides.flatMap((s, i) => sides.slice(i + 1).map((t) => Math.abs(Math.atan2(Math.sin(s - t), Math.cos(s - t))))));
+    expect(widest).toBeGreaterThan((Math.PI * 2) / 3);
+  });
+
+  it('striking together, raptors keep to their prey, and go straight on to the next troop when it falls', () => {
+    const { w, pack, squad } = packAndSquad();
+    const buddy = spawnUnit(w, 'tranq', { x: squad.x + 1.5 * T, y: squad.y });
+    buddy.hp = buddy.maxHp = 1e6;
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    run(w, PACK.circleSeconds + 0.5, () => pack.every((d) => d.rush));
+    expect(pack.every((d) => d.rush)).toBe(true);
+    // A dart from the troop beside its prey doesn't pull a raptor off it.
+    sedate(w, pack[1], 10, buddy.id);
+    run(w, STEP * 2);
+    expect(pack.every((d) => d.target?.type === 'unit' && d.target.id === squad.id)).toBe(true);
+    // The prey falls: no calming down and no new circle; they go for the troop beside it at once.
+    damageUnit(w, squad, 1e7, 'raptor');
+    run(w, STEP * 2);
+    const loose = pack.filter((d) => d.state === 'loose');
+    expect(loose.length).toBeGreaterThan(0);
+    expect(loose.every((d) => d.target?.type === 'unit' && d.target.id === buddy.id && d.rush)).toBe(true);
+  });
+
+  it('darting one raptor of a circling pack makes them all rush at once', () => {
+    const { w, pack, squad } = packAndSquad();
+    run(w, STEALTH.noticeSeconds + 0.1, () => pack[0].target !== null);
+    run(w, 0.5);
+    expect(pack.some((d) => d.rush)).toBe(false);
+    sedate(w, pack[1], 10, squad.id);
+    run(w, STEP * 2);
+    expect(pack.every((d) => d.rush)).toBe(true);
   });
 
   it('reaching the casualty limit shuts the park down', () => {
@@ -663,7 +852,7 @@ describe('towers', () => {
       const fp = pen.footprint;
       w.buildTower(planTower(w.grid, fp.x + fp.w + 1, fp.y + 1, w.money));
     });
-    const quiet = run(w, DINOS.raptor.breakoutDelaySeconds! - 1);
+    const quiet = run(w, DINOS.raptor.breakoutDelaySeconds! + pen.drift - 1);
     expect(quiet.some((e) => e.type === 'dart')).toBe(false);
     const fight = run(w, 40, () => w.dinosSecured > 0);
     expect(fight.some((e) => e.type === 'dart')).toBe(true);
@@ -759,7 +948,7 @@ describe('power return and scoring', () => {
 });
 
 describe('planning numbers and the blackout log', () => {
-  it('breakout estimates match the simulation within a second', () => {
+  it('breakout estimates match the simulation within a second, give or take the pen\'s drift', () => {
     for (const kind of ['trex', 'raptor'] as const) {
       for (const reinforced of [false, true]) {
         const w = new World({ seed: 11, startingMoney: RICH, buildPhaseSeconds: 1 });
@@ -768,7 +957,7 @@ describe('planning numbers and the blackout log', () => {
         w.start();
         run(w, 1 + 60, () => w.dinos.some((d) => d.state === 'loose'));
         const estimate = breakoutSeconds(kind, reinforced)!;
-        expect(Math.abs(w.phaseTime - estimate), `${kind} ${reinforced ? 'concrete' : 'chain-link'}`).toBeLessThan(1);
+        expect(Math.abs(w.phaseTime - (estimate + ex.drift)), `${kind} ${reinforced ? 'concrete' : 'chain-link'}`).toBeLessThan(1);
       }
     }
     expect(breakoutSeconds('pasture', false)).toBeNull();
@@ -852,7 +1041,9 @@ describe('planning numbers and the blackout log', () => {
 
     let pen!: ReturnType<typeof place>;
     const w = blackoutWorld((w) => (pen = place(w, 'raptor', 9, 11)));
-    run(w, 30, () => w.evacuating);
+    run(w, 40, () => w.evacuating);
+    // The rest of the pack follows the first one out.
+    run(w, 1);
     w.quit();
     expect(w.result?.reason).toBe('abandoned');
     const end = w.result!.log.at(-1);

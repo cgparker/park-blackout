@@ -1,14 +1,15 @@
 // Headless balance checks. Skipped in normal test runs.
 // Run with: npm run balance
 import { describe, it } from 'vitest';
-import { BLACKOUT, EXHIBITS, HUNTS, MAP, SCORING, UNITS, type ExhibitKind, type UnitKind } from '../src/config';
+import { BLACKOUT, EXHIBITS, MAP, MISSIONS, NEST, SCORING, UNITS, type ExhibitKind, type StarGoal, type UnitKind } from '../src/config';
 import type { Dino } from '../src/core/dinos';
 import { footprintCenter, inFootprint } from '../src/core/exhibit';
 import type { Point, Rect } from '../src/core/grid';
 import { nearestOpenTile } from '../src/core/nav';
 import { planPlacement, planTower, type PlacementPlan } from '../src/core/placement';
-import { enqueueUnit, isTroop, orderAttack, orderMove, spawnUnit } from '../src/core/units';
+import { enqueueUnit, isTroop, orderAttack, orderBoard, orderMove, passengers, spawnUnit, type Unit } from '../src/core/units';
 import { World } from '../src/core/world';
+import { playGrid, type GridPlan } from './stealth-player';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -351,6 +352,7 @@ describe.skipIf(!process.env.BALANCE)('combat', () => {
 // ---------------------------------------------------------------- levels 1 and 2
 
 const looseNow = (w: World) => w.dinos.filter((d) => d.state === 'loose');
+const spendCap = (g: StarGoal) => (g.type === 'spend' ? g.max : Infinity);
 const nearestOf = (list: Dino[], x: number, y: number) => [...list].sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
 const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
@@ -392,9 +394,11 @@ function roundup(seed: number, n: number, style: 'split' | 'massed') {
 
 /**
  * Level 2 with a troop mix bought at the start. Trickle: each troop goes after the nearest raptor as soon as it is ready.
- * Massed: every troop waits at a rally point outside the nest's leash, then they all go in together.
+ * Massed: every troop waits at a rally point out of the nest's sight, then they all go in together. Wait: the group
+ * gathers the same way, then stands at the edge of the nest, about 5 tiles out, and darts whatever comes in range; a
+ * raptor darted from where no cone reaches comes alone. It steps a tile closer after 20 s with nothing in range.
  */
-function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
+function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed' | 'wait') {
   const w = new World({ seed, level: 2 });
   w.start();
   const rally = toTile(w, 21, 16);
@@ -402,6 +406,10 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
   let next = 0;
   let go = false;
   const sent = new Set<number>();
+  // The wait plan: where the group stands, how far from the nest, and how long nothing has come in range.
+  let post: { x: number; y: number } | null = null;
+  let out = 0;
+  let quiet = 0;
   while (w.phase !== 'ended') {
     while (bought < mix.length && enqueueUnit(w, mix[bought])) bought++;
     w.update(1 / 60);
@@ -425,6 +433,21 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
     }
     go ||= bought >= mix.length && !w.queue.length && troops.every((u) => Math.hypot(u.x - rally.x, u.y - rally.y) < 2.5 * T);
     if (!go) continue;
+    if (style === 'wait') {
+      const nest = w.nest!;
+      const reach = Math.min(...troops.map((u) => UNITS[u.kind].range));
+      const inRange = free.some((d) => troops.some((u) => Math.hypot(d.x - u.x, d.y - u.y) <= reach));
+      if (inRange || free.some((d) => d.target)) quiet = 0;
+      else quiet += 0.5;
+      if (!post || quiet >= 20) {
+        out = post ? Math.max(1, out - 1) : NEST.roamTiles + 3;
+        const a = Math.atan2(rally.y - nest.y, rally.x - nest.x);
+        post = { x: nest.x + Math.cos(a) * out * T, y: nest.y + Math.sin(a) * out * T };
+        orderMove(w, troops.map((u) => u.id), post.x, post.y);
+        quiet = 0;
+      }
+      continue;
+    }
     const cx = troops.reduce((a, u) => a + u.x, 0) / troops.length;
     const cy = troops.reduce((a, u) => a + u.y, 0) / troops.length;
     const t = nearestOf(free, cx, cy);
@@ -437,14 +460,14 @@ function nestFight(seed: number, mix: UnitKind[], style: 'trickle' | 'massed') {
 describe.skipIf(!process.env.BALANCE)('levels', () => {
   it('prints level 1: squads against the clock', { timeout: 600_000 }, () => {
     const seeds = Number(process.env.SEEDS ?? 8);
-    const cfg = HUNTS[1];
+    const cfg = MISSIONS[1];
     const most = Math.floor(cfg.startingMoney / UNITS.tranq.cost);
     const rows: string[] = [];
     for (const style of ['split', 'massed'] as const) {
       for (let n = 1; n <= most; n++) {
         const runs = Array.from({ length: seeds }, (_, i) => roundup(i + 1, n, style));
         const wins = runs.filter((r) => r.won);
-        const left = wins.map((r) => r.hunt!.timeLeft);
+        const left = wins.map((r) => r.mission!.timeLeft);
         const stars = runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {});
         rows.push(
           `  ${style.padEnd(6)} ${n} ${n === 1 ? 'squad ' : 'squads'} ${money(n * UNITS.tranq.cost).padStart(7)}  won ${wins.length}/${seeds}  ` +
@@ -452,13 +475,14 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
         );
       }
     }
-    const third = cfg.thirdStar.type === 'timeLeft' ? `${clockOf(cfg.thirdStar.seconds)} left` : 'no troops lost';
-    console.log(`\nLevel 1: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and ${third}, ${seeds} seeds\n` + rows.join('\n'));
+    const [spend, time] = cfg.stars;
+    const third = time.type === 'timeLeft' ? `${clockOf(time.seconds)} left` : 'no troops lost';
+    console.log(`\nLevel 1: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(spendCap(spend))} spent and ${third}, ${seeds} seeds\n` + rows.join('\n'));
   });
 
   it('prints level 2: troop mixes against the nest', { timeout: 600_000 }, () => {
     const seeds = Number(process.env.SEEDS ?? 8);
-    const cfg = HUNTS[2];
+    const cfg = MISSIONS[2];
     const tranqs = (n: number): UnitKind[] => Array(n).fill('tranq');
     const mixes: [string, UnitKind[]][] = [
       ['4 Tranq', tranqs(4)],
@@ -471,7 +495,7 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
       ['2 Heavy + 2 Tranq', ['heavy', 'heavy', ...tranqs(2)]],
     ];
     const rows: string[] = [];
-    for (const style of ['massed', 'trickle'] as const) {
+    for (const style of ['massed', 'wait', 'trickle'] as const) {
       for (const [name, mix] of mixes) {
         const cost = mix.reduce((a, k) => a + UNITS[k].cost, 0);
         const runs = Array.from({ length: seeds }, (_, i) => nestFight(i + 1, mix, style));
@@ -484,6 +508,217 @@ describe.skipIf(!process.env.BALANCE)('levels', () => {
         );
       }
     }
-    console.log(`\nLevel 2: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(cfg.spendStar)} spent and no troops lost, ${seeds} seeds\n` + rows.join('\n'));
+    console.log(`\nLevel 2: ${clockOf(cfg.timeLimitSeconds)} on the clock, ${money(cfg.startingMoney)}, stars at ${money(spendCap(cfg.stars[0]))} spent and no troops lost, ${seeds} seeds\n` + rows.join('\n'));
+  });
+});
+
+
+// ---------------------------------------------------------------- levels 4 and 5
+
+interface ShowdownPlan {
+  /** The two Heavy Teams climb into the 4x4 at the start and it drops them at the fight; otherwise everyone walks. */
+  jeep: boolean;
+  /**
+   * Who the troops dart first. 'raptors': the raptors, then the T. rex. 'rex': the T. rex, then the raptors. 'shield':
+   * only the most hurt raptor, then the T. rex while the other raptors keep it busy, then the rest.
+   */
+  order?: 'raptors' | 'rex' | 'shield';
+  /** Once the T. rex locks onto a troop, the 4x4 picks that troop up and drives off 14 tiles, out of its reach. */
+  kite?: boolean;
+  /** Once the T. rex locks onto a troop, the 4x4 picks that troop up and keeps driving round the T. rex, as a decoy. */
+  decoy?: boolean;
+  /** Seconds every order waits at the start, like a player reading the briefing. */
+  wait?: number;
+  /** Seconds between decisions. */
+  reaction?: number;
+  /**
+   * Nobody darts until the T. rex breaks into the cage on its own. Meanwhile the team gathers (the Heavy Teams in the
+   * 4x4 if it's used), like a player getting their bearings: 'back', 6 tiles west of the cage; 'close', 3 tiles from the
+   * T. rex, in range as the fight starts.
+   */
+  stage?: 'back' | 'close';
+}
+
+/** Level 5, played with a plan. Also counts the pens the fight broke into, not counting the cage it starts at. */
+function showdown(seed: number, opts: ShowdownPlan) {
+  const w = new World({ seed, level: 5 });
+  w.start();
+  let next = opts.wait ?? 0;
+  const heavies = w.units.filter((u) => u.kind === 'heavy');
+  const jeep = w.units.find((u) => u.kind === 'jeep')!;
+  const cage = w.exhibits.find((ex) => ex.cage)!;
+  const rally = footprintCenter(cage.footprint, T);
+  rally.x -= 6 * T;
+  let stage = 0;
+  let breaches = 0;
+  let spin = 0;
+  let caged = true;
+  const order = opts.order ?? 'raptors';
+  while (w.phase !== 'ended') {
+    w.update(1 / 60);
+    for (const e of w.events) {
+      if (e.type !== 'breach') continue;
+      if (e.exhibitId === cage.id) caged = false;
+      else breaches++;
+    }
+    w.events = [];
+    if (w.time < next) continue;
+    next = w.time + Math.max(0.5, opts.reaction ?? 0.5);
+    const loose = looseNow(w);
+    if (!loose.length) continue;
+    if (opts.stage && caged) {
+      // Gather by the cage and hold fire.
+      const rex = loose.find((d) => d.kind === 'trex');
+      if (opts.stage === 'close' && rex) {
+        rally.x = rex.x - 3 * T;
+        rally.y = rex.y;
+      }
+      const walkers = w.units.filter((u) => (u.kind === 'heavy' || u.kind === 'tranq') && !u.dead && !u.aboard && !(opts.jeep && u.kind === 'heavy'));
+      if (opts.jeep && stage === 0) {
+        orderBoard(w, heavies.map((h) => h.id), jeep.id);
+        stage = 1;
+      }
+      if (opts.jeep && stage === 1 && passengers(w, jeep).length === heavies.length) {
+        orderMove(w, [jeep.id], rally.x, rally.y + T);
+        stage = 3;
+      }
+      const idle = walkers.filter((u) => u.order !== 'move' && Math.hypot(u.x - rally.x, u.y - rally.y) > 2 * T);
+      if (idle.length) orderMove(w, idle.map((u) => u.id), rally.x, rally.y);
+      continue;
+    }
+    // The 4x4 dropped its Heavy Teams by the cage, so it joins the plan as if it had driven them to the fight.
+    if (stage === 3 && !passengers(w, jeep).length) stage = 2;
+    const troops = w.units.filter((u) => (u.kind === 'heavy' || u.kind === 'tranq') && !u.dead && !u.aboard);
+    const rex = loose.find((d) => d.kind === 'trex');
+    const raptors = loose.filter((d) => d.kind === 'raptor');
+    const securedRaptors = w.dinos.filter((d) => d.kind === 'raptor' && (d.state === 'secured' || d.removed) && d.health > 0).length;
+    const mostHurt = raptors.length ? raptors.reduce((a, b) => (b.health < a.health ? b : a)) : undefined;
+    const pick = (u: Unit) => {
+      if (order === 'rex' && rex) return rex;
+      if (order === 'shield') {
+        if (!securedRaptors && mostHurt) return mostHurt;
+        if (rex) return rex;
+      }
+      return raptors.length ? nearestOf(raptors, u.x, u.y) : (rex ?? nearestOf(loose, u.x, u.y));
+    };
+    if (opts.jeep && stage === 0) {
+      orderBoard(w, heavies.map((h) => h.id), jeep.id);
+      stage = 1;
+    }
+    if (opts.jeep && stage === 1 && !jeep.dead && passengers(w, jeep).length === heavies.length) {
+      orderAttack(w, [jeep.id], pick(jeep).id);
+      stage = 2;
+    }
+    const locked = rex?.lockId ? w.unitById(rex.lockId) : undefined;
+    if ((opts.kite || opts.decoy) && rex && locked && !jeep.dead && stage >= 2) {
+      if (locked === jeep) {
+        if (jeep.order !== 'move') {
+          if (opts.kite) {
+            // Straight away from the T. rex until it gives up.
+            const d = Math.hypot(jeep.x - rex.x, jeep.y - rex.y) || 1;
+            orderMove(w, [jeep.id], jeep.x + ((jeep.x - rex.x) / d) * 14 * T, jeep.y + ((jeep.y - rex.y) / d) * 14 * T);
+          } else {
+            // Round and round it, about 6 tiles out, so it keeps chasing.
+            spin += 1;
+            const a = Math.atan2(jeep.y - rex.y, jeep.x - rex.x) + 1.1;
+            const x = Math.min(Math.max(rex.x + Math.cos(a) * 6 * T, T), (w.grid.cols - 1) * T);
+            const y = Math.min(Math.max(rex.y + Math.sin(a) * 6 * T, T), (w.grid.rows - 1) * T);
+            orderMove(w, [jeep.id], x, y);
+          }
+        }
+      } else if (!locked.aboard && locked.order !== 'board') {
+        orderMove(w, [jeep.id], locked.x, locked.y);
+        orderBoard(w, [locked.id], jeep.id);
+      }
+    }
+    for (const u of troops) {
+      if ((opts.kite || opts.decoy) && u === locked) continue;
+      if (u.order === 'board' || (opts.jeep && stage < 2 && u.kind === 'heavy')) continue;
+      const cur = u.order === 'attack' ? w.dinoById(u.targetId) : undefined;
+      const want = pick(u);
+      if (!cur || cur.state !== 'loose' || (cur !== want && cur.kind !== want.kind)) orderAttack(w, [u.id], want.id);
+    }
+  }
+  return { result: w.result!, breaches, spin };
+}
+
+/** "8 3★, 2 timeUp" from a set of results. */
+const tallyOf = (runs: { won: boolean; stars: number; reason: string }[]) =>
+  Object.entries(runs.reduce<Record<string, number>>((t, r) => ((t[r.won ? `${r.stars}★` : r.reason] = (t[r.won ? `${r.stars}★` : r.reason] ?? 0) + 1), t), {}))
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ');
+
+describe.skipIf(!process.env.BALANCE)('levels 4 and 5', () => {
+  it('prints level 4: the Engineer and the Tranq Squad against the patrols', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = MISSIONS[4];
+    const plans: [string, GridPlan][] = [
+      ['Sneak, decisions every 0.5 s', { engineer: 'sneak', every: 0.5 }],
+      ['Sneak, every 1 s', { engineer: 'sneak', every: 1 }],
+      ['Sneak, every 1.5 s, less careful', { engineer: 'sneak', every: 1.5, margin: 0.5 }],
+      ['Sneak, every 2 s', { engineer: 'sneak', every: 2 }],
+      ['Sneak, reading only the cones now, every 1 s', { engineer: 'sneak', every: 1, foresight: false }],
+      ['Sneak, squad as decoy at the south', { engineer: 'sneak', squad: 'decoy' }],
+      ['Sneak, squad sent straight at the south raptor', { engineer: 'sneak', squad: 'dart' }],
+      ['Sneak, squad darts the south raptor from behind', { engineer: 'sneak', squad: 'ambush' }],
+      ['Straight to each substation', { engineer: 'rush' }],
+      ['Sneak, ride the 4x4 toward the north one', { engineer: 'sneak', jeep: 'ride' }],
+      ['Sneak, squad drives the 4x4 as a lure at the south', { engineer: 'sneak', jeep: 'lure' }],
+    ];
+    const rows = plans.map(([name, plan]) => {
+      const runs = Array.from({ length: seeds }, (_, i) => playGrid(i + 1, plan));
+      const wins = runs.filter((x) => x.world.result!.won);
+      const left = wins.map((x) => x.world.result!.mission!.timeLeft);
+      const fixedAt = (i: number) => {
+        const ts = runs.map((x) => x.fixed[i]).filter((t) => t !== undefined);
+        return ts.length ? clockOf(ts.reduce((a, t) => a + t, 0) / ts.length) : '-';
+      };
+      const seen = runs.filter((x) => x.seenAt >= 0).length;
+      const lost = runs.reduce((a, x) => a + x.world.result!.troopsLost, 0) / seeds;
+      return (
+        `  ${name.padEnd(46)} won ${wins.length}/${seeds}  left ${left.length ? `${clockOf(Math.min(...left))} to ${clockOf(Math.max(...left))}` : '-'}  ` +
+        `fixed ${fixedAt(0)} ${fixedAt(1)} ${fixedAt(2)}  Engineer noticed in ${seen}  troops lost ${lost.toFixed(1)} of 2 | ${tallyOf(runs.map((x) => x.world.result!))}`
+      );
+    });
+    const timers = cfg.park.filter((p) => p.breakoutAt != null).map((p) => `${p.kind} ${clockOf(p.breakoutAt!)}`).join(', ');
+    console.log(`\nLevel 4: ${clockOf(cfg.timeLimitSeconds)} until dawn, pens break out at ${timers}, stars for no troops lost and never spotted, ${seeds} seeds\n` + rows.join('\n'));
+  });
+
+  it('prints level 5: the fixed team against the fight', { timeout: 600_000 }, () => {
+    const seeds = Number(process.env.SEEDS ?? 8);
+    const cfg = MISSIONS[5];
+    const plans: [string, ShowdownPlan][] = [
+      ['4x4, raptors first', { jeep: true }],
+      ['4x4, raptors first, the 4x4 decoys the T. rex', { jeep: true, decoy: true }],
+      ['4x4, raptors first, the 4x4 drives its target off', { jeep: true, kite: true }],
+      ['4x4, T. rex first', { jeep: true, order: 'rex' }],
+      ['4x4, most hurt raptor, then the T. rex', { jeep: true, order: 'shield' }],
+      ['4x4, most hurt raptor, then the T. rex, decoy', { jeep: true, order: 'shield', decoy: true }],
+      ['Walk, raptors first', { jeep: false }],
+      ['Walk, T. rex first', { jeep: false, order: 'rex' }],
+      ['4x4, orders start after 10 s', { jeep: true, wait: 10 }],
+      ['Walk, orders start after 20 s', { jeep: false, wait: 20 }],
+      ['4x4, 3 s orders', { jeep: true, reaction: 3 }],
+      ['Wait 6 tiles back, 4x4, raptors first', { jeep: true, stage: 'back' }],
+      ['Wait 6 tiles back, 4x4, raptors first, decoy', { jeep: true, stage: 'back', decoy: true }],
+      ['Wait 6 tiles back, 4x4, T. rex first', { jeep: true, stage: 'back', order: 'rex' }],
+      ['Wait 6 tiles back, walk, raptors first', { jeep: false, stage: 'back' }],
+      ['Wait in range, 4x4, raptors first', { jeep: true, stage: 'close' }],
+      ['Wait in range, 4x4, T. rex first', { jeep: true, stage: 'close', order: 'rex' }],
+      ['Wait in range, walk, T. rex first', { jeep: false, stage: 'close', order: 'rex' }],
+    ];
+    const rows = plans.map(([name, opts]) => {
+      const runs = Array.from({ length: seeds }, (_, i) => showdown(i + 1, opts));
+      const results = runs.map((r) => r.result);
+      const wins = results.filter((r) => r.won);
+      const avg = (f: (r: (typeof results)[number]) => number) => (results.reduce((a, r) => a + f(r), 0) / seeds).toFixed(1);
+      const left = wins.map((r) => r.mission!.timeLeft);
+      const broke = runs.filter((r) => r.breaches > 0).length;
+      return (
+        `  ${name.padEnd(48)} won ${wins.length}/${seeds}  left ${left.length ? `${clockOf(Math.min(...left))} to ${clockOf(Math.max(...left))}` : '-'}  ` +
+        `killed ${avg((r) => r.mission!.killed)}  troops lost ${avg((r) => r.troopsLost)} of ${cfg.team!.filter((m) => m.kind !== 'jeep').length}  pen broken in ${broke} | ${tallyOf(results)}`
+      );
+    });
+    console.log(`\nLevel 5: ${clockOf(cfg.timeLimitSeconds)} on the clock, stars for no troops lost and no animal killed, ${seeds} seeds\n` + rows.join('\n'));
   });
 });

@@ -6,6 +6,7 @@ import {
   DINOS,
   EXHIBITS,
   EXHIBIT_KINDS,
+  FIGHT,
   INPUT,
   MAP,
   SCORING,
@@ -16,17 +17,16 @@ import {
   type LevelId,
   type UnitKind,
 } from '../config';
-import { breakoutSeconds, secondsToSedate } from '../core/estimates';
-import { reinforceCost } from '../core/exhibit';
-import { animalNoun } from '../core/report';
 import type { Point, Rect } from '../core/grid';
 import { planPlacement, planTower, type PlacementPlan, type TowerPlan } from '../core/placement';
-import { cancelQueued, canTrainNow, enqueueUnit, isTargetable, isTroop, orderAttack, orderMove } from '../core/units';
+import { substationCenter } from '../core/power';
+import { cancelQueued, canCommand, enqueueUnit, isTargetable, orderAttack, orderBoard, orderHold, orderMove, orderRepair, passengers, type Unit } from '../core/units';
 import { World } from '../core/world';
 import type { Params } from '../params';
 import { WorldView } from '../render/worldView';
-import { afterBlackout, formatClock, formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type ExhibitView, type Hud, type PlaceView, type TrainingView } from '../ui/hud';
+import { formatMoney, type ArrowView, type BriefingOptions, type BuildKind, type Hud } from '../ui/hud';
 import { goalsNow } from '../ui/goals';
+import { exhibitPlaceView, exhibitView, huntedToast, selectionSummary, startBanner, substationView, towerPlaceView, trainingView } from '../ui/panels';
 import { loadTipsOn, saveTipsOn } from '../ui/prefs';
 import { tipsFor, type Tip, type TipId } from '../ui/tips';
 
@@ -98,6 +98,8 @@ export class GameScene extends Phaser.Scene {
   /** Tips already shown this session (Retry doesn't repeat them), and tips waiting their turn. */
   private readonly seenTips = new Set<TipId>();
   private tipQueue: Tip[] = [];
+  /** Mission levels: the view the level opened on, to go back to once the opening tips are read. */
+  private startFrame: (() => void) | null = null;
   private showFps = false;
   private resizeHandler: (() => void) | null = null;
   /** A camera move in progress (to the park at the blackout, or to an arrow's target). Any pan or zoom cancels it. */
@@ -193,7 +195,11 @@ export class GameScene extends Phaser.Scene {
     this.view.handle(events);
     this.handleEvents(events);
 
-    for (const id of this.selected) if (!w.unitById(id)) this.selected.delete(id);
+    // Troops that climbed into the 4x4 leave the selection; select the 4x4 to move them.
+    for (const id of this.selected) {
+      const u = w.unitById(id);
+      if (!u || !canCommand(u)) this.selected.delete(id);
+    }
     this.view.render(dt, { selected: this.selected, box: this.gesture === 'box' ? this.boxRect() : null, press: this.pressRing(time) });
     this.refreshHud();
     this.updateArrows();
@@ -216,7 +222,7 @@ export class GameScene extends Phaser.Scene {
       },
       retry: () => this.scene.restart(),
       nextLevel: () => {
-        this.session.level = Math.min(3, this.session.level + 1) as LevelId;
+        this.session.level = Math.min(5, this.session.level + 1) as LevelId;
         this.scene.restart();
       },
       openTraining: () => this.openTraining(),
@@ -225,9 +231,17 @@ export class GameScene extends Phaser.Scene {
       reinforce: (id) => this.reinforce(id),
       closePanel: () => this.closePanels(),
       selectAll: () => {
-        this.selected = new Set(this.world.units.filter(isTroop).map((u) => u.id));
+        this.selected = new Set(this.world.units.filter(canCommand).map((u) => u.id));
       },
       clearSelection: () => this.selected.clear(),
+      hold: () => orderHold(this.world, this.selected),
+      selectEngineer: () => {
+        const e = this.world.units.find((u) => u.kind === 'engineer' && canCommand(u));
+        if (!e) return;
+        this.selected = new Set([e.id]);
+        if (this.hud.panel) this.closePanels();
+        this.moveCamera(e.x, e.y, this.zoomLevel);
+      },
       tipDone: () => this.nextTip(),
       openMenu: () => this.openMenu(),
       resume: () => this.hud.hideMenu(),
@@ -244,6 +258,9 @@ export class GameScene extends Phaser.Scene {
         saveTipsOn(false);
         this.tipQueue = [];
         this.hud.hideTip();
+        const back = this.startFrame;
+        this.startFrame = null;
+        back?.();
         this.hud.toast('Tips are off. Turn them back on from the briefing.');
       },
       debugSpeed: (s) => {
@@ -300,6 +317,10 @@ export class GameScene extends Phaser.Scene {
       spent: w.troopSpending,
       returned: w.returned,
       troopsLost: w.troopsLost,
+      fixed: w.fixedCount,
+      substations: w.substations.length,
+      spotted: w.engineerSpotted,
+      killed: w.animalsKilled,
       revenue: w.revenue,
       revenueTarget: w.revenueTarget,
       clockSeconds: w.clockSeconds,
@@ -316,30 +337,31 @@ export class GameScene extends Phaser.Scene {
     const counts = Object.fromEntries(EXHIBIT_KINDS.map((k) => [k, w.countOf(k)])) as Record<ExhibitKind, number>;
     this.hud.setBuildBar(w.canBuild, w.money, counts, this.placingKind);
 
-    let tranq = 0;
-    let heavy = 0;
-    for (const id of this.selected) {
-      const u = w.unitById(id);
-      if (u?.kind === 'tranq') tranq++;
-      else if (u?.kind === 'heavy') heavy++;
-    }
-    const parts = [tranq ? `${tranq} Tranq` : '', heavy ? `${heavy} Heavy` : ''].filter(Boolean);
-    const troops = w.units.reduce((n, u) => (isTroop(u) ? n + 1 : n), 0);
-    this.hud.setTroops(troops, this.selected.size, `${parts.join(' · ')} selected`, w.queue.length, !w.canBuild);
+    const engineer = w.units.some((u) => u.kind === 'engineer' && canCommand(u));
+    this.hud.setTroops(w.units.filter(canCommand).length, this.selected.size, selectionSummary(w.units, this.selected, (u) => passengers(w, u).length), w.queue.length, !w.canBuild, engineer);
+    this.hud.setHq(w.trainable.length > 0);
 
     switch (this.hud.panel) {
       case 'place':
         this.anchorToTiles(this.placementRect());
         break;
       case 'train':
-        this.hud.updateTraining(this.trainingView());
+        this.hud.updateTraining(trainingView(this.world));
         this.anchorToTiles(MAP.hq);
         break;
       case 'exhibit': {
         const ex = w.exhibitById(this.hud.shownExhibit);
         if (ex) {
-          this.hud.updateExhibit(this.exhibitView(ex.id)!);
+          this.hud.updateExhibit(exhibitView(w, ex.id)!);
           this.anchorToTiles(ex.footprint);
+        }
+        break;
+      }
+      case 'substation': {
+        const s = w.substationById(this.hud.shownSubstation);
+        if (s) {
+          this.hud.updateSubstation(substationView(w, s.id)!);
+          this.anchorToTiles({ x: s.x, y: s.y, w: 2, h: 2 });
         }
         break;
       }
@@ -357,19 +379,27 @@ export class GameScene extends Phaser.Scene {
     const w = this.world;
     // The evacuation banner names the first animal out, so that escape needs no toast of its own.
     const evacuation = events.some((e) => e.type === 'evacuation');
+    // A raptor that spots a troop calls the others, so one sighting can come as several events.
+    const spotted = new Set<number>();
     for (const e of events) {
       switch (e.type) {
+        case 'spotted': {
+          if (spotted.has(e.unitId)) break;
+          spotted.add(e.unitId);
+          if (e.kind === 'engineer') this.hud.showBanner('A raptor is after the Engineer.', 'danger', 3);
+          else this.hud.toast(huntedToast(w, e.unitId, e.kind));
+          break;
+        }
         case 'started':
-          if (w.hunt) {
+          if (w.mission) {
+            this.hud.showBanner(startBanner(w), 'warn', 4);
             const loose = w.dinos.filter((d) => d.state === 'loose');
-            const kind = (Object.keys(w.startedLoose)[0] as AnimalKind | undefined) ?? 'triceratops';
-            const what = `${loose.length} ${animalNoun(kind, loose.length)}`;
-            this.hud.showBanner(
-              `${what} ${w.nest ? 'are guarding a nest' : 'are loose'}. The park opens in ${formatClock(w.clockSeconds)}.`,
-              'warn',
-              4,
-            );
-            this.frame([...loose, ...(w.nest ? [w.nest] : [])], true);
+            // Level 4 is about the substations; the others about what is loose.
+            const subs = w.substations.map((s) => substationCenter(s, T));
+            const pts = w.level === 4 ? subs : [...loose, ...(w.nest ? [w.nest] : [])];
+            this.frame(pts, true);
+            // The opening tips each point the camera at something; when they're done, it goes back to this view.
+            this.startFrame = this.session.tips ? () => this.frame(pts, true) : null;
           }
           break;
         case 'warning':
@@ -405,15 +435,24 @@ export class GameScene extends Phaser.Scene {
           this.hud.toast(`${UNITS[e.kind].name} ready`);
           break;
         case 'unitLost':
-          this.hud.toast(`${UNITS[e.kind].name} lost`);
+          this.hud.toast(e.kind === 'jeep' ? 'The Patrol 4x4 is wrecked. Everyone got out.' : `${UNITS[e.kind].name} lost`);
           break;
         case 'secured': {
-          // In levels 1 and 2 the count left is what matters. The last one ends the level, so it needs no toast.
+          // In mission levels the count left is what matters. The last one may end the level, so it needs no toast.
           const left = w.looseCount;
-          if (!w.hunt) this.hud.toast(`${DINOS[e.kind].name} secured`);
+          if (!w.mission) this.hud.toast(`${DINOS[e.kind].name} secured`);
           else if (left) this.hud.toast(`${DINOS[e.kind].name} darted. ${left} to go.`);
           break;
         }
+        case 'substationFixed': {
+          const s = w.substationById(e.id);
+          const held = e.contained ? ` ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : '';
+          this.hud.showBanner(e.last ? `The power is back everywhere.${held}` : `${s?.name ?? 'A'} substation fixed.${held}`, 'good', 3.5);
+          break;
+        }
+        case 'killed':
+          this.hud.showBanner(`${e.kind === 'trex' ? 'The T. rex' : 'A raptor'} was killed. ${w.animalsKilled} of ${FIGHT.killLimit}.`, 'danger', 3);
+          break;
         case 'powerRestored':
           this.hud.showBanner(
             e.contained ? `Power restored. ${e.contained} ${e.contained === 1 ? 'animal' : 'animals'} contained.` : 'Power restored.',
@@ -458,6 +497,10 @@ export class GameScene extends Phaser.Scene {
         spent: w.troopSpending,
         timeLeft: w.clockSeconds,
         troopsLost: w.troopsLost,
+        killed: w.animalsKilled,
+        fixed: w.fixedCount,
+        substations: w.substations.length,
+        spotted: w.engineerSpotted,
       }),
     );
   }
@@ -511,7 +554,7 @@ export class GameScene extends Phaser.Scene {
   private updateArrows(): void {
     const w = this.world;
     this.arrowTargets.clear();
-    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'hunt') {
+    if (w.phase !== 'blackout' && w.phase !== 'restored' && w.phase !== 'mission') {
       this.hud.setArrows([]);
       return;
     }
@@ -581,6 +624,9 @@ export class GameScene extends Phaser.Scene {
     const tip = this.world.phase === 'ended' ? undefined : this.tipQueue.shift();
     if (!tip) {
       this.hud.hideTip();
+      const back = this.startFrame;
+      this.startFrame = null;
+      back?.();
       return;
     }
     this.hud.showTip(tip.title, tip.body);
@@ -608,35 +654,10 @@ export class GameScene extends Phaser.Scene {
     this.hud.closePanels();
   }
 
-  private trainingView(): TrainingView {
-    const w = this.world;
-    // Troops alive plus the queue: what the player will have.
-    const team = [...w.units.filter(isTroop).map((u) => u.kind), ...w.queue.map((q) => q.kind)];
-    const packSize = EXHIBITS.raptor.animalCount;
-    // What the team will be darting: in levels 1 and 2 the animals that started loose, one at a time.
-    const kinds: { kind: AnimalKind; count: number }[] = w.hunt
-      ? (Object.keys(w.startedLoose) as AnimalKind[]).map((kind) => ({ kind, count: 1 }))
-      : [
-          { kind: 'trex', count: 1 },
-          { kind: 'raptor', count: packSize },
-        ];
-    return {
-      money: w.money,
-      canTrain: canTrainNow(w),
-      kinds: w.trainable,
-      queue: w.queue.map((q, i) => ({
-        id: q.id,
-        kind: q.kind,
-        progress: i === 0 ? 1 - q.left / UNITS[q.kind].trainSeconds : 0,
-      })),
-      team: { troops: team.length, targets: kinds.map((k) => ({ ...k, seconds: secondsToSedate(team, k.kind, k.count) })) },
-    };
-  }
-
   private openTraining(): void {
     if (this.world.phase === 'briefing' || this.world.phase === 'ended') return;
     if (this.placingKind) this.endPlacement();
-    this.hud.showTraining(this.trainingView());
+    this.hud.showTraining(trainingView(this.world));
     this.anchorToTiles(MAP.hq);
   }
 
@@ -644,43 +665,8 @@ export class GameScene extends Phaser.Scene {
     if (!enqueueUnit(this.world, kind)) this.hud.toast(this.world.money < UNITS[kind].cost ? 'Not enough money' : 'The queue is full');
   }
 
-  private exhibitView(id: number): ExhibitView | null {
-    const w = this.world;
-    const ex = w.exhibitById(id);
-    if (!ex) return null;
-    const segs = ex.segments;
-    const gaps = segs.filter((s) => s.hp <= 0).length;
-    const weakest = Math.min(...segs.filter((s) => s.hp > 0).map((s) => s.hp));
-    const max = segs[0].maxHp;
-    const material = ex.reinforced ? 'Concrete' : 'Chain-link';
-    let fence: string;
-    if (w.powerOn) fence = gaps ? `${material}, ${gaps} ${gaps === 1 ? 'segment' : 'segments'} down` : `${material}, powered`;
-    else if (gaps) fence = `${gaps} ${gaps === 1 ? 'gap' : 'gaps'}, weakest ${Number.isFinite(weakest) ? weakest : 0}/${max}`;
-    else fence = `${material}, weakest ${weakest}/${max}`;
-    const kind = EXHIBITS[ex.kind].animal;
-    const mine = w.dinos.filter((d) => d.home === ex.id);
-    const inside = mine.filter((d) => d.state === 'penned' || d.state === 'contained').length;
-    const out = mine.filter((d) => d.state === 'loose').length;
-    const name = DINOS[kind];
-    const animals = out ? `${inside} inside · ${out} loose` : inside ? `${inside} ${inside === 1 ? name.name : name.plural}` : 'None left';
-    return {
-      id: ex.id,
-      name: EXHIBITS[ex.kind].name,
-      kind: ex.kind,
-      visits: ex.visits,
-      revenue: ex.revenue,
-      fence,
-      animals,
-      reinforceCost: w.canBuild && !ex.reinforced ? reinforceCost(ex.footprint) : null,
-      reinforced: ex.reinforced,
-      money: w.money,
-      closed: !!w.hunt,
-      breakout: w.canBuild ? { now: breakoutSeconds(ex.kind, ex.reinforced), concrete: ex.reinforced ? null : breakoutSeconds(ex.kind, true) } : null,
-    };
-  }
-
   private openExhibit(id: number): void {
-    const v = this.exhibitView(id);
+    const v = exhibitView(this.world, id);
     if (!v) return;
     this.hud.showExhibit(v);
     const ex = this.world.exhibitById(id)!;
@@ -805,6 +791,9 @@ export class GameScene extends Phaser.Scene {
       kb.on('keydown-P', (e: KeyboardEvent) => {
         if (fresh(e)) (this.hud.menuOpen ? this.hud.hideMenu() : this.openMenu());
       });
+      kb.on('keydown-H', (e: KeyboardEvent) => {
+        if (fresh(e) && this.world.phase !== 'briefing') orderHold(this.world, this.selected);
+      });
     }
   }
 
@@ -913,7 +902,7 @@ export class GameScene extends Phaser.Scene {
 
   private finishBox(): void {
     const b = this.boxRect();
-    const picked = this.world.units.filter((u) => isTroop(u) && u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h);
+    const picked = this.world.units.filter((u) => canCommand(u) && u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h);
     this.selected = new Set(picked.map((u) => u.id));
     if (picked.length) this.closePanels();
   }
@@ -952,13 +941,19 @@ export class GameScene extends Phaser.Scene {
     }
 
     const unit = this.unitAt(p.x, p.y);
+    // With troops selected, tapping the 4x4 loads them into it.
+    if (unit?.kind === 'jeep' && this.boardersSelected(unit)) {
+      this.command(sx, sy);
+      return;
+    }
     if (unit) {
       this.selected = new Set([unit.id]);
       if (this.hud.panel) this.closePanels();
       return;
     }
     const { hq } = MAP;
-    if (tx >= hq.x && ty >= hq.y && tx < hq.x + hq.w && ty < hq.y + hq.h) {
+    // Level 5 trains nothing, so a tap on HQ is just a tap on the map.
+    if (this.world.trainable.length && tx >= hq.x && ty >= hq.y && tx < hq.x + hq.w && ty < hq.y + hq.h) {
       this.openTraining();
       return;
     }
@@ -966,32 +961,73 @@ export class GameScene extends Phaser.Scene {
       this.command(sx, sy);
       return;
     }
+    const sub = this.world.substationAtTile(tx, ty);
+    if (sub) {
+      this.openSubstation(sub.id);
+      return;
+    }
     const ex = this.world.exhibitAtTile(tx, ty);
     if (ex) this.openExhibit(ex.id);
     else this.closePanels();
   }
 
-  /** Move or attack with the selected troops. */
-  private command(sx: number, sy: number): void {
-    if (!this.selected.size || !this.inView(sy) || this.world.phase === 'ended') return;
-    const p = this.screenToWorld(sx, sy);
-    const dino = this.dinoAt(p.x, p.y);
-    if (dino) {
-      orderAttack(this.world, this.selected, dino.id);
-      this.view.markAttack(dino.x, dino.y);
-    } else {
-      orderMove(this.world, this.selected, p.x, p.y);
-      this.view.markMove(p.x, p.y);
+  /** True when the selection has troops other than this 4x4, which a tap on it would load. */
+  private boardersSelected(jeep: Unit): boolean {
+    for (const id of this.selected) {
+      const u = this.world.unitById(id);
+      if (u && u !== jeep && u.kind !== 'jeep') return true;
     }
+    return false;
   }
 
-  /** The troop under a tap. Towers can't be selected. */
+  /** Move or attack with the selected troops, fix a substation with Engineers, or load troops into the 4x4. */
+  private command(sx: number, sy: number): void {
+    if (!this.selected.size || !this.inView(sy) || this.world.phase === 'ended') return;
+    const w = this.world;
+    const p = this.screenToWorld(sx, sy);
+    const jeep = this.unitAt(p.x, p.y);
+    if (jeep?.kind === 'jeep' && this.boardersSelected(jeep)) {
+      orderBoard(w, [...this.selected].filter((id) => id !== jeep.id), jeep.id);
+      this.view.markMove(jeep.x, jeep.y);
+      return;
+    }
+    const dino = this.dinoAt(p.x, p.y);
+    if (dino) {
+      orderAttack(w, this.selected, dino.id);
+      this.view.markAttack(dino.x, dino.y);
+      return;
+    }
+    // With an Engineer selected, a tap on a broken substation or the tiles around it sends it to the side tapped.
+    const tx = Math.floor(p.x / T);
+    const ty = Math.floor(p.y / T);
+    const engineer = [...this.selected].some((id) => w.unitById(id)?.kind === 'engineer');
+    const near = engineer ? w.substationNearTile(tx, ty) : undefined;
+    const sub = near && !near.fixed ? near : w.substationAtTile(tx, ty);
+    if (sub) {
+      const to = orderRepair(w, this.selected, sub.id, engineer ? p : undefined) ?? substationCenter(sub, T);
+      this.view.markMove(to.x, to.y);
+      return;
+    }
+    orderMove(w, this.selected, p.x, p.y);
+    this.view.markMove(p.x, p.y);
+  }
+
+  private openSubstation(id: number): void {
+    const v = substationView(this.world, id);
+    if (!v) return;
+    if (this.placingKind) this.endPlacement();
+    this.hud.showSubstation(v);
+    const s = this.world.substationById(id)!;
+    this.anchorToTiles({ x: s.x, y: s.y, w: 2, h: 2 });
+  }
+
+  /** The troop or 4x4 under a tap. Towers can't be selected, and troops in the 4x4 aren't on the map. */
   private unitAt(x: number, y: number) {
     const slop = INPUT.tapSlop / this.zoomLevel;
     let best = null;
     let bestD = Infinity;
     for (const u of this.world.units) {
-      if (!isTroop(u)) continue;
+      if (!canCommand(u)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d <= UNITS[u.kind].radius + slop && d < bestD) {
         bestD = d;
@@ -1056,39 +1092,14 @@ export class GameScene extends Phaser.Scene {
     if (kind === 'tower') {
       this.plan = null;
       this.towerPlan = planTower(w.grid, x, y, w.money);
-      this.hud.showPlacement(this.towerView(this.towerPlan));
+      this.hud.showPlacement(towerPlaceView(this.towerPlan, T));
     } else {
       this.towerPlan = null;
       this.plan = planPlacement(w.grid, kind, x, y, w.money, w.countOf(kind));
-      this.hud.showPlacement(this.exhibitPlaceView(this.plan));
+      this.hud.showPlacement(exhibitPlaceView(this.plan));
     }
     this.drawGhost();
     this.anchorToTiles(this.placementRect());
-  }
-
-  private exhibitPlaceView(plan: PlacementPlan): PlaceView {
-    const cfg = EXHIBITS[plan.kind];
-    const tiles = plan.newPathTiles.length;
-    const lines: [string, string][] = [['Exhibit', formatMoney(plan.exhibitCost)]];
-    if (plan.viewingSpot) lines.push([tiles === 1 ? 'Path (1 tile)' : `Path (${tiles} tiles)`, formatMoney(plan.pathCost)]);
-    lines.push(['Earns per visit', formatMoney(cfg.pricePerVisit)]);
-    lines.push(['Breaks out', afterBlackout(breakoutSeconds(plan.kind, false))]);
-    return { title: cfg.name, lines, reason: plan.reason, cost: plan.totalCost, valid: plan.valid };
-  }
-
-  private towerView(plan: TowerPlan): PlaceView {
-    const cfg = UNITS.tower;
-    return {
-      title: cfg.name,
-      lines: [
-        ['Darts', `${cfg.dartSedation} every ${cfg.fireIntervalSeconds} s`],
-        ['Range', `${Math.round(cfg.range / T)} tiles`],
-        ['HP', String(cfg.hp)],
-      ],
-      reason: plan.reason,
-      cost: plan.cost,
-      valid: plan.valid,
-    };
   }
 
   /** Tiles covered by the thing being placed, for the ghost and the panel position. */

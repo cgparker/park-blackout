@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Park Blackout" />
+    <meta name="theme-color" content="#14251a" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <title>Park Blackout 3D</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game"></div>
+      <div id="hud"></div>
+      <div id="loading">
+        <div class="load-title">Park Blackout 3D</div>
+        <div class="load-bar"><i></i></div>
+        <div class="load-text">Loading models</div>
+      </div>
+      <div id="rotate">
+        <div class="icon" aria-hidden="true">↻</div>
+        <div>Turn your phone sideways to play.</div>
+      </div>
+    </div>
+    <script type="module" src="/src/slice3d/main.ts"></script>
+  </body>
+</html>
